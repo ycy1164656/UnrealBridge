@@ -222,6 +222,50 @@ struct FBridgePropertyInfo
 	bool bIsComponent = false;
 };
 
+/** Stable, bounded result for combined actor queries. */
+USTRUCT(BlueprintType)
+struct FBridgeActorQueryResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	TArray<FBridgeActorBrief> Actors;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	int32 TotalMatched = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	int32 Offset = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	int32 NextOffset = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	bool bHasMore = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	FString Error;
+};
+
+/** Collision-tested candidate location, optionally projected to navigation. */
+USTRUCT(BlueprintType)
+struct FBridgePlacementCandidate
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	FVector Location = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	FVector SurfaceNormal = FVector::UpVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	float Score = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Level")
+	bool bOnNavMesh = false;
+};
+
 /**
  * Level / actor introspection via UnrealBridge. Operates on the editor world.
  */
@@ -262,6 +306,38 @@ public:
 		const FString& NameFilter,
 		bool bSelectedOnly,
 		int32 MaxResults);
+
+	/**
+	 * Combined actor query with deterministic sorting and pagination.
+	 * RequiredTags uses AND semantics. Limit is clamped to 1..1000.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Level", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FBridgeActorQueryResult QueryActors(
+		const FString& ClassFilter,
+		const TArray<FString>& RequiredTags,
+		const FString& NameFilter,
+		const FString& FolderFilter,
+		const FString& LevelPackageFilter,
+		bool bSelectedOnly,
+		bool bIncludeHidden,
+		int32 Offset,
+		int32 Limit);
+
+	/**
+	 * Sample walkable/collision-free placement candidates around Center.
+	 * The function is read-only and never spawns or moves actors.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Level", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "GameThreadLong", ToolSaveBehavior = "Never"))
+	static TArray<FBridgePlacementCandidate> FindPlacementCandidates(
+		FVector Center,
+		FVector SearchExtent,
+		FVector ObjectExtent,
+		float GridStep = 100.f,
+		int32 MaxResults = 32,
+		const FString& CollisionProfileName = TEXT("BlockAll"),
+		bool bRequireNavMesh = true);
 
 	/** Look up actor by FName or label. If duplicate labels exist, returns the first match. */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Level")

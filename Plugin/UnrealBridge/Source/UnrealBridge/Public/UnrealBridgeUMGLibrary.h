@@ -127,6 +127,66 @@ struct FBridgeWidgetEventInfo
 	FString HandlerName;
 };
 
+/** Validation issue found in a Widget Blueprint tree. */
+USTRUCT(BlueprintType)
+struct FBridgeWidgetValidationIssue
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	FString Severity;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	FString Message;
+};
+
+/** Result from compiling and/or saving a Widget Blueprint. */
+USTRUCT(BlueprintType)
+struct FBridgeWidgetCompileResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	FString AssetPath;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	FString Status;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	bool bCompiled = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	bool bSaved = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	TArray<FBridgeWidgetValidationIssue> ValidationIssues;
+};
+
+/** Result from rendering a Widget Blueprint preview to disk. */
+USTRUCT(BlueprintType)
+struct FBridgeWidgetPreviewResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	FString OutputPath;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	int32 Width = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	int32 Height = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	int32 Bytes = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG")
+	FString Error;
+};
+
 /**
  * UMG / Widget Blueprint introspection via UnrealBridge.
  */
@@ -143,6 +203,17 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
 	static TArray<FBridgeWidgetInfo> GetWidgetTree(const FString& WidgetBlueprintPath);
+
+	/** Create a Widget Blueprint and optionally create a root widget. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static FString CreateWidgetBlueprint(
+		const FString& Path,
+		const FString& Name,
+		const FString& ParentClass = TEXT(""),
+		const FString& RootClass = TEXT("CanvasPanel"),
+		const FString& RootName = TEXT("RootCanvas"),
+		bool bCompile = false,
+		bool bSave = false);
 
 	/**
 	 * Get non-default property values for a specific widget.
@@ -177,6 +248,35 @@ public:
 	static TArray<FBridgeWidgetInfo> SearchWidgets(
 		const FString& WidgetBlueprintPath, const FString& Query);
 
+	/** Add a widget to a Widget Blueprint. Properties and slot values use export-text strings. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool AddWidget(
+		const FString& WidgetBlueprintPath,
+		const FString& ClassName,
+		const FString& WidgetName,
+		const FString& ParentWidgetName,
+		bool bIsVariable,
+		const TMap<FString, FString>& Properties,
+		const TMap<FString, FString>& SlotProperties,
+		int32 Index);
+
+	/** Remove a widget from a Widget Blueprint. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool RemoveWidget(const FString& WidgetBlueprintPath, const FString& WidgetName);
+
+	/** Rename a widget in a Widget Blueprint. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool RenameWidget(const FString& WidgetBlueprintPath, const FString& WidgetName, const FString& NewName);
+
+	/** Reparent a widget under another panel widget. Empty NewParentWidgetName makes it the root widget. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool ReparentWidget(
+		const FString& WidgetBlueprintPath,
+		const FString& WidgetName,
+		const FString& NewParentWidgetName,
+		const TMap<FString, FString>& SlotProperties,
+		int32 Index);
+
 	/**
 	 * Set a property on a widget by name. Value is parsed as text.
 	 */
@@ -184,4 +284,81 @@ public:
 	static bool SetWidgetProperty(
 		const FString& WidgetBlueprintPath, const FString& WidgetName,
 		const FString& PropertyName, const FString& Value);
+
+	/** Set several widget properties by export-text strings. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool SetWidgetProperties(
+		const FString& WidgetBlueprintPath,
+		const FString& WidgetName,
+		const TMap<FString, FString>& Properties);
+
+	/** Set slot properties on a widget by export-text strings. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool SetWidgetSlotProperties(
+		const FString& WidgetBlueprintPath,
+		const FString& WidgetName,
+		const TMap<FString, FString>& SlotProperties);
+
+	/** Set a CommonUI style-like property on a widget. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool SetWidgetCommonUIStyle(
+		const FString& WidgetBlueprintPath,
+		const FString& WidgetName,
+		const FString& StylePath,
+		const FString& StyleProperty = TEXT("Style"));
+
+	/** Create a component-bound event node for a widget event such as OnClicked. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static FString BindWidgetEvent(
+		const FString& WidgetBlueprintPath,
+		const FString& WidgetName,
+		const FString& EventName,
+		const FString& FunctionName = TEXT(""),
+		int32 PosX = 0,
+		int32 PosY = 0);
+
+	/** Create a widget animation if it does not already exist. Returns the animation object name. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static FString CreateWidgetAnimation(const FString& WidgetBlueprintPath, const FString& AnimationName);
+
+	/** Add a widget binding to an existing widget animation. Returns the animation binding guid. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static FString AddWidgetAnimationBinding(
+		const FString& WidgetBlueprintPath,
+		const FString& AnimationName,
+		const FString& WidgetName);
+
+	/** Add a float key to a widget animation track, e.g. RenderOpacity. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool AddWidgetAnimationFloatKey(
+		const FString& WidgetBlueprintPath,
+		const FString& AnimationName,
+		const FString& WidgetName,
+		const FString& PropertyPath,
+		float TimeSeconds,
+		float Value);
+
+	/** Remove a widget animation by name. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static bool RemoveWidgetAnimation(const FString& WidgetBlueprintPath, const FString& AnimationName);
+
+	/** Render a design-time preview PNG for a Widget Blueprint. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static FBridgeWidgetPreviewResult PreviewWidget(
+		const FString& WidgetBlueprintPath,
+		int32 Width = 1920,
+		int32 Height = 1080,
+		const FString& OutputPath = TEXT(""));
+
+	/** Compile, save, and optionally validate a Widget Blueprint. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static FBridgeWidgetCompileResult CompileSaveWidgetBlueprint(
+		const FString& WidgetBlueprintPath,
+		bool bCompile = true,
+		bool bSave = true,
+		bool bValidate = true);
+
+	/** Validate basic Widget Blueprint tree consistency. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
+	static TArray<FBridgeWidgetValidationIssue> ValidateWidgetBlueprint(const FString& WidgetBlueprintPath);
 };

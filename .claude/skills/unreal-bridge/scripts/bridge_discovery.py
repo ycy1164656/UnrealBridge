@@ -20,7 +20,10 @@ Wire format:
          "project_path": "C:/.../MyGame.uproject",
          "engine_version": "5.7.0",
          "tcp_bind": "127.0.0.1", "tcp_port": 54321,
-         "token_fingerprint": "a1b2c3d4e5f60718"}    # "" when no token
+         "token_fingerprint": "a1b2c3d4e5f60718",
+         "http_bind": "127.0.0.1", "http_port": 11438,
+         "mcp_endpoint": "http://127.0.0.1:11438/mcp",
+         "http_token_fingerprint": "1122334455667788"}
 """
 
 from __future__ import annotations
@@ -52,6 +55,10 @@ class Endpoint:
     tcp_bind: str
     tcp_port: int
     token_fingerprint: str
+    http_bind: str = ""
+    http_port: int = 0
+    mcp_endpoint: str = ""
+    http_token_fingerprint: str = ""
 
     @property
     def host(self) -> str:
@@ -66,7 +73,8 @@ class Endpoint:
 
     def __str__(self) -> str:
         token = " [token]" if self.token_fingerprint else ""
-        return f"{self.project} @ {self.host}:{self.port} (pid {self.pid}){token}"
+        mcp = f" [mcp {self.mcp_endpoint}]" if self.mcp_endpoint else ""
+        return f"{self.project} @ {self.host}:{self.port} (pid {self.pid}){token}{mcp}"
 
 
 def _parse_group(group: str) -> Tuple[str, int]:
@@ -139,6 +147,12 @@ def discover(project_filter: str = "*",
                 tcp_bind=str(resp.get("tcp_bind", "127.0.0.1")),
                 tcp_port=int(resp.get("tcp_port", 0)),
                 token_fingerprint=str(resp.get("token_fingerprint", "")),
+                http_bind=str(resp.get("http_bind", "")),
+                http_port=int(resp.get("http_port", 0)),
+                mcp_endpoint=str(resp.get("mcp_endpoint", "")),
+                http_token_fingerprint=str(
+                    resp.get("http_token_fingerprint", "")
+                ),
             ))
 
         return results
@@ -158,11 +172,11 @@ def select(endpoints: List[Endpoint],
     if not endpoints:
         raise DiscoveryError(
             "no UnrealBridge editors found on the LAN (multicast probe timed out). "
-            "Check — in this order:\n"
+            "Check in this order:\n"
             "  1. UE editor is running (and loaded past the splash screen).\n"
             "  2. The UnrealBridge plugin is installed in that project's "
             "Plugins/ folder AND enabled in the .uproject.\n"
-            "  3. Multicast isn't being dropped by a VPN / virtual NIC — if "
+            "  3. Multicast isn't being dropped by a VPN / virtual NIC; if "
             "everything else is fine, pass --endpoint=127.0.0.1:<port>, "
             "reading <port> from the editor log line "
             "`LogUnrealBridge: Listening on 127.0.0.1:<port>`."
@@ -256,6 +270,48 @@ def load_token(ep: Endpoint, explicit_token: Optional[str] = None) -> Optional[s
         f"token required for {ep} but none found. "
         "Pass --token=<secret>, set UNREAL_BRIDGE_TOKEN, "
         "or ensure <Project>/Saved/UnrealBridge/token.txt is readable."
+    )
+
+
+def load_http_token(
+    ep: Endpoint, explicit_token: Optional[str] = None
+) -> Optional[str]:
+    """Resolve and verify the token for the embedded HTTP MCP endpoint."""
+    if not ep.http_token_fingerprint:
+        return None
+
+    def _verify(token: str) -> Optional[str]:
+        fingerprint = hashlib.sha1(token.encode("utf-8")).hexdigest()[:16]
+        return token if fingerprint.lower() == ep.http_token_fingerprint.lower() else None
+
+    candidates = [explicit_token, os.environ.get("UNREAL_BRIDGE_HTTP_TOKEN")]
+    if ep.project_path:
+        candidates.append(
+            os.path.join(
+                os.path.dirname(ep.project_path),
+                "Saved",
+                "UnrealBridge",
+                "http-token.txt",
+            )
+        )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        value = candidate
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8") as stream:
+                    value = stream.read().strip()
+            except OSError:
+                continue
+        verified = _verify(value)
+        if verified:
+            return verified
+
+    raise DiscoveryError(
+        f"HTTP token required for {ep} but none matched. "
+        "Set UNREAL_BRIDGE_HTTP_TOKEN or read "
+        "<Project>/Saved/UnrealBridge/http-token.txt."
     )
 
 

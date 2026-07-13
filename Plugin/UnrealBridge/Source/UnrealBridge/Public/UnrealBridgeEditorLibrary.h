@@ -261,6 +261,19 @@ struct FBridgeCallStats
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Editor") int32 TotalDropped = 0;
 };
 
+/** One non-blocking poll of a multi-frame editor operation. */
+USTRUCT(BlueprintType)
+struct FBridgeLongTaskPollResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Editor") bool bComplete = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Editor") bool bSuccess = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Editor") int32 Remaining = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Editor") FString Status;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Editor") FString Error;
+};
+
 /**
  * Editor session / asset control via UnrealBridge.
  */
@@ -275,6 +288,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor")
 	static FBridgeEditorState GetEditorState();
+
+	/** Compact JSON snapshot for agent preflight and recovery after a timeout. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FString GetCompactProjectContextJson();
 
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor")
 	static TArray<FBridgeOpenedAsset> GetOpenedAssets();
@@ -508,6 +526,11 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor")
 	static FBridgeScreenshotResult CaptureActiveViewport(const FString& OutFilePath, bool bIncludeBase64);
+
+	/** Durable-job-friendly capture alias. Result remains queryable by Job ID after a client timeout. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "AsyncJob", ToolSaveBehavior = "ExternalFile"))
+	static FBridgeScreenshotResult CaptureScreenshotJob(const FString& OutFilePath, bool bIncludeBase64 = false);
 
 	/**
 	 * Render a single GBuffer channel of the active viewport via a
@@ -889,6 +912,16 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor")
 	static bool FlushCompilation();
+
+	/** Non-blocking shader compilation poll. Clients wait by polling this across Editor ticks. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "AsyncPoll", ToolSaveBehavior = "Never"))
+	static FBridgeLongTaskPollResult WaitShaderCompilation();
+
+	/** Non-blocking asset compilation poll. Clients wait by polling this across Editor ticks. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "AsyncPoll", ToolSaveBehavior = "Never"))
+	static FBridgeLongTaskPollResult WaitAssetCompilation();
 
 	// ─── Output log tail ─────────────────────────────────────
 	//

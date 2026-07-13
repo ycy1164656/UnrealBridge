@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 1,
-	"VersionName": "1.0.0",
+	"Version": 2,
+	"VersionName": "2.0.0",
 	"FriendlyName": "UnrealBridge",
 	"Description": "TCP bridge server that allows external tools (like Claude Code) to execute Python scripts in the Unreal Editor's Python interpreter and receive results.",
 	"Category": "Editor",
@@ -31,11 +31,31 @@
 			"Enabled": true
 		},
 		{
+			"Name": "Niagara",
+			"Enabled": true
+		},
+		{
+			"Name": "EditorScriptingUtilities",
+			"Enabled": true
+		},
+		{
 			"Name": "PoseSearch",
 			"Enabled": true
 		},
 		{
 			"Name": "Chooser",
+			"Enabled": true
+		},
+		{
+			"Name": "StructUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "StateTree",
+			"Enabled": true
+		},
+		{
+			"Name": "IKRig",
 			"Enabled": true
 		},
 		{

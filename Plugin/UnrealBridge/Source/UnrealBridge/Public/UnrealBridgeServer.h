@@ -3,12 +3,14 @@
 #include "CoreMinimal.h"
 #include "Common/TcpListener.h"
 #include "Sockets.h"
-#include "Containers/Queue.h"
 #include "Containers/Ticker.h"
-#include "Async/Future.h"
 #include "Containers/Set.h"
 #include "Misc/ScopeLock.h"
 #include "Interfaces/IPv4/IPv4Address.h"
+#include "UnrealBridgeJobManager.h"
+
+class FJsonObject;
+class FUnrealBridgeHttpServer;
 
 /**
  * TCP server that listens for incoming connections and executes Python scripts
@@ -78,6 +80,8 @@ public:
 	bool IsEditorReady() const;
 
 private:
+	friend class FUnrealBridgeHttpServer;
+
 	/** Called by FTcpListener when a new client connects. */
 	bool OnConnectionAccepted(FSocket* ClientSocket, const FIPv4Endpoint& ClientEndpoint);
 
@@ -87,39 +91,31 @@ private:
 	/** Read exactly NumBytes from the socket. Returns false on failure. */
 	bool RecvAll(FSocket* Socket, uint8* Buffer, int32 NumBytes, float TimeoutSeconds);
 
-	/** Send all bytes to the socket. Returns false on failure. */
-	bool SendAll(FSocket* Socket, const uint8* Buffer, int32 NumBytes);
+	/** Send all bytes with a bounded write deadline and zero-send protection. */
+	bool SendAll(FSocket* Socket, const uint8* Buffer, int32 NumBytes, float TimeoutSeconds = 5.0f);
 
-	/** Result of a Python exec request. */
-	struct FExecResult
-	{
-		bool bSuccess = false;
-		FString Output;
-		FString Error;
-	};
+	/** Enqueue a script and wait only for the caller's requested interval. */
+	FBridgeJobResult EnqueueAndWaitForExec(
+		const FString& Script,
+		float QueueDeadlineSeconds,
+		float ClientWaitSeconds,
+		const FString& RequestId,
+		const FString& IdempotencyKey,
+		TSharedPtr<FBridgeJob, ESPMode::ThreadSafe>& OutJob,
+		bool& bOutClientWaitTimedOut,
+		bool& bOutDeduplicated);
 
-	/**
-	 * A queued exec request. Heap-allocated and shared between the worker
-	 * thread (which waits on Promise's future) and the GameThread ticker
-	 * consumer (which fulfills Promise). Shared ownership guarantees no
-	 * dangling references if the worker times out before the ticker runs.
-	 */
-	struct FPendingExec
-	{
-		FString Script;
-		float TimeoutSeconds = 30.0f;
-		FString RequestId;
-		TPromise<FExecResult> Promise;
-	};
-
-	/** Enqueue a script for GameThread execution and block on the future. */
-	FExecResult EnqueueAndWaitForExec(const FString& Script, float TimeoutSeconds, const FString& RequestId);
+	/** Add the complete structured job snapshot to a response object. */
+	void AddJobSnapshotFields(
+		const FBridgeJobSnapshot& Snapshot,
+		const TSharedRef<FJsonObject>& Response,
+		bool bIncludeResult = true) const;
 
 	/** GameThread ticker callback: drains at most one pending exec per frame. */
 	bool TickConsumeQueue(float DeltaTime);
 
 	/** Actual Python exec (GameThread only, called by ticker). */
-	FExecResult DoPythonExec(const FString& Script);
+	FBridgeJobResult DoPythonExec(const FString& Script);
 
 	TUniquePtr<FTcpListener> Listener;
 	int32 ListenPort = 0;
@@ -128,8 +124,9 @@ private:
 	FThreadSafeBool bIsRunning = false;
 	FThreadSafeBool bEditorReady = false;
 
-	// Exec pipeline (item #1 of server stability plan).
-	TQueue<TSharedPtr<FPendingExec, ESPMode::ThreadSafe>, EQueueMode::Mpsc> ExecQueue;
+	// Reliable Job pipeline. Socket workers submit/query independently while a
+	// single GameThread ticker claims at most one Python job per frame.
+	TUniquePtr<FBridgeJobManager> JobManager;
 	FTSTicker::FDelegateHandle TickHandle;
 	bool bExecInFlight = false; // GameThread-only, no atomic needed
 

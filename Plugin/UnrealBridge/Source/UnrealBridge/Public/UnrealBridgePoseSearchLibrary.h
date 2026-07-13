@@ -213,6 +213,17 @@ struct FBridgePSDInfo
 	TArray<FName> Tags;
 };
 
+USTRUCT(BlueprintType)
+struct FBridgePoseSearchIndexPollResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PoseSearch") bool bComplete = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PoseSearch") bool bSuccess = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PoseSearch") FString Status;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PoseSearch") FString Error;
+};
+
 // ─── Library class ─────────────────────────────────────────
 
 UCLASS()
@@ -321,6 +332,11 @@ public:
 	/** "NotIndexed" / "Indexing" / "Indexed" / "Failed". Convenience wrapper around the same probe IsIndexReady uses. */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PoseSearch")
 	static FString GetIndexStatus(const FString& DatabasePath);
+
+	/** Non-blocking index-build poll; call repeatedly across Editor ticks. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PoseSearch", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "AsyncPoll", ToolSaveBehavior = "Never"))
+	static FBridgePoseSearchIndexPollResult WaitPoseSearchIndex(const FString& DatabasePath);
 
 	/** Force the index to rebuild on next request (sets DDC dirty by issuing a NewRequest). */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PoseSearch")

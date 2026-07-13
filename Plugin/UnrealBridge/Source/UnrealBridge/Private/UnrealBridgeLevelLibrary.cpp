@@ -26,6 +26,7 @@
 #include "Engine/HitResult.h"
 #include "Engine/OverlapResult.h"
 #include "GameFramework/WorldSettings.h"
+#include "NavigationSystem.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonSerializer.h"
@@ -339,6 +340,197 @@ TArray<FBridgeActorBrief> UUnrealBridgeLevelLibrary::ListActors(
 		}
 	}
 	return Out;
+}
+
+FBridgeActorQueryResult UUnrealBridgeLevelLibrary::QueryActors(
+	const FString& ClassFilter,
+	const TArray<FString>& RequiredTags,
+	const FString& NameFilter,
+	const FString& FolderFilter,
+	const FString& LevelPackageFilter,
+	bool bSelectedOnly,
+	bool bIncludeHidden,
+	int32 Offset,
+	int32 Limit)
+{
+	FBridgeActorQueryResult Result;
+	Result.Offset = FMath::Max(0, Offset);
+	UWorld* World = BridgeLevelImpl::GetEditorWorld();
+	if (!World)
+	{
+		Result.Error = TEXT("Editor world is unavailable");
+		return Result;
+	}
+
+	TArray<AActor*> Matched;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!Actor || !BridgeLevelImpl::MatchesClassFilter(Actor->GetClass(), ClassFilter))
+		{
+			continue;
+		}
+
+		bool bTagsMatch = true;
+		for (const FString& Tag : RequiredTags)
+		{
+			if (!Tag.IsEmpty() && !Actor->Tags.Contains(FName(*Tag)))
+			{
+				bTagsMatch = false;
+				break;
+			}
+		}
+		if (!bTagsMatch)
+		{
+			continue;
+		}
+
+		const FString Label = Actor->GetActorLabel();
+		if (!NameFilter.IsEmpty() && !Label.Contains(NameFilter, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		if (!FolderFilter.IsEmpty()
+			&& !Actor->GetFolderPath().ToString().Contains(FolderFilter, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		const ULevel* ActorLevel = Actor->GetLevel();
+		const FString LevelPackage = ActorLevel && ActorLevel->GetOutermost()
+			? ActorLevel->GetOutermost()->GetName()
+			: FString();
+		if (!LevelPackageFilter.IsEmpty()
+			&& !LevelPackage.Contains(LevelPackageFilter, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		if (bSelectedOnly && !BridgeLevelImpl::ActorIsSelected(Actor))
+		{
+			continue;
+		}
+		if (!bIncludeHidden && (Actor->IsHidden() || Actor->IsHiddenEd()))
+		{
+			continue;
+		}
+		Matched.Add(Actor);
+	}
+
+	Matched.Sort([](const AActor& Left, const AActor& Right)
+	{
+		const int32 LabelOrder = Left.GetActorLabel().Compare(Right.GetActorLabel(), ESearchCase::IgnoreCase);
+		return LabelOrder == 0
+			? Left.GetFName().LexicalLess(Right.GetFName())
+			: LabelOrder < 0;
+	});
+
+	Result.TotalMatched = Matched.Num();
+	const int32 PageLimit = FMath::Clamp(Limit, 1, 1000);
+	const int32 Begin = FMath::Min(Result.Offset, Result.TotalMatched);
+	const int32 End = FMath::Min(Begin + PageLimit, Result.TotalMatched);
+	for (int32 Index = Begin; Index < End; ++Index)
+	{
+		Result.Actors.Add(BridgeLevelImpl::MakeBrief(Matched[Index]));
+	}
+	Result.Offset = Begin;
+	Result.NextOffset = End;
+	Result.bHasMore = End < Result.TotalMatched;
+	return Result;
+}
+
+TArray<FBridgePlacementCandidate> UUnrealBridgeLevelLibrary::FindPlacementCandidates(
+	FVector Center,
+	FVector SearchExtent,
+	FVector ObjectExtent,
+	float GridStep,
+	int32 MaxResults,
+	const FString& CollisionProfileName,
+	bool bRequireNavMesh)
+{
+	TArray<FBridgePlacementCandidate> Result;
+	UWorld* World = BridgeLevelImpl::GetEditorWorld();
+	if (!World || MaxResults <= 0)
+	{
+		return Result;
+	}
+
+	SearchExtent = SearchExtent.GetAbs();
+	ObjectExtent = ObjectExtent.GetAbs().ComponentMax(FVector(1.f));
+	GridStep = FMath::Max(GridStep, 1.f);
+	const int32 NumX = FMath::FloorToInt((2.f * SearchExtent.X) / GridStep) + 1;
+	const int32 NumY = FMath::FloorToInt((2.f * SearchExtent.Y) / GridStep) + 1;
+	const int32 MaxSamples = 4096;
+	const int32 TargetResults = FMath::Clamp(MaxResults, 1, 512);
+	UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(World);
+	const FName ProfileName = CollisionProfileName.IsEmpty() ? FName(TEXT("BlockAll")) : FName(*CollisionProfileName);
+	const FCollisionShape PlacementShape = FCollisionShape::MakeBox(ObjectExtent * 0.95f);
+	FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(UnrealBridgePlacementTrace), false);
+	FCollisionQueryParams OverlapParams(SCENE_QUERY_STAT(UnrealBridgePlacementOverlap), false);
+
+	int32 Samples = 0;
+	for (int32 XIndex = 0; XIndex < NumX && Samples < MaxSamples; ++XIndex)
+	{
+		for (int32 YIndex = 0; YIndex < NumY && Samples < MaxSamples; ++YIndex, ++Samples)
+		{
+			const float X = Center.X - SearchExtent.X + XIndex * GridStep;
+			const float Y = Center.Y - SearchExtent.Y + YIndex * GridStep;
+			const FVector TraceStart(X, Y, Center.Z + SearchExtent.Z);
+			const FVector TraceEnd(X, Y, Center.Z - SearchExtent.Z);
+			FHitResult Hit;
+			if (!World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, TraceParams))
+			{
+				continue;
+			}
+
+			FVector SurfaceLocation = Hit.ImpactPoint;
+			FNavLocation NavLocation;
+			const bool bOnNavMesh = Navigation
+				&& Navigation->ProjectPointToNavigation(SurfaceLocation, NavLocation,
+					FVector(FMath::Max(GridStep, ObjectExtent.X * 2.f),
+						FMath::Max(GridStep, ObjectExtent.Y * 2.f),
+						FMath::Max(200.f, SearchExtent.Z)));
+			if (bRequireNavMesh && !bOnNavMesh)
+			{
+				continue;
+			}
+			if (bOnNavMesh)
+			{
+				SurfaceLocation = NavLocation.Location;
+			}
+
+			const FVector CandidateLocation = SurfaceLocation + FVector(0.f, 0.f, ObjectExtent.Z + 2.f);
+			if (World->OverlapBlockingTestByProfile(
+				CandidateLocation, FQuat::Identity, ProfileName, PlacementShape, OverlapParams))
+			{
+				continue;
+			}
+
+			FBridgePlacementCandidate Candidate;
+			Candidate.Location = CandidateLocation;
+			Candidate.SurfaceNormal = Hit.ImpactNormal.GetSafeNormal();
+			Candidate.bOnNavMesh = bOnNavMesh;
+			Candidate.Score = FVector::Dist2D(Center, CandidateLocation)
+				+ (1.f - FMath::Clamp(FVector::DotProduct(Candidate.SurfaceNormal, FVector::UpVector), 0.f, 1.f)) * 1000.f;
+			Result.Add(Candidate);
+		}
+	}
+
+	Result.Sort([](const FBridgePlacementCandidate& Left, const FBridgePlacementCandidate& Right)
+	{
+		if (!FMath::IsNearlyEqual(Left.Score, Right.Score))
+		{
+			return Left.Score < Right.Score;
+		}
+		if (!FMath::IsNearlyEqual(Left.Location.X, Right.Location.X))
+		{
+			return Left.Location.X < Right.Location.X;
+		}
+		return Left.Location.Y < Right.Location.Y;
+	});
+	if (Result.Num() > TargetResults)
+	{
+		Result.SetNum(TargetResults, EAllowShrinking::No);
+	}
+	return Result;
 }
 
 FBridgeActorInfo UUnrealBridgeLevelLibrary::GetActorInfo(const FString& ActorName)

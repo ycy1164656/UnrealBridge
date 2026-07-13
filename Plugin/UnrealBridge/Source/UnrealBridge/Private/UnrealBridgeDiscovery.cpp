@@ -282,6 +282,12 @@ FString FBridgeDiscoveryService::BuildResponseJson(const FString& RequestId) con
 	Root->SetStringField(TEXT("tcp_bind"), Config.TcpBindAddress);
 	Root->SetNumberField(TEXT("tcp_port"), CurrentTcpPort.GetValue());
 	Root->SetStringField(TEXT("token_fingerprint"), Config.TokenFingerprint);
+	Root->SetStringField(TEXT("http_bind"), Config.HttpBindAddress);
+	Root->SetNumberField(TEXT("http_port"), Config.HttpPort);
+	Root->SetStringField(TEXT("mcp_endpoint"), Config.HttpPort > 0
+		? FString::Printf(TEXT("http://%s:%d/mcp"), *Config.HttpBindAddress, Config.HttpPort)
+		: FString());
+	Root->SetStringField(TEXT("http_token_fingerprint"), Config.HttpTokenFingerprint);
 
 	FString Out;
 	const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =

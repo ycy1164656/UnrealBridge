@@ -2,7 +2,7 @@
 
 #include "Misc/EngineVersionComparison.h"
 
-#if !UE_VERSION_OLDER_THAN(5, 7, 0)
+#if !UE_VERSION_OLDER_THAN(5, 6, 0)
 
 #include "PoseSearch/PoseSearchDatabase.h"
 #include "PoseSearch/PoseSearchSchema.h"
@@ -290,14 +290,15 @@ TArray<FBridgePSDAnimEntry> UUnrealBridgePoseSearchLibrary::ListDatabaseAnimatio
 	for (int32 i = 0; i < N; ++i)
 	{
 		FBridgePSDAnimEntry Row;
-		const FPoseSearchDatabaseAnimationAsset* Entry = PSD->GetDatabaseAnimationAsset(i);
+		const FPoseSearchDatabaseAnimationAssetBase* Entry =
+			PSD->GetDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(i);
 		if (!Entry)
 		{
 			Out.Add(Row);
 			continue;
 		}
 
-		UObject* Asset = Entry->AnimAsset;
+		UObject* Asset = Entry->GetAnimationAsset();
 		Row.AssetPath = GetAssetPathSafe(Asset);
 		Row.Kind = Asset ? Asset->GetClass()->GetName() : FString();
 #if WITH_EDITORONLY_DATA
@@ -307,12 +308,16 @@ TArray<FBridgePSDAnimEntry> UUnrealBridgePoseSearchLibrary::ListDatabaseAnimatio
 
 		if (Cast<UBlendSpace>(Asset))
 		{
-			Row.BlendSpaceHorizontalSamples = Entry->NumberOfHorizontalSamples;
-			Row.BlendSpaceVerticalSamples = Entry->NumberOfVerticalSamples;
-			Row.bBlendSpaceUseSingleSample = Entry->bUseSingleSample;
-			Row.bBlendSpaceUseGridForSampling = Entry->bUseGridForSampling;
-			Row.BlendSpaceParamX = Entry->BlendParamX;
-			Row.BlendSpaceParamY = Entry->BlendParamY;
+			if (const FPoseSearchDatabaseBlendSpace* BlendEntry =
+				PSD->GetDatabaseAnimationAsset<FPoseSearchDatabaseBlendSpace>(i))
+			{
+				Row.BlendSpaceHorizontalSamples = BlendEntry->NumberOfHorizontalSamples;
+				Row.BlendSpaceVerticalSamples = BlendEntry->NumberOfVerticalSamples;
+				Row.bBlendSpaceUseSingleSample = BlendEntry->bUseSingleSample;
+				Row.bBlendSpaceUseGridForSampling = BlendEntry->bUseGridForSampling;
+				Row.BlendSpaceParamX = BlendEntry->BlendParamX;
+				Row.BlendSpaceParamY = BlendEntry->BlendParamY;
+			}
 		}
 
 		const FFloatInterval Range = Entry->GetSamplingRange();
@@ -350,26 +355,24 @@ TArray<FString> UUnrealBridgePoseSearchLibrary::FindDatabasesUsingAnimation(cons
 
 namespace BridgePoseSearchImpl
 {
-	int32 AddEntryCommon(UPoseSearchDatabase* PSD, UObject* Asset,
-		float Min, float Max, EPoseSearchMirrorOption Mirror, bool bEnabled,
-		const TFunction<void(FPoseSearchDatabaseAnimationAsset&)>& BlendSpaceTuner)
+	template <typename EntryType>
+	int32 AddTypedEntry(
+		UPoseSearchDatabase* PSD,
+		EntryType& Entry,
+		float Min,
+		float Max,
+		EPoseSearchMirrorOption Mirror,
+		bool bEnabled)
 	{
 #if WITH_EDITORONLY_DATA
-		if (!PSD || !Asset) return INDEX_NONE;
-
-		FPoseSearchDatabaseAnimationAsset Entry;
-		Entry.AnimAsset = Asset;
+		if (!PSD || !Entry.GetAnimationAsset()) return INDEX_NONE;
 		Entry.bEnabled = bEnabled;
 		Entry.MirrorOption = Mirror;
-		Entry.SamplingRange = FFloatInterval(Min, Max);
-		if (BlendSpaceTuner)
-		{
-			BlendSpaceTuner(Entry);
-		}
+		Entry.SetSamplingRange(FFloatInterval(Min, Max));
 
 		const FScopedTransaction Tx(LOCTEXT("AddPSDEntry", "Add PoseSearch Database Entry"));
 		PSD->Modify();
-		PSD->AddAnimationAsset(Entry);
+		PSD->AddAnimationAsset(FInstancedStruct::Make(Entry));
 		PSD->MarkPackageDirty();
 		// Schedule re-index. NewRequest invalidates and starts a fresh build.
 #if WITH_EDITOR
@@ -380,6 +383,41 @@ namespace BridgePoseSearchImpl
 #else
 		return INDEX_NONE;
 #endif
+	}
+
+	int32 AddAnimationEntry(
+		UPoseSearchDatabase* PSD,
+		UObject* Asset,
+		float Min,
+		float Max,
+		EPoseSearchMirrorOption Mirror,
+		bool bEnabled)
+	{
+		if (UAnimSequence* Sequence = Cast<UAnimSequence>(Asset))
+		{
+			FPoseSearchDatabaseSequence Entry;
+			Entry.Sequence = Sequence;
+			return AddTypedEntry(PSD, Entry, Min, Max, Mirror, bEnabled);
+		}
+		if (UBlendSpace* BlendSpace = Cast<UBlendSpace>(Asset))
+		{
+			FPoseSearchDatabaseBlendSpace Entry;
+			Entry.BlendSpace = BlendSpace;
+			return AddTypedEntry(PSD, Entry, Min, Max, Mirror, bEnabled);
+		}
+		if (UAnimComposite* Composite = Cast<UAnimComposite>(Asset))
+		{
+			FPoseSearchDatabaseAnimComposite Entry;
+			Entry.AnimComposite = Composite;
+			return AddTypedEntry(PSD, Entry, Min, Max, Mirror, bEnabled);
+		}
+		if (UAnimMontage* Montage = Cast<UAnimMontage>(Asset))
+		{
+			FPoseSearchDatabaseAnimMontage Entry;
+			Entry.AnimMontage = Montage;
+			return AddTypedEntry(PSD, Entry, Min, Max, Mirror, bEnabled);
+		}
+		return INDEX_NONE;
 	}
 
 	FBridgePSDAddResult MakeAddError(const FString& Msg)
@@ -420,7 +458,7 @@ FBridgePSDAddResult UUnrealBridgePoseSearchLibrary::AddAnimationToDatabase(const
 	}
 
 	FBridgePSDAddResult R;
-	R.Index = AddEntryCommon(PSD, Asset, SamplingRangeMin, SamplingRangeMax, Mirror, bEnabled, nullptr);
+	R.Index = AddAnimationEntry(PSD, Asset, SamplingRangeMin, SamplingRangeMax, Mirror, bEnabled);
 	if (R.Index < 0)
 	{
 		R.Error = TEXT("AddAnimationToDatabase: AddEntryCommon failed (likely WITH_EDITORONLY_DATA off)");
@@ -460,20 +498,21 @@ FBridgePSDAddResult UUnrealBridgePoseSearchLibrary::AddBlendSpaceToDatabase(cons
 		return MakeAddError(FString::Printf(TEXT("AddBlendSpaceToDatabase: invalid MirrorOption '%s'"), *MirrorOption));
 	}
 
-	auto Tuner = [&](FPoseSearchDatabaseAnimationAsset& E)
-	{
 #if WITH_EDITORONLY_DATA
-		E.NumberOfHorizontalSamples = FMath::Max(1, HSamples);
-		E.NumberOfVerticalSamples   = FMath::Max(1, VSamples);
-		E.bUseGridForSampling       = bUseGridForSampling;
-		E.bUseSingleSample          = bUseSingleSample;
-		E.BlendParamX               = BlendParamX;
-		E.BlendParamY               = BlendParamY;
-#endif
-	};
-
+	FPoseSearchDatabaseBlendSpace Entry;
+	Entry.BlendSpace = BS;
+	Entry.NumberOfHorizontalSamples = FMath::Max(1, HSamples);
+	Entry.NumberOfVerticalSamples = FMath::Max(1, VSamples);
+	Entry.bUseGridForSampling = bUseGridForSampling;
+	Entry.bUseSingleSample = bUseSingleSample;
+	Entry.BlendParamX = BlendParamX;
+	Entry.BlendParamY = BlendParamY;
 	FBridgePSDAddResult R;
-	R.Index = AddEntryCommon(PSD, BS, SamplingRangeMin, SamplingRangeMax, Mirror, bEnabled, Tuner);
+	R.Index = AddTypedEntry(PSD, Entry, SamplingRangeMin, SamplingRangeMax, Mirror, bEnabled);
+#else
+	FBridgePSDAddResult R;
+	R.Error = TEXT("AddBlendSpaceToDatabase requires editor-only data");
+#endif
 	if (R.Index < 0)
 	{
 		R.Error = TEXT("AddBlendSpaceToDatabase: AddEntryCommon failed (likely WITH_EDITORONLY_DATA off)");
@@ -515,8 +554,9 @@ int32 UUnrealBridgePoseSearchLibrary::RemoveDatabaseAnimationByAsset(const FStri
 
 	for (int32 i = 0; i < PSD->GetNumAnimationAssets(); ++i)
 	{
-		const FPoseSearchDatabaseAnimationAsset* E = PSD->GetDatabaseAnimationAsset(i);
-		if (E && E->AnimAsset == Anim)
+		const FPoseSearchDatabaseAnimationAssetBase* E =
+			PSD->GetDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(i);
+		if (E && E->GetAnimationAsset() == Anim)
 		{
 			RemoveDatabaseAnimationAt(DatabasePath, i);
 			return i;
@@ -554,7 +594,8 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseAnimationEnabled(const FString& 
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
-	FPoseSearchDatabaseAnimationAsset* E = PSD->GetMutableDatabaseAnimationAsset(Index);
+	FPoseSearchDatabaseAnimationAssetBase* E =
+		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(Index);
 	if (!E)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UnrealBridge: SetDatabaseAnimationEnabled index %d invalid"), Index);
@@ -562,7 +603,7 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseAnimationEnabled(const FString& 
 	}
 	const FScopedTransaction Tx(LOCTEXT("PSDEntryEnabled", "Set PoseSearch Database Entry Enabled"));
 	PSD->Modify();
-	E->bEnabled = bEnabled;
+	E->SetIsEnabled(bEnabled);
 	PSD->MarkPackageDirty();
 #if WITH_EDITOR
 	using namespace UE::PoseSearch;
@@ -581,12 +622,13 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseAnimationSamplingRange(const FSt
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
-	FPoseSearchDatabaseAnimationAsset* E = PSD->GetMutableDatabaseAnimationAsset(Index);
+	FPoseSearchDatabaseAnimationAssetBase* E =
+		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(Index);
 	if (!E) return false;
 
 	const FScopedTransaction Tx(LOCTEXT("PSDEntryRange", "Set PoseSearch Database Entry Sampling Range"));
 	PSD->Modify();
-	E->SamplingRange = FFloatInterval(SamplingRangeMin, SamplingRangeMax);
+	E->SetSamplingRange(FFloatInterval(SamplingRangeMin, SamplingRangeMax));
 	PSD->MarkPackageDirty();
 #if WITH_EDITOR
 	using namespace UE::PoseSearch;
@@ -604,7 +646,8 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseAnimationMirrorOption(const FStr
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
-	FPoseSearchDatabaseAnimationAsset* E = PSD->GetMutableDatabaseAnimationAsset(Index);
+	FPoseSearchDatabaseAnimationAssetBase* E =
+		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(Index);
 	if (!E) return false;
 
 	EPoseSearchMirrorOption Opt = EPoseSearchMirrorOption::UnmirroredOnly;
@@ -633,13 +676,9 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseBlendSpaceSampling(const FString
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
-	FPoseSearchDatabaseAnimationAsset* E = PSD->GetMutableDatabaseAnimationAsset(Index);
+	FPoseSearchDatabaseBlendSpace* E =
+		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseBlendSpace>(Index);
 	if (!E) return false;
-	if (!Cast<UBlendSpace>(E->AnimAsset))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UnrealBridge: SetDatabaseBlendSpaceSampling entry %d is not a BlendSpace"), Index);
-		return false;
-	}
 
 	const FScopedTransaction Tx(LOCTEXT("PSDEntryBSSampling", "Set PoseSearch Database BlendSpace Sampling"));
 	PSD->Modify();
@@ -700,6 +739,21 @@ FString UUnrealBridgePoseSearchLibrary::GetIndexStatus(const FString& DatabasePa
 #endif
 }
 
+FBridgePoseSearchIndexPollResult UUnrealBridgePoseSearchLibrary::WaitPoseSearchIndex(
+	const FString& DatabasePath)
+{
+	FBridgePoseSearchIndexPollResult Result;
+	Result.Status = GetIndexStatus(DatabasePath);
+	if (Result.Status == TEXT("Error"))
+	{
+		Result.Error = TEXT("PoseSearch database was not found or index status is unavailable");
+		return Result;
+	}
+	Result.bComplete = Result.Status == TEXT("Indexed") || Result.Status == TEXT("Failed");
+	Result.bSuccess = Result.Status == TEXT("Indexed");
+	return Result;
+}
+
 bool UUnrealBridgePoseSearchLibrary::InvalidateIndex(const FString& DatabasePath)
 {
 #if WITH_EDITOR
@@ -717,4 +771,4 @@ bool UUnrealBridgePoseSearchLibrary::InvalidateIndex(const FString& DatabasePath
 
 #undef LOCTEXT_NAMESPACE
 
-#endif // !UE_VERSION_OLDER_THAN(5, 7, 0)
+#endif // !UE_VERSION_OLDER_THAN(5, 6, 0)

@@ -24,7 +24,9 @@ UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It p
 
 ## Highlights
 
-- **AST-based hallucination defense.** Before any script reaches UE, `bridge_preflight.py` parses it as Python AST and validates every `unreal.UnrealBridge*Library.fn(...)` call against an auto-generated manifest (22 libraries × 1033 UFUNCTIONs) — catching unknown function/library names (with did-you-mean), wrong positional arg counts, unknown kwargs, and non-existent bridge-enum members **without ever round-tripping to the editor**. A second layer redirects raw `AssetRegistry` / `GameplayStatics` usage patterns to their bridge equivalents and tracks each returned value's type so attribute access on a `str` or `SoftObjectPath` doesn't silently misbehave; on a real `AttributeError` from a UE object the bridge calls back into UE Python, lists that live class's reflected `UPROPERTY`s, and emits a paste-ready correction (auto-handles `snake_case` ↔ `PascalCase` mismatches). A third layer ships a kwargs-only Python wrapper module so positional-arg-order errors are structurally impossible. Together these dropped a fresh-context agent's bridge-call failure rate from **24% → 16%** across A/B validation runs — protection that prompt-only "look-up-before-call" rules in `SKILL.md` had failed to deliver.
+- **Durable, recoverable execution.** Protocol v2 separates client wait time from Job lifetime, with queue deadlines, cancellation, idempotency keys, structured errors, stored results, health metrics, and multi-frame polling Jobs that yield between Editor ticks. The loopback-only HTTP MCP/REST endpoint on `127.0.0.1:11438` uses bearer authentication and exposes grouped typed tools without publishing every UFUNCTION as a separate MCP tool.
+- **Transaction-owned asset changes.** ChangeSets provide preview, explicit commit/rollback, dirty-package ownership, protection for packages that were already dirty, and save-only-owned behavior. A failed Bridge mutator is rolled back without saving unrelated editor work.
+- **AST-based hallucination defense.** Before any script reaches UE, `bridge_preflight.py` parses it as Python AST and validates every `unreal.UnrealBridge*Library.fn(...)` call against an auto-generated manifest (34 libraries × 1179 UFUNCTIONs) — catching unknown function/library names (with did-you-mean), wrong positional arg counts, unknown kwargs, and non-existent bridge-enum members **without ever round-tripping to the editor**. A second layer redirects raw `AssetRegistry` / `GameplayStatics` usage patterns to their bridge equivalents and tracks each returned value's type so attribute access on a `str` or `SoftObjectPath` doesn't silently misbehave; on a real `AttributeError` from a UE object the bridge calls back into UE Python, lists that live class's reflected `UPROPERTY`s, and emits a paste-ready correction (auto-handles `snake_case` ↔ `PascalCase` mismatches). A third layer ships a kwargs-only Python wrapper module so positional-arg-order errors are structurally impossible. Together these dropped a fresh-context agent's bridge-call failure rate from **24% → 16%** across A/B validation runs — protection that prompt-only "look-up-before-call" rules in `SKILL.md` had failed to deliver.
 
   <p align="center">
     <img src="docs/images/en/02-preflight.png" alt="Local AST preflight — stop hallucinations before they reach UE">
@@ -34,7 +36,7 @@ UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It p
 - **Reactive event subscription.** The Agent can subscribe to GAS events, attribute changes, actor lifecycle, AnimNotify, input, timers, and editor-side asset-change events. When the specified event fires, the bridge calls back proactively — no polling needed. This is a scenario that a pure request / response protocol cannot cover.
 - **Agent control surface at PIE runtime.** `UnrealBridgeGameplayLibrary` provides aggregated world observation, navigation pathfinding, and input operations for movement / look / jump — suitable for AI-behavior validation, automated testing, and in-game NPC prototyping.
 - **Blueprint graph quality toolchain.** More than just auto-layout: `auto_layout_graph`'s `pin_aligned` strategy reads live Slate geometry to align exec rails, `straighten_exec_chain` snaps the main rail, `collapse_nodes_to_function` extracts subgraphs, `lint_blueprint` scans by fixed rules for orphans / unnamed nodes / oversized functions / uncommented large graphs, and `add_comment_box` + preset palette (Section / Validation / Danger / Network / UI / Debug / Setup) partition graphs for readability. AnimGraph and state machines get dedicated `auto_layout_anim_graph` / `auto_layout_state_machine` (the latter recurses into each state's inner graph + every transition rule graph).
-- **Native Python execution.** 22 `UnrealBridge*Library` surfaces expose ~1033 `UFUNCTION`s in total, covering common subsystems; un-wrapped capabilities are reachable directly through the native `unreal.*` API. Compared to fixed-tool-list MCP schemes or reflection protocols that expose only a single `call` command, this design strikes a balance between flexibility and structure. Every level write op is wrapped in `FScopedTransaction` and supports standard Undo / Redo.
+- **Native Python execution.** 34 `UnrealBridge*Library` surfaces expose 1179 `UFUNCTION`s in total, covering common subsystems; un-wrapped capabilities are reachable directly through the native `unreal.*` API. Compared to fixed-tool-list MCP schemes or reflection protocols that expose only a single `call` command, this design strikes a balance between flexibility and structure. Every level write op is wrapped in `FScopedTransaction` and supports standard Undo / Redo.
 
 ## Architecture
 
@@ -45,7 +47,7 @@ flowchart LR
     subgraph Host["Agent host"]
       CLI["bridge.py"]
       Pre["AST preflight<br/>(local — rejects bad calls<br/>before TCP send)"]
-      Mani[("bridge_manifest.json<br/>22 libs · 1033 UFUNCTIONs")]
+      Mani[("bridge_manifest.json<br/>34 libs · 1179 UFUNCTIONs")]
     end
 
     Gen["tools/gen_manifest.py<br/>scans C++ headers"]
@@ -56,7 +58,7 @@ flowchart LR
       Reactive["UnrealBridgeReactiveSubsystem<br/>+ 10 event adapters"]
       Exec["IPythonScriptPlugin::<br/>ExecPythonCommandEx<br/>(GameThread)"]
       Wrap["unreal_bridge<br/>kwargs-only wrapper<br/>(optional safer surface)"]
-      Libs["22× UnrealBridge*Library"]
+      Libs["34× UnrealBridge*Library"]
       Engine["UEditor · UWorld · Assets"]
     end
 
@@ -151,6 +153,29 @@ Once the skill is installed, drop any of these into a Claude Code session:
 
 The Agent reads `SKILL.md`, picks the right `UnrealBridge*Library` function, calls it through `bridge.py`, and reports back.
 
+### Codex integration (optional)
+
+This repo also ships a Codex-oriented skill:
+
+```bat
+install_codex_skill.bat
+```
+
+It copies `.codex/skills/unreal-bridge/` into `%USERPROFILE%\.codex\skills\unreal-bridge\`.
+
+For Codex or other clients that prefer MCP tools over shelling out to
+`bridge.py`, install the optional dependency and start the grouped adapter:
+
+```bat
+pip install -r requirements-mcp.txt
+python .claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
+```
+
+The adapter exposes grouped tools such as `bridge_call`, `asset_op`,
+`level_op`, `blueprint_op`, `umg_op`, `asset_factory_op`, `ai_op`,
+`niagara_op`, and `sequencer_op` instead of registering hundreds of individual
+`UFUNCTION`s as tools.
+
 ## Usage
 
 ### CLI
@@ -207,7 +232,7 @@ python .claude/skills/unreal-bridge/scripts/rebuild_relaunch.py  # reflection ch
 | `UnrealBridgeMaterialLibrary` | Material instance parameter queries |
 | `UnrealBridgeUMGLibrary` | UMG widget tree, properties, animations, bindings, events; widget search by name / class; property writes |
 | `UnrealBridgeLevelLibrary` | Actor query (name / Class / Tag / Folder / radius / Box / ray) and edit (spawn / destroy / transform / attach / visibility / Mobility, nested property read / write, function invocation); terrain height profile and Trace probing; in-editor custom NavGraph (nodes, edges, shortest path, JSON persistence); orthographic top-down view plus animation Pose / Montage timeline screenshots; every write op runs in a transaction |
-| `UnrealBridgeEditorLibrary` | Editor session control: asset open / close / save / load; Content Browser and viewport; PIE start / stop / simulate / pause; undo / redo, console commands, CVars; batch Blueprint compile, redirector fixup; Live Coding trigger; screenshot, GBuffer channels (Depth / DeviceDepth / Normal / BaseColor) and HitProxy ID pass; tabs, notifications, diagnostics. Bridge self-observation: call log (ring-buffered request id, latency, endpoint, output size), latency stats, signature-registry JSON dump (one shot returns metadata for all ~1020 `UFUNCTION`s) |
+| `UnrealBridgeEditorLibrary` | Editor session control: asset open / close / save / load; Content Browser and viewport; PIE start / stop / simulate / pause; undo / redo, console commands, CVars; batch Blueprint compile, redirector fixup; Live Coding trigger; screenshot, GBuffer channels (Depth / DeviceDepth / Normal / BaseColor) and HitProxy ID pass; tabs, notifications, diagnostics. Bridge self-observation: call log, latency stats, non-blocking screenshot/shader/asset-compilation request and poll APIs |
 | `UnrealBridgeGameplayAbilityLibrary` | GameplayAbility / GameplayEffect / AttributeSet Blueprint metadata; tag hierarchy and matching; list abilities and effects by tag; actor ASC state (attribute values, active abilities / effects, cooldown checks); runtime `SendGameplayEvent` and attribute mutation; GA / GE / GC Blueprint authoring (CDO edit, GA graph nodes, GE magnitude / component / inherited tags, GC tag set) |
 | `UnrealBridgeGameplayTagLibrary` | GameplayTag refactoring: `find_assets_referencing_tag` (with child-tag expansion), `list_all_registered_tags`, `get_tag_source_info`. Mutations `add_gameplay_tag` / `rename_gameplay_tag` (auto-redirect, redirect persistence hardened against UE 5.7's silent-drop quirk) / `remove_gameplay_tag`. Source enumeration via `list_tag_source_inis`; redirect ledger via `list_gameplay_tag_redirects` + `remove_gameplay_tag_redirect` for enumerate-then-sweep cleanup |
 | `UnrealBridgePerfLibrary` | AAA-grade performance instrumentation across eight dimensions. **Point-in-time**: frame timing (FPS / GT / RT / GPU / RHI ms via `FStatUnitData` + RHI globals), render counters, process memory, `TObjectIterator` class histogram, ISO-8601-stamped aggregate snapshot. **Memory & asset breakdown**: texture / mesh / audio / UObject grouped by folder / LOD group / compression format / class — disk or runtime mode; top-N largest assets across any UClass; world-actor breakdown by class × level (World Partition partial). **Time series**: opt-in periodic sampling with ring buffer, always-on frame-time histogram, hitch log via `OnEndFrame` hook, CSV export, **`get_frame_time_percentiles([50,90,95,99])`** for AAA-grade tail-latency investigation. **Render breakdown**: per-actor render cost, LOD distribution, primitives-by-material, shadow casters, Lumen / Nanite diagnostics; **`get_texture_streaming_residency`** (per-texture resident vs wanted mip + pool over-budget), **`get_render_target_memory`** (per-subclass RT byte totals), **`get_per_pass_gpu_timings`** (BasePass / Lumen / Translucency averages from `FRealtimeGPUProfiler`; falls back gracefully on UE 5.7's new RHI profiler), **`analyze_all_materials`** (cross-library complexity heuristic to surface heaviest masters). **Live trace control**: `start_trace_capture` / `stop_trace_capture` / `list_trace_channels` / `get_trace_state` wrapping `FTraceAuxiliary`. **Trace summary parsers** (5.7+): `parse_trace_to_summary` returns CPU + GPU hot scopes + per-thread hot scopes + counters + load-time breakdown + frame stats from a `.utrace` file in one call; specialised `parse_alloc_trace_to_summary` (peak commit + tag inventory + alloc/free delta), `parse_net_trace_to_summary` (per-game-instance + per-connection traffic totals), `parse_cook_trace_to_summary` (top-N packages by `BeginCacheCookedPlatformData` for 4-hour cook attribution). **Regression workflow**: `compare_perf_snapshots(before, after, threshold)` returns per-field deltas + flagged regressions list; `begin_auto_hitch_capture` / `end_auto_hitch_capture` ring-buffer rich snapshots on every frame ≥ threshold; `begin_insights_for_trace` shells out UnrealInsights.exe for human handoff |
@@ -215,13 +240,20 @@ python .claude/skills/unreal-bridge/scripts/rebuild_relaunch.py  # reflection ch
 | `UnrealBridgeNavigationLibrary` | Export NavMesh as OBJ for external visualization and geometry analysis |
 | `UnrealBridgeProceduralLibrary` | Procedural content authoring primitives — point-list-in / point-list-out sampling + filters + instancing on the editor world. Deterministic given `(params, seed)`: `FRandomStream(Seed)` + `ECC_Visibility` + `bTraceComplex=true` for surface trace; Poisson-2D / grid / radial / spline / mesh-surface samplers; slope / min-distance / mask filters; ISM / HISM batch spawn; Landscape grid + project-to-surface (callable as plain Python arrays — intentionally NOT a PCG-graph wrapper) |
 | `UnrealBridgeGeometryLibrary` | Geometry Script wrapper — `UDynamicMesh` handle pool + cross-engine asset I/O (`copy_mesh_from_static_mesh` / `create_new_static_mesh_asset_from_mesh`) + 25+ ops covering primitives / boolean / smooth / decimate / displace / voxel-merge / uv-unwrap / bake normals + occlusion / extrude / sweep-along-spline / selection. Field names follow standard UE Python snake_case (`bHasNormals` → `.has_normals`) |
-| `UnrealBridgePCGLibrary` | PCG (Procedural Content Generation) read + trigger only — NO graph editing (PCG's territory; agents write code not visual graphs). Component override get / set, generate / cleanup, asset graph introspection. Whole library gated to UE 5.7+ with stub bodies on 5.3-5.6 |
+| `UnrealBridgePCGLibrary` | UE 5.6+ PCG component inspection, overrides, generate/cleanup and non-blocking polling; graph structure/validation, node creation, pin connection, settings-property update and node enable/disable. Destructive node deletion is intentionally not exposed; older engines receive explicit stub results |
+| `UnrealBridgeStateTreeLibrary` | StateTree structure and validation plus state/task/transition creation, reflected property updates and enable/disable operations; destructive removal is intentionally excluded |
+| `UnrealBridgeIKLibrary` | IK Rig goals, solvers and retarget chains; IK Retargeter source/target rigs, chain mappings and automatic mapping with validation reports |
+| `UnrealBridgeNiagaraLibrary` | Niagara system/emitter/module-stack structure and validation; add emitter/module, enable/disable modules, request compile and non-blocking compilation polling |
+| `UnrealBridgeSequencerLibrary` | Level Sequence creation, binding/track/section listing and validation; property tracks and typed keys, transform keys and skeletal-animation sections |
+| `UnrealBridgeLandscapeLibrary` | Landscape heightmap/weightmap import, layer mapping, batched multi-point layer sampling and bounded edit reports |
+| `UnrealBridgeChangeSetLibrary` | Job-scoped transactions with preview, explicit commit/rollback, package ownership and pre-existing dirty-package protection |
+| `UnrealBridgeRegistryLibrary` | Typed UFunction/FProperty registry JSON and stable registry hash used by strict plugin/manifest/wrapper handshakes |
 | `UnrealBridgeReactive*` | Event subscription framework with 10 adapters: runtime (GameplayEvent, AttributeChanged, ActorLifecycle, MovementMode, AnimNotify, InputAction, Timer) and editor (AssetEvent, PieState, BpCompiled); handler register / list / pause / resume / stats; cross-session JSON persistence. Replaces polling |
 | `UnrealBridgePropertyLibrary` | **Privileged generic UPROPERTY surface.** Read / write any reflected property by dotted path with `[N]` array indexing — bypasses UE Python's binding-layer access checks (the "is protected and cannot be read" rejection, the EditDefaultsOnly-on-struct-copy rejection that blocks nested writes like `Modifiers[0].ModifierMagnitude.ScalableFloatMagnitude.Value`). `list_u_properties` returns full reflection (private/protected/bare UPROPERTY + decoded EPropertyFlags + metadata map); `array_append_u_property` auto-detects FGameplayTagContainer to maintain ParentTags cache; `get_asset_cdo_path` resolves the CDO path correctly. Wraps writes in `FScopedTransaction` + optional `PostEditChangeChainProperty` for editor-window refresh. |
 
 ## Protocol
 
-Two channels:
+Three local entry points:
 
 1. **UDP multicast discovery** on `239.255.42.99:9876`. Client broadcasts a `probe` with a request id and an optional project filter; every running editor replies with its bound TCP address + port + token fingerprint. Multiple editors coexist on the same host via `SO_REUSEADDR`.
 
@@ -235,7 +267,9 @@ Ping    :  {"id","command":"ping"}  →  pong
 
 Token auth kicks in automatically when the server binds non-loopback; the client reads the token from `<Project>/Saved/UnrealBridge/token.txt` and includes it in every request.
 
-Scripts run on the GameThread; captured stdout and stderr are separated by the special `__UB_ERR__` sentinel.
+3. **Embedded HTTP MCP/REST** on `http://127.0.0.1:11438`. It uses the bearer token in `<Project>/Saved/UnrealBridge/http-token.txt`, supports MCP initialize/list/call, grouped typed tools, `/unrealbridge/health`, and durable Job submit/get/cancel/list routes. It is loopback-only by default and does not expose SSE on `GET /mcp`.
+
+UObject/Python steps run on the GameThread. Long supported workflows use polling Jobs: each start/poll step is short, the Job keeps the same id and stored result, and Editor/transport ticks run between steps. Do not use `time.sleep()` in a bridge script that needs the Editor to progress.
 
 ### Server config (CLI / env / `EditorPerProjectUserSettings.ini [UnrealBridge]`)
 

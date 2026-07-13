@@ -1,29 +1,104 @@
 #include "UnrealBridgeUMGLibrary.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "BaseWidgetBlueprint.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "WidgetBlueprint.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/CanvasPanel.h"
+#include "Components/ContentWidget.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/Widget.h"
 #include "Components/PanelWidget.h"
 #include "Components/PanelSlot.h"
+#include "EditorAssetLibrary.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Animation/WidgetAnimation.h"
+#include "Animation/WidgetAnimationBinding.h"
+#include "HAL/FileManager.h"
+#include "ImageUtils.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
 #include "MovieScene.h"
+#include "MovieSceneSection.h"
 #include "MovieSceneTrack.h"
 #include "MovieScenePossessable.h"
+#include "Sections/MovieSceneFloatSection.h"
+#include "Serialization/BufferArchive.h"
+#include "Tracks/MovieSceneFloatTrack.h"
+#include "UObject/Package.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
+#include "EdGraphSchema_K2.h"
 #include "K2Node_ComponentBoundEvent.h"
+#include "WidgetBlueprintEditorUtils.h"
 
 // ─── Helpers ────────────────────────────────────────────────
 
 namespace BridgeUMGImpl
 {
+	FString NormalizeKey(FString Key)
+	{
+		Key.ReplaceInline(TEXT("_"), TEXT(""));
+		Key.ReplaceInline(TEXT("-"), TEXT(""));
+		Key.ReplaceInline(TEXT(" "), TEXT(""));
+		return Key.ToLower();
+	}
+
+	FString NormalizeAssetPath(const FString& InputPath)
+	{
+		if (InputPath.IsEmpty() || InputPath.Contains(TEXT(".")))
+		{
+			return InputPath;
+		}
+		const FString AssetName = FPackageName::GetShortName(InputPath);
+		return FString::Printf(TEXT("%s.%s"), *InputPath, *AssetName);
+	}
+
 	UWidgetBlueprint* LoadWBP(const FString& Path)
 	{
-		UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *Path);
+		UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, *NormalizeAssetPath(Path));
 		if (!WBP)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("UnrealBridge: Could not load Widget Blueprint '%s'"), *Path);
 		}
 		return WBP;
+	}
+
+	UWidgetTree* EnsureWidgetTree(UWidgetBlueprint* WBP)
+	{
+		UBaseWidgetBlueprint* BaseWBP = Cast<UBaseWidgetBlueprint>(WBP);
+		if (!BaseWBP)
+		{
+			return nullptr;
+		}
+		if (!BaseWBP->WidgetTree)
+		{
+			BaseWBP->Modify();
+			BaseWBP->WidgetTree = NewObject<UWidgetTree>(BaseWBP, TEXT("WidgetTree"), RF_Transactional);
+			BaseWBP->MarkPackageDirty();
+		}
+		return BaseWBP->WidgetTree;
+	}
+
+	FString BlueprintStatusToString(const UBlueprint* Blueprint)
+	{
+		if (!Blueprint)
+		{
+			return TEXT("Unknown");
+		}
+		switch (Blueprint->Status)
+		{
+		case BS_Unknown: return TEXT("Unknown");
+		case BS_Dirty: return TEXT("Dirty");
+		case BS_Error: return TEXT("Error");
+		case BS_UpToDate: return TEXT("UpToDate");
+		case BS_UpToDateWithWarnings: return TEXT("UpToDateWithWarnings");
+		default: return TEXT("Other");
+		}
 	}
 
 	FString VisibilityToString(ESlateVisibility V)
@@ -86,6 +161,291 @@ namespace BridgeUMGImpl
 		});
 		return Found;
 	}
+
+	UClass* ResolveWidgetClass(const FString& ClassNameOrPath, UClass* RequiredBaseClass = UWidget::StaticClass())
+	{
+		FString ClassName = ClassNameOrPath;
+		ClassName.TrimStartAndEndInline();
+		if (ClassName.IsEmpty())
+		{
+			return nullptr;
+		}
+		if (ClassName.StartsWith(TEXT("Class'")) && ClassName.EndsWith(TEXT("'")))
+		{
+			ClassName = ClassName.Mid(6, ClassName.Len() - 7);
+		}
+
+		static const TMap<FString, FString> CommonWidgetClasses = {
+			{TEXT("border"), TEXT("/Script/UMG.Border")},
+			{TEXT("button"), TEXT("/Script/UMG.Button")},
+			{TEXT("canvaspanel"), TEXT("/Script/UMG.CanvasPanel")},
+			{TEXT("checkbox"), TEXT("/Script/UMG.CheckBox")},
+			{TEXT("editabletext"), TEXT("/Script/UMG.EditableText")},
+			{TEXT("editabletextbox"), TEXT("/Script/UMG.EditableTextBox")},
+			{TEXT("gridpanel"), TEXT("/Script/UMG.GridPanel")},
+			{TEXT("horizontalbox"), TEXT("/Script/UMG.HorizontalBox")},
+			{TEXT("image"), TEXT("/Script/UMG.Image")},
+			{TEXT("listview"), TEXT("/Script/UMG.ListView")},
+			{TEXT("namedslot"), TEXT("/Script/UMG.NamedSlot")},
+			{TEXT("overlay"), TEXT("/Script/UMG.Overlay")},
+			{TEXT("progressbar"), TEXT("/Script/UMG.ProgressBar")},
+			{TEXT("richtextblock"), TEXT("/Script/UMG.RichTextBlock")},
+			{TEXT("scalebox"), TEXT("/Script/UMG.ScaleBox")},
+			{TEXT("scrollbox"), TEXT("/Script/UMG.ScrollBox")},
+			{TEXT("sizebox"), TEXT("/Script/UMG.SizeBox")},
+			{TEXT("slider"), TEXT("/Script/UMG.Slider")},
+			{TEXT("spacer"), TEXT("/Script/UMG.Spacer")},
+			{TEXT("textblock"), TEXT("/Script/UMG.TextBlock")},
+			{TEXT("tileview"), TEXT("/Script/UMG.TileView")},
+			{TEXT("treeview"), TEXT("/Script/UMG.TreeView")},
+			{TEXT("uniformgridpanel"), TEXT("/Script/UMG.UniformGridPanel")},
+			{TEXT("verticalbox"), TEXT("/Script/UMG.VerticalBox")},
+			{TEXT("widgetswitcher"), TEXT("/Script/UMG.WidgetSwitcher")},
+			{TEXT("wrapbox"), TEXT("/Script/UMG.WrapBox")},
+			{TEXT("commonactivatablewidget"), TEXT("/Script/CommonUI.CommonActivatableWidget")},
+			{TEXT("commonborder"), TEXT("/Script/CommonUI.CommonBorder")},
+			{TEXT("commonbuttonbase"), TEXT("/Script/CommonUI.CommonButtonBase")},
+			{TEXT("commonlazyimage"), TEXT("/Script/CommonUI.CommonLazyImage")},
+			{TEXT("commontextblock"), TEXT("/Script/CommonUI.CommonTextBlock")}
+		};
+
+		FString ClassPath = ClassName;
+		if (!ClassPath.StartsWith(TEXT("/")))
+		{
+			if (const FString* MappedPath = CommonWidgetClasses.Find(NormalizeKey(ClassPath)))
+			{
+				ClassPath = *MappedPath;
+			}
+			else
+			{
+				ClassPath = FString::Printf(TEXT("/Script/UMG.%s"), *ClassPath);
+			}
+		}
+
+		UClass* WidgetClass = StaticLoadClass(RequiredBaseClass, nullptr, *ClassPath);
+		if (!WidgetClass && !ClassPath.Contains(TEXT(".")))
+		{
+			WidgetClass = StaticLoadClass(RequiredBaseClass, nullptr, *(ClassPath + TEXT("_C")));
+		}
+		return WidgetClass && WidgetClass->IsChildOf(RequiredBaseClass) ? WidgetClass : nullptr;
+	}
+
+	FProperty* FindPropertyByFlexibleName(UStruct* Struct, const FString& PropertyName)
+	{
+		if (!Struct)
+		{
+			return nullptr;
+		}
+		if (FProperty* Direct = Struct->FindPropertyByName(FName(*PropertyName)))
+		{
+			return Direct;
+		}
+		const FString Normalized = NormalizeKey(PropertyName);
+		const FString Alias = Normalized == TEXT("isvariable") ? TEXT("bIsVariable")
+			: (Normalized == TEXT("autosize") || Normalized == TEXT("sizetocontent")) ? TEXT("bAutoSize")
+			: Normalized == TEXT("enabled") ? TEXT("bIsEnabled")
+			: TEXT("");
+		if (!Alias.IsEmpty())
+		{
+			if (FProperty* Aliased = Struct->FindPropertyByName(FName(*Alias)))
+			{
+				return Aliased;
+			}
+		}
+		for (TFieldIterator<FProperty> It(Struct, EFieldIteratorFlags::IncludeSuper); It; ++It)
+		{
+			FProperty* Prop = *It;
+			if (Prop && NormalizeKey(Prop->GetName()) == Normalized)
+			{
+				return Prop;
+			}
+		}
+		return nullptr;
+	}
+
+	bool SetPropertyFromText(UObject* Object, const FString& PropertyName, const FString& Value)
+	{
+		if (!Object)
+		{
+			return false;
+		}
+		FProperty* Prop = FindPropertyByFlexibleName(Object->GetClass(), PropertyName);
+		if (!Prop)
+		{
+			return false;
+		}
+		void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Object);
+		if (FObjectPropertyBase* ObjectProp = CastField<FObjectPropertyBase>(Prop))
+		{
+			UObject* LoadedObject = LoadObject<UObject>(nullptr, *Value);
+			if (!LoadedObject && !Value.IsEmpty() && !Value.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+			{
+				return false;
+			}
+			ObjectProp->SetObjectPropertyValue(ValuePtr, LoadedObject);
+			return true;
+		}
+		return Prop->ImportText_Direct(*Value, ValuePtr, Object, PPF_None) != nullptr;
+	}
+
+	bool SetPropertiesFromText(UObject* Object, const TMap<FString, FString>& Properties)
+	{
+		for (const TPair<FString, FString>& Pair : Properties)
+		{
+			if (!SetPropertyFromText(Object, Pair.Key, Pair.Value))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("UnrealBridge UMG: failed to set %s on %s"), *Pair.Key, *GetNameSafe(Object));
+				return false;
+			}
+		}
+		return true;
+	}
+
+	void MarkWidgetBlueprintModified(UWidgetBlueprint* WBP, bool bStructural)
+	{
+		if (!WBP)
+		{
+			return;
+		}
+		WBP->Modify();
+		if (bStructural)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WBP);
+		}
+		else
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+		}
+		WBP->MarkPackageDirty();
+	}
+
+	bool AddWidgetToParent(UWidgetTree* WidgetTree, UWidget* ParentWidget, UWidget* ChildWidget, int32 Index)
+	{
+		if (!WidgetTree || !ChildWidget)
+		{
+			return false;
+		}
+		if (!ParentWidget)
+		{
+			if (WidgetTree->RootWidget && WidgetTree->RootWidget != ChildWidget)
+			{
+				return false;
+			}
+			WidgetTree->Modify();
+			WidgetTree->RootWidget = ChildWidget;
+			return true;
+		}
+		UPanelWidget* PanelParent = Cast<UPanelWidget>(ParentWidget);
+		if (!PanelParent || !PanelParent->CanAddMoreChildren())
+		{
+			return false;
+		}
+		PanelParent->Modify();
+		UPanelSlot* Slot = (Index >= 0 && Index <= PanelParent->GetChildrenCount())
+			? PanelParent->InsertChildAt(Index, ChildWidget)
+			: PanelParent->AddChild(ChildWidget);
+		return Slot != nullptr;
+	}
+
+	bool RemoveFromCurrentParent(UWidgetTree* WidgetTree, UWidget* Widget)
+	{
+		if (!WidgetTree || !Widget)
+		{
+			return false;
+		}
+		if (WidgetTree->RootWidget == Widget)
+		{
+			WidgetTree->Modify();
+			WidgetTree->RootWidget = nullptr;
+			return true;
+		}
+		if (Widget->Slot && Widget->Slot->Parent)
+		{
+			Widget->Slot->Parent->Modify();
+			return Widget->Slot->Parent->RemoveChild(Widget);
+		}
+		int32 ChildIndex = INDEX_NONE;
+		if (UPanelWidget* Parent = UWidgetTree::FindWidgetParent(Widget, ChildIndex))
+		{
+			Parent->Modify();
+			return Parent->RemoveChild(Widget);
+		}
+		return false;
+	}
+
+	bool IsDescendantOf(UWidget* CandidateDescendant, UWidget* CandidateAncestor)
+	{
+		if (!CandidateDescendant || !CandidateAncestor)
+		{
+			return false;
+		}
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(CandidateAncestor))
+		{
+			for (int32 Index = 0; Index < Panel->GetChildrenCount(); ++Index)
+			{
+				UWidget* Child = Panel->GetChildAt(Index);
+				if (Child == CandidateDescendant || IsDescendantOf(CandidateDescendant, Child))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	UWidgetAnimation* FindAnimationByName(UWidgetBlueprint* WBP, const FString& AnimationName)
+	{
+		if (!WBP)
+		{
+			return nullptr;
+		}
+		for (UWidgetAnimation* Animation : WBP->Animations)
+		{
+			if (!Animation)
+			{
+				continue;
+			}
+			if (Animation->GetName().Equals(AnimationName, ESearchCase::IgnoreCase))
+			{
+				return Animation;
+			}
+#if WITH_EDITOR
+			if (Animation->GetDisplayLabel().Equals(AnimationName, ESearchCase::IgnoreCase))
+			{
+				return Animation;
+			}
+#endif
+		}
+		return nullptr;
+	}
+
+	FWidgetAnimationBinding* EnsureAnimationBinding(UWidgetAnimation* Animation, UMovieScene* MovieScene, UWidgetTree* WidgetTree, UWidget* Widget)
+	{
+		if (!Animation || !MovieScene || !Widget)
+		{
+			return nullptr;
+		}
+		for (FWidgetAnimationBinding& Binding : Animation->AnimationBindings)
+		{
+			if (Binding.WidgetName == Widget->GetFName())
+			{
+				return &Binding;
+			}
+		}
+		const FGuid BindingGuid = MovieScene->AddPossessable(Widget->GetName(), Widget->GetClass());
+		FWidgetAnimationBinding NewBinding;
+		NewBinding.WidgetName = Widget->GetFName();
+		NewBinding.AnimationGuid = BindingGuid;
+		NewBinding.bIsRootWidget = WidgetTree && WidgetTree->RootWidget == Widget;
+		Animation->AnimationBindings.Add(NewBinding);
+		return &Animation->AnimationBindings.Last();
+	}
+
+	FFrameNumber SecondsToFrame(const UMovieScene* MovieScene, float TimeSeconds)
+	{
+		const FFrameRate TickResolution = MovieScene ? MovieScene->GetTickResolution() : FFrameRate(30, 1);
+		return (TimeSeconds * TickResolution).RoundToFrame();
+	}
 }
 
 // ─── GetWidgetTree ──────────────────────────────────────────
@@ -103,6 +463,96 @@ TArray<FBridgeWidgetInfo> UUnrealBridgeUMGLibrary::GetWidgetTree(const FString& 
 	}
 
 	return Result;
+}
+
+// ─── CreateWidgetBlueprint ─────────────────────────────────
+
+FString UUnrealBridgeUMGLibrary::CreateWidgetBlueprint(
+	const FString& Path,
+	const FString& Name,
+	const FString& ParentClass,
+	const FString& RootClass,
+	const FString& RootName,
+	bool bCompile,
+	bool bSave)
+{
+	if (Name.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UnrealBridge UMG: CreateWidgetBlueprint requires Name"));
+		return FString();
+	}
+
+	const FString PackagePath = Path.IsEmpty() ? TEXT("/Game") : Path;
+	const FString PackageName = PackagePath / Name;
+	if (LoadObject<UWidgetBlueprint>(nullptr, *BridgeUMGImpl::NormalizeAssetPath(PackageName)))
+	{
+		return PackageName;
+	}
+
+	UClass* ResolvedParent = UUserWidget::StaticClass();
+	if (!ParentClass.IsEmpty())
+	{
+		ResolvedParent = BridgeUMGImpl::ResolveWidgetClass(ParentClass, UUserWidget::StaticClass());
+		if (!ResolvedParent)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UnrealBridge UMG: unable to resolve parent class %s"), *ParentClass);
+			return FString();
+		}
+	}
+
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!Package)
+	{
+		return FString();
+	}
+	Package->FullyLoad();
+
+	UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(
+		ResolvedParent,
+		Package,
+		FName(*Name),
+		BPTYPE_Normal,
+		UWidgetBlueprint::StaticClass(),
+		UWidgetBlueprintGeneratedClass::StaticClass(),
+		NAME_None);
+
+	UWidgetBlueprint* WBP = Cast<UWidgetBlueprint>(Blueprint);
+	if (!WBP)
+	{
+		return FString();
+	}
+
+	FAssetRegistryModule::AssetCreated(WBP);
+	UWidgetTree* WidgetTree = BridgeUMGImpl::EnsureWidgetTree(WBP);
+	if (!WidgetTree)
+	{
+		return FString();
+	}
+
+	if (!RootClass.Equals(TEXT("none"), ESearchCase::IgnoreCase))
+	{
+		const FString EffectiveRootClass = RootClass.IsEmpty() ? TEXT("CanvasPanel") : RootClass;
+		const FString EffectiveRootName = RootName.IsEmpty() ? TEXT("RootCanvas") : RootName;
+		UClass* ResolvedRootClass = BridgeUMGImpl::ResolveWidgetClass(EffectiveRootClass, UWidget::StaticClass());
+		if (!ResolvedRootClass)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UnrealBridge UMG: unable to resolve root class %s"), *EffectiveRootClass);
+			return FString();
+		}
+		UWidget* RootWidget = WidgetTree->ConstructWidget<UWidget>(ResolvedRootClass, FName(*EffectiveRootName));
+		WidgetTree->RootWidget = RootWidget;
+	}
+
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	if (bCompile)
+	{
+		FKismetEditorUtilities::CompileBlueprint(WBP);
+	}
+	if (bSave)
+	{
+		UEditorAssetLibrary::SaveAsset(PackageName, false);
+	}
+	return PackageName;
 }
 
 // ─── GetWidgetProperties ────────────────────────────────────
@@ -315,6 +765,140 @@ TArray<FBridgeWidgetInfo> UUnrealBridgeUMGLibrary::SearchWidgets(
 	return Result;
 }
 
+// ─── Widget Tree Editing ────────────────────────────────────
+
+bool UUnrealBridgeUMGLibrary::AddWidget(
+	const FString& WidgetBlueprintPath,
+	const FString& ClassName,
+	const FString& WidgetName,
+	const FString& ParentWidgetName,
+	bool bIsVariable,
+	const TMap<FString, FString>& Properties,
+	const TMap<FString, FString>& SlotProperties,
+	int32 Index)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return false;
+	UWidgetTree* WidgetTree = BridgeUMGImpl::EnsureWidgetTree(WBP);
+	if (!WidgetTree) return false;
+
+	UClass* WidgetClass = BridgeUMGImpl::ResolveWidgetClass(ClassName);
+	if (!WidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UnrealBridge UMG: unable to resolve widget class %s"), *ClassName);
+		return false;
+	}
+
+	const FName NewWidgetName = WidgetName.IsEmpty() ? NAME_None : FName(*WidgetName);
+	UWidget* NewWidget = WidgetTree->ConstructWidget<UWidget>(WidgetClass, NewWidgetName);
+	if (!NewWidget)
+	{
+		return false;
+	}
+	NewWidget->bIsVariable = bIsVariable;
+
+	if (!BridgeUMGImpl::SetPropertiesFromText(NewWidget, Properties))
+	{
+		return false;
+	}
+
+	UWidget* ParentWidget = ParentWidgetName.IsEmpty() ? nullptr : BridgeUMGImpl::FindWidgetByName(WBP, ParentWidgetName);
+	if (!ParentWidgetName.IsEmpty() && !ParentWidget)
+	{
+		return false;
+	}
+	if (!BridgeUMGImpl::AddWidgetToParent(WidgetTree, ParentWidget, NewWidget, Index))
+	{
+		return false;
+	}
+	if (NewWidget->Slot && !BridgeUMGImpl::SetPropertiesFromText(NewWidget->Slot, SlotProperties))
+	{
+		return false;
+	}
+
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return true;
+}
+
+bool UUnrealBridgeUMGLibrary::RemoveWidget(const FString& WidgetBlueprintPath, const FString& WidgetName)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return false;
+	UWidgetTree* WidgetTree = BridgeUMGImpl::EnsureWidgetTree(WBP);
+	if (!WidgetTree) return false;
+
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	if (!Widget)
+	{
+		return false;
+	}
+	if (!BridgeUMGImpl::RemoveFromCurrentParent(WidgetTree, Widget))
+	{
+		return false;
+	}
+	Widget->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return true;
+}
+
+bool UUnrealBridgeUMGLibrary::RenameWidget(const FString& WidgetBlueprintPath, const FString& WidgetName, const FString& NewName)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP || NewName.IsEmpty()) return false;
+
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	if (!Widget)
+	{
+		return false;
+	}
+	if (BridgeUMGImpl::FindWidgetByName(WBP, NewName))
+	{
+		return false;
+	}
+	Widget->Modify();
+	Widget->Rename(*NewName, Widget->GetOuter(), REN_DontCreateRedirectors);
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return true;
+}
+
+bool UUnrealBridgeUMGLibrary::ReparentWidget(
+	const FString& WidgetBlueprintPath,
+	const FString& WidgetName,
+	const FString& NewParentWidgetName,
+	const TMap<FString, FString>& SlotProperties,
+	int32 Index)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return false;
+	UWidgetTree* WidgetTree = BridgeUMGImpl::EnsureWidgetTree(WBP);
+	if (!WidgetTree) return false;
+
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	UWidget* NewParent = NewParentWidgetName.IsEmpty() ? nullptr : BridgeUMGImpl::FindWidgetByName(WBP, NewParentWidgetName);
+	if (!Widget || (!NewParentWidgetName.IsEmpty() && !NewParent))
+	{
+		return false;
+	}
+	if (NewParent && BridgeUMGImpl::IsDescendantOf(NewParent, Widget))
+	{
+		return false;
+	}
+	if (!BridgeUMGImpl::RemoveFromCurrentParent(WidgetTree, Widget))
+	{
+		return false;
+	}
+	if (!BridgeUMGImpl::AddWidgetToParent(WidgetTree, NewParent, Widget, Index))
+	{
+		return false;
+	}
+	if (Widget->Slot && !BridgeUMGImpl::SetPropertiesFromText(Widget->Slot, SlotProperties))
+	{
+		return false;
+	}
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return true;
+}
+
 // ─── SetWidgetProperty ──────────────────────────────────────
 
 bool UUnrealBridgeUMGLibrary::SetWidgetProperty(
@@ -327,13 +911,408 @@ bool UUnrealBridgeUMGLibrary::SetWidgetProperty(
 	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
 	if (!Widget) return false;
 
-	FProperty* Prop = Widget->GetClass()->FindPropertyByName(FName(*PropertyName));
-	if (!Prop) return false;
-
-	void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Widget);
-	if (!Prop->ImportText_Direct(*Value, ValuePtr, Widget, PPF_None))
+	if (!BridgeUMGImpl::SetPropertyFromText(Widget, PropertyName, Value))
+	{
 		return false;
+	}
 
-	WBP->MarkPackageDirty();
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, false);
 	return true;
+}
+
+bool UUnrealBridgeUMGLibrary::SetWidgetProperties(
+	const FString& WidgetBlueprintPath,
+	const FString& WidgetName,
+	const TMap<FString, FString>& Properties)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return false;
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return false;
+
+	if (!BridgeUMGImpl::SetPropertiesFromText(Widget, Properties))
+	{
+		return false;
+	}
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, false);
+	return true;
+}
+
+bool UUnrealBridgeUMGLibrary::SetWidgetSlotProperties(
+	const FString& WidgetBlueprintPath,
+	const FString& WidgetName,
+	const TMap<FString, FString>& SlotProperties)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return false;
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	if (!Widget || !Widget->Slot) return false;
+
+	if (!BridgeUMGImpl::SetPropertiesFromText(Widget->Slot, SlotProperties))
+	{
+		return false;
+	}
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, false);
+	return true;
+}
+
+bool UUnrealBridgeUMGLibrary::SetWidgetCommonUIStyle(
+	const FString& WidgetBlueprintPath,
+	const FString& WidgetName,
+	const FString& StylePath,
+	const FString& StyleProperty)
+{
+	return SetWidgetProperty(WidgetBlueprintPath, WidgetName, StyleProperty, StylePath);
+}
+
+FString UUnrealBridgeUMGLibrary::BindWidgetEvent(
+	const FString& WidgetBlueprintPath,
+	const FString& WidgetName,
+	const FString& EventName,
+	const FString& FunctionName,
+	int32 PosX,
+	int32 PosY)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return FString();
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FString();
+
+	FObjectProperty* ComponentProperty = FindFProperty<FObjectProperty>(WBP->SkeletonGeneratedClass, Widget->GetFName());
+	if (!ComponentProperty)
+	{
+		ComponentProperty = FindFProperty<FObjectProperty>(WBP->GeneratedClass, Widget->GetFName());
+	}
+	if (!ComponentProperty)
+	{
+		return FString();
+	}
+	FMulticastDelegateProperty* DelegateProperty = FindFProperty<FMulticastDelegateProperty>(Widget->GetClass(), FName(*EventName));
+	if (!DelegateProperty)
+	{
+		return FString();
+	}
+
+	UEdGraph* Graph = WBP->UbergraphPages.Num() > 0 ? WBP->UbergraphPages[0] : nullptr;
+	if (!Graph)
+	{
+		Graph = FBlueprintEditorUtils::CreateNewGraph(WBP, TEXT("EventGraph"), UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+		if (Graph)
+		{
+			FBlueprintEditorUtils::AddUbergraphPage(WBP, Graph);
+		}
+	}
+	if (!Graph)
+	{
+		return FString();
+	}
+
+	for (UEdGraphNode* ExistingNode : Graph->Nodes)
+	{
+		UK2Node_ComponentBoundEvent* ExistingEvent = Cast<UK2Node_ComponentBoundEvent>(ExistingNode);
+		if (ExistingEvent &&
+			ExistingEvent->ComponentPropertyName == Widget->GetFName() &&
+			ExistingEvent->DelegatePropertyName == FName(*EventName))
+		{
+			return ExistingEvent->NodeGuid.ToString();
+		}
+	}
+
+	const FString EffectiveFunctionName = FunctionName.IsEmpty()
+		? FString::Printf(TEXT("%s_%s"), *WidgetName, *EventName)
+		: FunctionName;
+
+	Graph->Modify();
+	UK2Node_ComponentBoundEvent* EventNode = NewObject<UK2Node_ComponentBoundEvent>(Graph);
+	EventNode->InitializeComponentBoundEventParams(ComponentProperty, DelegateProperty);
+	EventNode->CustomFunctionName = FName(*EffectiveFunctionName);
+	EventNode->NodePosX = PosX;
+	EventNode->NodePosY = PosY;
+	Graph->AddNode(EventNode, true, false);
+	EventNode->CreateNewGuid();
+	EventNode->PostPlacedNewNode();
+	EventNode->AllocateDefaultPins();
+
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return EventNode->NodeGuid.ToString();
+}
+
+FString UUnrealBridgeUMGLibrary::CreateWidgetAnimation(const FString& WidgetBlueprintPath, const FString& AnimationName)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP || AnimationName.IsEmpty()) return FString();
+
+	if (UWidgetAnimation* Existing = BridgeUMGImpl::FindAnimationByName(WBP, AnimationName))
+	{
+		return Existing->GetName();
+	}
+
+	UWidgetAnimation* Animation = NewObject<UWidgetAnimation>(WBP, FName(*AnimationName), RF_Transactional);
+	if (!Animation)
+	{
+		return FString();
+	}
+	Animation->MovieScene = NewObject<UMovieScene>(Animation, TEXT("MovieScene"), RF_Transactional);
+#if WITH_EDITOR
+	Animation->SetDisplayLabel(AnimationName);
+#endif
+	if (Animation->MovieScene)
+	{
+		Animation->MovieScene->SetPlaybackRange(0, 150);
+	}
+	WBP->Animations.Add(Animation);
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return Animation->GetName();
+}
+
+FString UUnrealBridgeUMGLibrary::AddWidgetAnimationBinding(
+	const FString& WidgetBlueprintPath,
+	const FString& AnimationName,
+	const FString& WidgetName)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return FString();
+	UWidgetTree* WidgetTree = BridgeUMGImpl::EnsureWidgetTree(WBP);
+	UWidgetAnimation* Animation = BridgeUMGImpl::FindAnimationByName(WBP, AnimationName);
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	if (!WidgetTree || !Animation || !Widget)
+	{
+		return FString();
+	}
+	if (!Animation->MovieScene)
+	{
+		Animation->MovieScene = NewObject<UMovieScene>(Animation, TEXT("MovieScene"), RF_Transactional);
+	}
+	FWidgetAnimationBinding* Binding = BridgeUMGImpl::EnsureAnimationBinding(Animation, Animation->MovieScene, WidgetTree, Widget);
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return Binding ? Binding->AnimationGuid.ToString(EGuidFormats::DigitsWithHyphens) : FString();
+}
+
+bool UUnrealBridgeUMGLibrary::AddWidgetAnimationFloatKey(
+	const FString& WidgetBlueprintPath,
+	const FString& AnimationName,
+	const FString& WidgetName,
+	const FString& PropertyPath,
+	float TimeSeconds,
+	float Value)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return false;
+	UWidgetTree* WidgetTree = BridgeUMGImpl::EnsureWidgetTree(WBP);
+	UWidgetAnimation* Animation = BridgeUMGImpl::FindAnimationByName(WBP, AnimationName);
+	UWidget* Widget = BridgeUMGImpl::FindWidgetByName(WBP, WidgetName);
+	if (!WidgetTree || !Animation || !Widget || PropertyPath.IsEmpty())
+	{
+		return false;
+	}
+	if (!Animation->MovieScene)
+	{
+		Animation->MovieScene = NewObject<UMovieScene>(Animation, TEXT("MovieScene"), RF_Transactional);
+	}
+
+	FString LeafPropertyName = PropertyPath;
+	if (PropertyPath.Contains(TEXT(".")))
+	{
+		PropertyPath.Split(TEXT("."), nullptr, &LeafPropertyName, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+	}
+	FProperty* Property = BridgeUMGImpl::FindPropertyByFlexibleName(Widget->GetClass(), LeafPropertyName);
+	if (!Property || !CastField<FFloatProperty>(Property))
+	{
+		return false;
+	}
+
+	FWidgetAnimationBinding* Binding = BridgeUMGImpl::EnsureAnimationBinding(Animation, Animation->MovieScene, WidgetTree, Widget);
+	if (!Binding)
+	{
+		return false;
+	}
+
+	UMovieSceneFloatTrack* Track = Cast<UMovieSceneFloatTrack>(
+		Animation->MovieScene->FindTrack(UMovieSceneFloatTrack::StaticClass(), Binding->AnimationGuid, FName(*PropertyPath)));
+	if (!Track)
+	{
+		Track = Animation->MovieScene->AddTrack<UMovieSceneFloatTrack>(Binding->AnimationGuid);
+		Track->SetPropertyNameAndPath(Property->GetFName(), PropertyPath);
+	}
+
+	UMovieSceneFloatSection* Section = nullptr;
+	if (Track->GetAllSections().Num() > 0)
+	{
+		Section = Cast<UMovieSceneFloatSection>(Track->GetAllSections()[0]);
+	}
+	if (!Section)
+	{
+		Section = Cast<UMovieSceneFloatSection>(Track->CreateNewSection());
+		Track->AddSection(*Section);
+	}
+
+	const FFrameNumber Frame = BridgeUMGImpl::SecondsToFrame(Animation->MovieScene, TimeSeconds);
+	Section->GetChannel().GetData().AddKey(Frame, FMovieSceneFloatValue(Value));
+	Section->SetRange(TRange<FFrameNumber>::Inclusive(Frame, Frame));
+	Animation->MovieScene->SetPlaybackRange(0, FMath::Max(1, Frame.Value + 1));
+
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return true;
+}
+
+bool UUnrealBridgeUMGLibrary::RemoveWidgetAnimation(const FString& WidgetBlueprintPath, const FString& AnimationName)
+{
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP) return false;
+	UWidgetAnimation* Animation = BridgeUMGImpl::FindAnimationByName(WBP, AnimationName);
+	if (!Animation)
+	{
+		return false;
+	}
+	WBP->Animations.Remove(Animation);
+	Animation->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
+	BridgeUMGImpl::MarkWidgetBlueprintModified(WBP, true);
+	return true;
+}
+
+FBridgeWidgetPreviewResult UUnrealBridgeUMGLibrary::PreviewWidget(
+	const FString& WidgetBlueprintPath,
+	int32 Width,
+	int32 Height,
+	const FString& OutputPath)
+{
+	FBridgeWidgetPreviewResult Result;
+	Result.Width = FMath::Max(1, Width);
+	Result.Height = FMath::Max(1, Height);
+
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP)
+	{
+		Result.Error = TEXT("Widget Blueprint not found");
+		return Result;
+	}
+
+	FString EffectiveOutputPath = OutputPath;
+	if (EffectiveOutputPath.IsEmpty())
+	{
+		EffectiveOutputPath = FPaths::ProjectSavedDir() / TEXT("UnrealBridgePreviews") / (WBP->GetName() + TEXT(".png"));
+	}
+	Result.OutputPath = EffectiveOutputPath;
+
+	FWidgetBlueprintEditorUtils::FCreateWidgetFromBlueprintParams CreateParams;
+	CreateParams.FlagsToApply = EWidgetDesignFlags::Designing | EWidgetDesignFlags::Previewing | EWidgetDesignFlags::ExecutePreConstruct;
+	UUserWidget* PreviewUserWidget = FWidgetBlueprintEditorUtils::CreateUserWidgetFromBlueprint(GetTransientPackage(), WBP, CreateParams);
+	if (!PreviewUserWidget)
+	{
+		Result.Error = TEXT("Failed to create preview widget");
+		return Result;
+	}
+
+	UTextureRenderTarget2D* RenderTarget = NewObject<UTextureRenderTarget2D>(GetTransientPackage(), TEXT("UnrealBridgeWidgetPreviewRenderTarget"), RF_Transient);
+	RenderTarget->ClearColor = FLinearColor::Transparent;
+	RenderTarget->InitCustomFormat(Result.Width, Result.Height, PF_B8G8R8A8, true);
+	RenderTarget->UpdateResourceImmediate(true);
+
+	TOptional<FWidgetBlueprintEditorUtils::FWidgetThumbnailProperties> DrawResult =
+		FWidgetBlueprintEditorUtils::DrawSWidgetInRenderTarget(PreviewUserWidget, RenderTarget);
+	if (!DrawResult.IsSet())
+	{
+		FWidgetBlueprintEditorUtils::DestroyUserWidget(PreviewUserWidget);
+		Result.Error = TEXT("Failed to draw widget into render target");
+		return Result;
+	}
+
+	FBufferArchive Buffer;
+	if (!FImageUtils::ExportRenderTarget2DAsPNG(RenderTarget, Buffer))
+	{
+		FWidgetBlueprintEditorUtils::DestroyUserWidget(PreviewUserWidget);
+		Result.Error = TEXT("Failed to encode preview PNG");
+		return Result;
+	}
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(EffectiveOutputPath), true);
+	if (!FFileHelper::SaveArrayToFile(Buffer, *EffectiveOutputPath))
+	{
+		FWidgetBlueprintEditorUtils::DestroyUserWidget(PreviewUserWidget);
+		Result.Error = TEXT("Failed to write preview PNG");
+		return Result;
+	}
+
+	FWidgetBlueprintEditorUtils::DestroyUserWidget(PreviewUserWidget);
+	Result.Bytes = Buffer.Num();
+	Result.bSuccess = true;
+	return Result;
+}
+
+FBridgeWidgetCompileResult UUnrealBridgeUMGLibrary::CompileSaveWidgetBlueprint(
+	const FString& WidgetBlueprintPath,
+	bool bCompile,
+	bool bSave,
+	bool bValidate)
+{
+	FBridgeWidgetCompileResult Result;
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP)
+	{
+		Result.Status = TEXT("NotFound");
+		return Result;
+	}
+
+	Result.AssetPath = WBP->GetOutermost()->GetName();
+	if (bCompile)
+	{
+		FKismetEditorUtilities::CompileBlueprint(WBP);
+		Result.bCompiled = true;
+	}
+	if (bSave)
+	{
+		Result.bSaved = UEditorAssetLibrary::SaveAsset(Result.AssetPath, false);
+	}
+	Result.Status = BridgeUMGImpl::BlueprintStatusToString(WBP);
+	if (bValidate)
+	{
+		Result.ValidationIssues = ValidateWidgetBlueprint(WidgetBlueprintPath);
+	}
+	return Result;
+}
+
+TArray<FBridgeWidgetValidationIssue> UUnrealBridgeUMGLibrary::ValidateWidgetBlueprint(const FString& WidgetBlueprintPath)
+{
+	TArray<FBridgeWidgetValidationIssue> Issues;
+	auto AddIssue = [&Issues](const FString& Severity, const FString& Message)
+	{
+		FBridgeWidgetValidationIssue Issue;
+		Issue.Severity = Severity;
+		Issue.Message = Message;
+		Issues.Add(Issue);
+	};
+
+	UWidgetBlueprint* WBP = BridgeUMGImpl::LoadWBP(WidgetBlueprintPath);
+	if (!WBP)
+	{
+		AddIssue(TEXT("error"), TEXT("Widget Blueprint not found"));
+		return Issues;
+	}
+	UWidgetTree* WidgetTree = BridgeUMGImpl::EnsureWidgetTree(WBP);
+	if (!WidgetTree || !WidgetTree->RootWidget)
+	{
+		AddIssue(TEXT("error"), TEXT("WidgetTree has no root widget"));
+		return Issues;
+	}
+
+	TArray<UWidget*> Widgets;
+	WidgetTree->GetAllWidgets(Widgets);
+	TSet<FName> Names;
+	for (UWidget* Widget : Widgets)
+	{
+		if (!Widget)
+		{
+			AddIssue(TEXT("warning"), TEXT("WidgetTree contains a null widget"));
+			continue;
+		}
+		if (Names.Contains(Widget->GetFName()))
+		{
+			AddIssue(TEXT("error"), FString::Printf(TEXT("Duplicate widget name: %s"), *Widget->GetName()));
+		}
+		Names.Add(Widget->GetFName());
+		if (Widget != WidgetTree->RootWidget && !Widget->Slot)
+		{
+			AddIssue(TEXT("warning"), FString::Printf(TEXT("Widget has no slot: %s"), *Widget->GetName()));
+		}
+	}
+	return Issues;
 }

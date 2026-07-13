@@ -42,6 +42,7 @@ Manifest schema:
 """
 
 import json
+import hashlib
 import keyword as _keyword
 import os
 import sys
@@ -63,6 +64,8 @@ def _build_manifest_in_ue() -> dict:
     # functions; subtract them so the manifest only carries our UFUNCTIONs.
     inherited_names = _collect_inherited_method_names()
 
+    native_registry = _load_native_registry()
+    registry_libraries = native_registry.get("libraries", {})
     libraries = {}
     for name in sorted(dir(unreal)):
         if not name.startswith("UnrealBridge") or not name.endswith("Library"):
@@ -81,6 +84,16 @@ def _build_manifest_in_ue() -> dict:
                 continue
             entry = _introspect_function(fn, fn_name)
             if entry is not None:
+                native_functions = registry_libraries.get(name, {}).get("functions", {})
+                native_entry = native_functions.get(fn_name)
+                if native_entry is None:
+                    normalized = _normalized_symbol(fn_name)
+                    native_entry = next(
+                        (value for key, value in native_functions.items()
+                         if _normalized_symbol(key) == normalized),
+                        None,
+                    )
+                entry = _merge_native_signature(entry, native_entry)
                 funcs[fn_name] = entry
         if funcs:
             libraries[name] = {"functions": funcs}
@@ -100,14 +113,96 @@ def _build_manifest_in_ue() -> dict:
 
     structs = _collect_struct_fields(enums)
 
+    registry_hash = ""
+    try:
+        registry_hash = str(unreal.UnrealBridgeRegistryLibrary.get_tool_registry_hash())
+    except Exception:
+        pass
+
     return {
         "generated_at": _utc_now(),
         "ue_version": _ue_version_string(),
         "project_path": _project_path(),
+        "protocol_version": native_registry.get("protocol_version", 1),
+        "plugin_version": native_registry.get("plugin_version", "unknown"),
+        "registry_version": native_registry.get("registry_version", 0),
+        "registry_hash": registry_hash,
         "libraries": libraries,
         "enums": enums,
         "structs": structs,
     }
+
+
+def _load_native_registry() -> dict:
+    """Load the C++ UFunction/FProperty registry; never fall back to guessed types."""
+    try:
+        raw = unreal.UnrealBridgeRegistryLibrary.get_tool_registry_json()
+        value = json.loads(str(raw))
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _normalized_symbol(value: str) -> str:
+    return "".join(ch.lower() for ch in str(value) if ch.isalnum())
+
+
+def _merge_native_signature(entry: dict, native_entry: "dict | None") -> dict:
+    """Merge authoritative FProperty data into the Python-callable signature."""
+    entry = dict(entry)
+    if not native_entry:
+        for param in entry.get("params", []):
+            param["type"] = param.get("type") or "Any"
+            param.setdefault("json_schema", {})
+        entry["returns"] = entry.get("returns") or "Any"
+        entry.setdefault("risk", "Mutating")
+        entry.setdefault("execution", "GameThreadShort")
+        entry.setdefault("save_behavior", "Never")
+        entry.setdefault("supports_dry_run", False)
+        entry.setdefault("supports_idempotency", False)
+        entry.setdefault("introduced_version", "unknown")
+        return entry
+
+    native_inputs = native_entry.get("inputs", [])
+    by_name = {
+        _normalized_symbol(item.get("name", "")): item
+        for item in native_inputs
+    }
+    merged_params = []
+    for param in entry.get("params", []):
+        merged = dict(param)
+        native = by_name.get(_normalized_symbol(param.get("name", "")), {})
+        merged["type"] = native.get("python_type") or merged.get("type") or "Any"
+        merged["cpp_type"] = native.get("cpp_type", "")
+        merged["kind"] = native.get("kind", "unknown")
+        merged["json_schema"] = native.get("json_schema", {})
+        merged_params.append(merged)
+    entry["params"] = merged_params
+
+    input_schema = dict(native_entry.get("input_schema", {}))
+    input_schema["required"] = [
+        param.get("name", "") for param in merged_params
+        if not param.get("has_default")
+    ]
+    entry["input_schema"] = input_schema
+
+    outputs = native_entry.get("outputs", [])
+    output_types = [item.get("python_type") or "Any" for item in outputs]
+    if len(output_types) == 1:
+        entry["returns"] = output_types[0]
+    elif output_types:
+        entry["returns"] = f"tuple[{', '.join(output_types)}]"
+    else:
+        entry["returns"] = "None"
+
+    entry["description"] = native_entry.get("description", "")
+    entry["output_schema"] = native_entry.get("output_schema", {})
+    for field in (
+        "risk", "execution", "save_behavior", "supports_dry_run",
+        "supports_idempotency", "introduced_version",
+    ):
+        entry[field] = native_entry.get(field)
+    return entry
 
 
 # Inherited method set on every UE Python USTRUCT (FStructBase). Keep in sync if
@@ -367,7 +462,12 @@ def _cli() -> int:
         print(f"ERROR: bridge.py not found at {bridge}", file=sys.stderr)
         return 1
 
-    cmd = [sys.executable, bridge, "--json", "exec-file", os.path.abspath(__file__)]
+    # Manifest generation bootstraps newly-added Registry UFUNCTIONs, so the
+    # previous manifest cannot be allowed to reject the generator itself.
+    cmd = [
+        sys.executable, bridge, "--json", "--no-preflight", "--manifest-bootstrap",
+        "exec-file", os.path.abspath(__file__),
+    ]
     try:
         # Force UTF-8 + replace on decode errors. `text=True` alone defaults to
         # the active locale (GBK on zh-CN Windows), which dies on the UTF-8
@@ -418,9 +518,30 @@ def _cli() -> int:
         print(f"ERROR: no JSON line in script output:\n{manifest_text[:500]}", file=sys.stderr)
         return 1
 
+    canonical_manifest = json.dumps(
+        last_json, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    last_json["manifest_hash"] = hashlib.sha256(canonical_manifest).hexdigest()
+
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(last_json, f, indent=2, ensure_ascii=False, sort_keys=True)
+        f.write("\n")
+
+    runtime_meta = {
+        "protocol_version": last_json.get("protocol_version", 1),
+        "plugin_version": last_json.get("plugin_version", "unknown"),
+        "registry_hash": last_json.get("registry_hash", ""),
+        "manifest_hash": last_json.get("manifest_hash", ""),
+        "wrapper_version": last_json.get("manifest_hash", "")[:16],
+        "generated_at": last_json.get("generated_at", ""),
+    }
+    meta_out = os.path.join(
+        repo, "Plugin", "UnrealBridge", "Content", "Python", "bridge_manifest_meta.json"
+    )
+    os.makedirs(os.path.dirname(meta_out), exist_ok=True)
+    with open(meta_out, "w", encoding="utf-8") as f:
+        json.dump(runtime_meta, f, indent=2, ensure_ascii=False, sort_keys=True)
         f.write("\n")
 
     n_libs = len(last_json.get("libraries", {}))
@@ -429,6 +550,7 @@ def _cli() -> int:
     print(f"Wrote {out}")
     print(f"  {n_libs} libraries, {n_funcs} functions, {n_enums} enums")
     print(f"  UE: {last_json.get('ue_version', '?')}, generated: {last_json.get('generated_at', '?')}")
+    print(f"  manifest: {last_json.get('manifest_hash', '?')}")
 
     if not args.no_wrapper:
         wrapper_out = args.wrapper_out or os.path.join(
@@ -455,6 +577,10 @@ def _cli() -> int:
                 os.makedirs(os.path.dirname(mirror), exist_ok=True)
                 with open(mirror, "w", encoding="utf-8") as f:
                     f.write(wrapper_src)
+                mirror_meta = os.path.join(os.path.dirname(mirror), "bridge_manifest_meta.json")
+                with open(mirror_meta, "w", encoding="utf-8") as f:
+                    json.dump(runtime_meta, f, indent=2, ensure_ascii=False, sort_keys=True)
+                    f.write("\n")
                 print(f"Mirrored to {mirror}")
             except OSError as e:
                 print(f"WARN: could not mirror wrapper to project ({e})", file=sys.stderr)
@@ -494,6 +620,26 @@ def _generate_wrapper(manifest: dict) -> "tuple[str, dict]":
     out.append("")
     out.append(f"_GENERATED_AT = {manifest.get('generated_at', '?')!r}")
     out.append(f"_UE_VERSION = {manifest.get('ue_version', '?')!r}")
+    out.append(f"_PROTOCOL_VERSION = {manifest.get('protocol_version', 1)!r}")
+    out.append(f"_PLUGIN_VERSION = {manifest.get('plugin_version', 'unknown')!r}")
+    out.append(f"_REGISTRY_HASH = {manifest.get('registry_hash', '')!r}")
+    out.append(f"_MANIFEST_HASH = {manifest.get('manifest_hash', '')!r}")
+    out.append("")
+    out.append("def verify_runtime_compatibility():")
+    out.append("    \"\"\"Fail fast when the generated wrapper no longer matches the loaded plugin.\"\"\"")
+    out.append("    if not _REGISTRY_HASH:")
+    out.append("        return True")
+    out.append("    registry = getattr(unreal, 'UnrealBridgeRegistryLibrary', None)")
+    out.append("    if registry is None:")
+    out.append("        raise RuntimeError('UnrealBridge wrapper requires a plugin with Registry support')")
+    out.append("    runtime_hash = str(registry.get_tool_registry_hash())")
+    out.append("    if runtime_hash != _REGISTRY_HASH:")
+    out.append("        raise RuntimeError(")
+    out.append("            'UnrealBridge wrapper/plugin mismatch: regenerate with python tools/gen_manifest.py'")
+    out.append("        )")
+    out.append("    return True")
+    out.append("")
+    out.append("verify_runtime_compatibility()")
     out.append("")
 
     n_classes, n_methods, n_skipped = 0, 0, 0

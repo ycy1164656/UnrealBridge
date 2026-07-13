@@ -1595,6 +1595,33 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint")
 	static bool SetComponentProperty(const FString& BlueprintPath, const FString& ComponentName, const FString& PropertyName, const FString& Value);
 
+	/** Set the StaticMesh asset on a Blueprint-owned StaticMeshComponent template. Does not compile or save. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint", meta = (
+		ToolRisk = "Mutating", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static bool SetBlueprintStaticMeshComponentAsset(
+		const FString& BlueprintPath,
+		const FString& ComponentName,
+		const FString& StaticMeshPath);
+
+	/** Set one material slot on a Blueprint-owned MeshComponent template. Does not compile or save. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint", meta = (
+		ToolRisk = "Mutating", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static bool SetBlueprintMeshComponentMaterial(
+		const FString& BlueprintPath,
+		const FString& ComponentName,
+		int32 MaterialIndex,
+		const FString& MaterialPath);
+
+	/** Configure collision profile, collision enabled state, and physics simulation on a component template. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint", meta = (
+		ToolRisk = "Mutating", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static bool SetBlueprintPrimitiveComponentPhysics(
+		const FString& BlueprintPath,
+		const FString& ComponentName,
+		bool bSimulatePhysics,
+		bool bEnableCollision,
+		const FString& CollisionProfileName = TEXT("BlockAll"));
+
 	/**
 	 * Add a new variable to a Blueprint.
 	 * Type string: "Bool", "Int", "Float", "Double", "String", "Name", "Text",

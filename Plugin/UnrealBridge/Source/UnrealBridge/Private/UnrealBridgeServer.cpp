@@ -1,4 +1,5 @@
 #include "UnrealBridgeServer.h"
+#include "UnrealBridgeChangeSetLibrary.h"
 #include "IPythonScriptPlugin.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -13,6 +14,10 @@
 #include "Kismet2/KismetDebugUtilities.h"
 #include "Framework/Application/SlateApplication.h"
 #include "UnrealBridgeCallLog.h"
+#include "UnrealBridgeRegistryLibrary.h"
+#include "Interfaces/IPluginManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUnrealBridge, Log, All);
 
@@ -22,6 +27,42 @@ namespace UnrealBridgeLimits
 	// the upper bound exists mainly to stop a malicious/buggy client from
 	// triggering an OOM in the editor via blind SetNumUninitialized.
 	constexpr int32 MaxRequestBytes = 10 * 1024 * 1024;
+}
+
+namespace
+{
+	bool DecodePollingStepResult(FBridgeJobResult& Result, bool& bOutComplete)
+	{
+		bOutComplete = false;
+		TSharedPtr<FJsonObject> Payload;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Result.Output.TrimStartAndEnd());
+		if (!FJsonSerializer::Deserialize(Reader, Payload) || !Payload.IsValid()
+			|| !Payload->TryGetBoolField(TEXT("complete"), bOutComplete))
+		{
+			Result.bSuccess = false;
+			Result.Error = TEXT("poll script must print one JSON object with a boolean 'complete' field");
+			Result.ErrorCode = TEXT("JOB_POLL_PROTOCOL_ERROR");
+			Result.Phase = TEXT("poll");
+			Result.bRetryable = false;
+			return false;
+		}
+
+		bool bStepSuccess = true;
+		Payload->TryGetBoolField(TEXT("success"), bStepSuccess);
+		if (!bStepSuccess)
+		{
+			Result.bSuccess = false;
+			if (!Payload->TryGetStringField(TEXT("error"), Result.Error) || Result.Error.IsEmpty())
+			{
+				Result.Error = TEXT("poll script reported failure");
+			}
+			Result.ErrorCode = TEXT("JOB_POLL_REPORTED_FAILURE");
+			Result.Phase = TEXT("poll");
+			Result.bRetryable = false;
+			return false;
+		}
+		return true;
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -104,6 +145,8 @@ bool FUnrealBridgeServer::Start(const FStartConfig& Config)
 	}
 
 	Listener->OnConnectionAccepted().BindRaw(this, &FUnrealBridgeServer::OnConnectionAccepted);
+
+	JobManager = MakeUnique<FBridgeJobManager>();
 
 	// Register the GameThread ticker that drains the exec queue.
 	// Using FTSTicker instead of AsyncTask(GameThread) prevents reentrancy:
@@ -188,15 +231,10 @@ void FUnrealBridgeServer::Stop()
 		PieEndHandle.Reset();
 	}
 
-	// 3. Fulfill any queued execs with a shutdown error so worker threads
-	// waiting on TFuture wake up immediately.
-	TSharedPtr<FPendingExec, ESPMode::ThreadSafe> Pending;
-	while (ExecQueue.Dequeue(Pending) && Pending.IsValid())
+	// 3. Abort queued/running Job records and wake every waiting client.
+	if (JobManager.IsValid())
 	{
-		FExecResult R;
-		R.bSuccess = false;
-		R.Error = TEXT("server shutting down");
-		Pending->Promise.SetValue(MoveTemp(R));
+		JobManager->Shutdown();
 	}
 
 	// 4. Force-close active client sockets so HandleClient's RecvAll
@@ -231,6 +269,106 @@ void FUnrealBridgeServer::Stop()
 	else
 	{
 		UE_LOG(LogUnrealBridge, Log, TEXT("Stop(): all client workers drained cleanly"));
+	}
+	JobManager.Reset();
+}
+
+namespace
+{
+	TSharedPtr<FJsonObject> LoadManifestMetadata()
+	{
+		const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealBridge"));
+		if (!Plugin.IsValid())
+		{
+			return nullptr;
+		}
+		const FString Path = FPaths::Combine(
+			Plugin->GetContentDir(), TEXT("Python"), TEXT("bridge_manifest_meta.json"));
+		FString Json;
+		if (!FFileHelper::LoadFileToString(Json, *Path))
+		{
+			return nullptr;
+		}
+		TSharedPtr<FJsonObject> Metadata;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+		return FJsonSerializer::Deserialize(Reader, Metadata) ? Metadata : nullptr;
+	}
+
+	void AddVersionHandshake(const TSharedRef<FJsonObject>& Response)
+	{
+		Response->SetNumberField(TEXT("protocol_version"), 2);
+		Response->SetStringField(TEXT("plugin_version"), TEXT("2.0.0"));
+		Response->SetStringField(TEXT("registry_hash"),
+			UUnrealBridgeRegistryLibrary::GetToolRegistryHash());
+		if (const TSharedPtr<FJsonObject> Metadata = LoadManifestMetadata())
+		{
+			FString Value;
+			if (Metadata->TryGetStringField(TEXT("manifest_hash"), Value))
+			{
+				Response->SetStringField(TEXT("manifest_hash"), Value);
+			}
+			if (Metadata->TryGetStringField(TEXT("wrapper_version"), Value))
+			{
+				Response->SetStringField(TEXT("wrapper_version"), Value);
+			}
+		}
+	}
+
+	bool ValidateClientHandshake(
+		const TSharedPtr<FJsonObject>& Request,
+		FString& OutCode,
+		FString& OutError)
+	{
+		bool bBootstrap = false;
+		Request->TryGetBoolField(TEXT("manifest_bootstrap"), bBootstrap);
+		if (bBootstrap)
+		{
+			return true;
+		}
+
+		double ProtocolVersion = 0.0;
+		if (!Request->TryGetNumberField(TEXT("protocol_version"), ProtocolVersion)
+			|| FMath::RoundToInt(ProtocolVersion) != 2)
+		{
+			OutCode = TEXT("PROTOCOL_VERSION_MISMATCH");
+			OutError = TEXT("client protocol_version is missing or incompatible; regenerate the UnrealBridge manifest/wrapper");
+			return false;
+		}
+
+		FString ClientRegistryHash;
+		Request->TryGetStringField(TEXT("registry_hash"), ClientRegistryHash);
+		const FString RuntimeRegistryHash = UUnrealBridgeRegistryLibrary::GetToolRegistryHash();
+		if (ClientRegistryHash.IsEmpty() || ClientRegistryHash != RuntimeRegistryHash)
+		{
+			OutCode = TEXT("REGISTRY_HASH_MISMATCH");
+			OutError = TEXT("client registry_hash does not match the loaded plugin; run python tools/gen_manifest.py");
+			return false;
+		}
+
+		const TSharedPtr<FJsonObject> Metadata = LoadManifestMetadata();
+		if (!Metadata.IsValid())
+		{
+			OutCode = TEXT("SERVER_MANIFEST_UNAVAILABLE");
+			OutError = TEXT("loaded plugin has no bridge_manifest_meta.json; regenerate and synchronize the plugin");
+			return false;
+		}
+
+		for (const TCHAR* Field : {TEXT("plugin_version"), TEXT("manifest_hash"), TEXT("wrapper_version")})
+		{
+			FString Expected;
+			FString Actual;
+			Metadata->TryGetStringField(Field, Expected);
+			Request->TryGetStringField(Field, Actual);
+			if (Expected.IsEmpty() || Actual != Expected)
+			{
+				OutCode = FString(Field).ToUpper() + TEXT("_MISMATCH");
+				OutError = FString::Printf(
+					TEXT("client %s does not match the loaded plugin wrapper; run python tools/gen_manifest.py"),
+					Field);
+				return false;
+			}
+		}
+		return true;
 	}
 }
 
@@ -456,12 +594,83 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 		TEXT("[%s] request id=%s cmd=%s payload=%u"),
 		*EndpointStr, *RequestId, Command.IsEmpty() ? TEXT("(exec)") : *Command, PayloadLen);
 
-	if (Command == TEXT("ping"))
+	const bool bExecutableCommand = Command.IsEmpty()
+		|| Command == TEXT("exec")
+		|| Command == TEXT("submit_job");
+	FString HandshakeCode;
+	FString HandshakeError;
+	if (bExecutableCommand && !ValidateClientHandshake(Request, HandshakeCode, HandshakeError))
+	{
+		Response->SetBoolField(TEXT("success"), false);
+		Response->SetStringField(TEXT("output"), TEXT(""));
+		Response->SetStringField(TEXT("error"), HandshakeError);
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+		TSharedRef<FJsonObject> ErrorInfo = MakeShared<FJsonObject>();
+		ErrorInfo->SetStringField(TEXT("code"), HandshakeCode);
+		ErrorInfo->SetStringField(TEXT("message"), HandshakeError);
+		ErrorInfo->SetStringField(TEXT("phase"), TEXT("handshake"));
+		ErrorInfo->SetBoolField(TEXT("retryable"), false);
+		ErrorInfo->SetStringField(TEXT("side_effect_state"), TEXT("none"));
+		Response->SetObjectField(TEXT("error_info"), ErrorInfo);
+		AddVersionHandshake(Response);
+	}
+	else if (Command == TEXT("health"))
+	{
+		const FBridgeJobMetrics Metrics = JobManager.IsValid()
+			? JobManager->GetMetrics()
+			: FBridgeJobMetrics();
+		TSharedRef<FJsonObject> Health = MakeShared<FJsonObject>();
+		Health->SetNumberField(TEXT("queue_depth"), Metrics.QueueDepth);
+		Health->SetNumberField(TEXT("tracked_jobs"), Metrics.TrackedJobs);
+		Health->SetNumberField(TEXT("active_clients"), ActiveClients.GetValue());
+		Health->SetNumberField(TEXT("max_clients"), MaxConcurrentClients);
+		Health->SetStringField(TEXT("running_job_id"), Metrics.RunningJobId);
+		Health->SetNumberField(TEXT("running_ms"), Metrics.RunningMilliseconds);
+		Health->SetNumberField(TEXT("oldest_queued_ms"), Metrics.OldestQueuedMilliseconds);
+		Health->SetNumberField(TEXT("total_submitted"), (double)Metrics.TotalSubmitted);
+		Health->SetNumberField(TEXT("total_deduplicated"), (double)Metrics.TotalDeduplicated);
+		Health->SetNumberField(TEXT("total_succeeded"), (double)Metrics.TotalSucceeded);
+		Health->SetNumberField(TEXT("total_failed"), (double)Metrics.TotalFailed);
+		Health->SetNumberField(TEXT("total_cancelled"), (double)Metrics.TotalCancelled);
+		Health->SetNumberField(TEXT("total_expired"), (double)Metrics.TotalExpired);
+		Health->SetNumberField(TEXT("total_aborted"), (double)Metrics.TotalAborted);
+
+		Response->SetBoolField(TEXT("success"), true);
+		Response->SetStringField(TEXT("output"), TEXT("healthy"));
+		Response->SetStringField(TEXT("error"), TEXT(""));
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+		AddVersionHandshake(Response);
+		Response->SetObjectField(TEXT("health"), Health);
+	}
+	else if (Command == TEXT("capabilities"))
+	{
+		TArray<TSharedPtr<FJsonValue>> Commands;
+		for (const TCHAR* Name : {
+			TEXT("ping"), TEXT("health"), TEXT("capabilities"), TEXT("exec"),
+			TEXT("submit_job"), TEXT("get_job"), TEXT("wait_job"),
+			TEXT("cancel_job"), TEXT("list_jobs"), TEXT("gamethread_ping"),
+			TEXT("debug_resume")})
+		{
+			Commands.Add(MakeShared<FJsonValueString>(Name));
+		}
+		Response->SetBoolField(TEXT("success"), true);
+		Response->SetStringField(TEXT("output"), TEXT("UnrealBridge protocol v2"));
+		Response->SetStringField(TEXT("error"), TEXT(""));
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+		AddVersionHandshake(Response);
+		Response->SetArrayField(TEXT("commands"), Commands);
+		Response->SetBoolField(TEXT("durable_jobs"), true);
+		Response->SetBoolField(TEXT("polling_jobs"), true);
+		Response->SetBoolField(TEXT("idempotency"), true);
+		Response->SetBoolField(TEXT("queue_deadlines"), true);
+	}
+	else if (Command == TEXT("ping"))
 	{
 		Response->SetBoolField(TEXT("success"), true);
 		Response->SetStringField(TEXT("output"), TEXT("pong"));
 		Response->SetStringField(TEXT("error"), TEXT(""));
 		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+		AddVersionHandshake(Response);
 	}
 	else if (Command == TEXT("debug_resume"))
 	{
@@ -538,6 +747,153 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 			: FString::Printf(TEXT("GameThread did not respond within %.1fs"), ProbeTimeout));
 		Response->SetNumberField(TEXT("latency_ms"), LatencyMs);
 		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+		AddVersionHandshake(Response);
+	}
+	else if (Command == TEXT("get_job") || Command == TEXT("job_status"))
+	{
+		FString JobId;
+		Request->TryGetStringField(TEXT("job_id"), JobId);
+		FBridgeJobSnapshot Snapshot;
+		if (JobId.IsEmpty() || !JobManager.IsValid() || !JobManager->GetSnapshot(JobId, Snapshot))
+		{
+			Response->SetBoolField(TEXT("success"), false);
+			Response->SetStringField(TEXT("output"), TEXT(""));
+			Response->SetStringField(TEXT("error"), JobId.IsEmpty()
+				? TEXT("missing 'job_id' field")
+				: FString::Printf(TEXT("unknown job '%s'"), *JobId));
+		}
+		else
+		{
+			Response->SetBoolField(TEXT("success"), true);
+			Response->SetStringField(TEXT("output"), JobId);
+			Response->SetStringField(TEXT("error"), TEXT(""));
+			AddJobSnapshotFields(Snapshot, Response);
+		}
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+	}
+	else if (Command == TEXT("wait_job"))
+	{
+		FString JobId;
+		Request->TryGetStringField(TEXT("job_id"), JobId);
+		double WaitSeconds = 30.0;
+		Request->TryGetNumberField(TEXT("wait_timeout"), WaitSeconds);
+		WaitSeconds = FMath::Clamp(WaitSeconds, 0.0, 300.0);
+		FBridgeJobSnapshot Snapshot;
+		if (JobId.IsEmpty() || !JobManager.IsValid()
+			|| !JobManager->WaitForJob(JobId, WaitSeconds, Snapshot))
+		{
+			Response->SetBoolField(TEXT("success"), false);
+			Response->SetStringField(TEXT("output"), TEXT(""));
+			Response->SetStringField(TEXT("error"), JobId.IsEmpty()
+				? TEXT("missing 'job_id' field")
+				: FString::Printf(TEXT("unknown job '%s'"), *JobId));
+		}
+		else
+		{
+			Response->SetBoolField(TEXT("success"), true);
+			Response->SetStringField(TEXT("output"), JobId);
+			Response->SetStringField(TEXT("error"), TEXT(""));
+			Response->SetBoolField(TEXT("wait_completed"), IsBridgeJobTerminal(Snapshot.State));
+			AddJobSnapshotFields(Snapshot, Response);
+		}
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+	}
+	else if (Command == TEXT("cancel_job"))
+	{
+		FString JobId;
+		Request->TryGetStringField(TEXT("job_id"), JobId);
+		FBridgeJobSnapshot Snapshot;
+		FString CancelError;
+		if (JobId.IsEmpty() || !JobManager.IsValid()
+			|| !JobManager->Cancel(JobId, Snapshot, CancelError))
+		{
+			Response->SetBoolField(TEXT("success"), false);
+			Response->SetStringField(TEXT("output"), TEXT(""));
+			Response->SetStringField(TEXT("error"), JobId.IsEmpty()
+				? TEXT("missing 'job_id' field")
+				: CancelError);
+		}
+		else
+		{
+			Response->SetBoolField(TEXT("success"), true);
+			Response->SetStringField(TEXT("output"), JobId);
+			Response->SetStringField(TEXT("error"), TEXT(""));
+			AddJobSnapshotFields(Snapshot, Response);
+		}
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+	}
+	else if (Command == TEXT("list_jobs"))
+	{
+		double LimitNumber = 50.0;
+		Request->TryGetNumberField(TEXT("limit"), LimitNumber);
+		const int32 Limit = FMath::Clamp(FMath::RoundToInt(LimitNumber), 1, 200);
+		TArray<TSharedPtr<FJsonValue>> JobsJson;
+		if (JobManager.IsValid())
+		{
+			for (const FBridgeJobSnapshot& Snapshot : JobManager->ListSnapshots(Limit))
+			{
+				TSharedRef<FJsonObject> JobJson = MakeShared<FJsonObject>();
+				AddJobSnapshotFields(Snapshot, JobJson, false);
+				JobsJson.Add(MakeShared<FJsonValueObject>(JobJson));
+			}
+		}
+		Response->SetBoolField(TEXT("success"), true);
+		Response->SetStringField(TEXT("output"), TEXT(""));
+		Response->SetStringField(TEXT("error"), TEXT(""));
+		Response->SetArrayField(TEXT("jobs"), JobsJson);
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
+	}
+	else if (Command == TEXT("submit_job"))
+	{
+		FString Script;
+		if (!bEditorReady || bPieTransitionActive)
+		{
+			Response->SetBoolField(TEXT("success"), false);
+			Response->SetStringField(TEXT("output"), TEXT(""));
+			Response->SetStringField(TEXT("error"), !bEditorReady
+				? TEXT("editor not ready - main frame not yet created")
+				: TEXT("editor in PIE transition - retry in a moment"));
+		}
+		else if (!Request->TryGetStringField(TEXT("script"), Script))
+		{
+			Response->SetBoolField(TEXT("success"), false);
+			Response->SetStringField(TEXT("output"), TEXT(""));
+			Response->SetStringField(TEXT("error"), TEXT("missing 'script' field"));
+		}
+		else
+		{
+			double QueueDeadline = 300.0;
+			Request->TryGetNumberField(TEXT("queue_timeout"), QueueDeadline);
+			QueueDeadline = FMath::Clamp(QueueDeadline, 0.1, 3600.0);
+			FString IdempotencyKey;
+			Request->TryGetStringField(TEXT("idempotency_key"), IdempotencyKey);
+			FString PollScript;
+			Request->TryGetStringField(TEXT("poll_script"), PollScript);
+			double PollInterval = 0.25;
+			Request->TryGetNumberField(TEXT("poll_interval"), PollInterval);
+			double RunTimeout = 300.0;
+			Request->TryGetNumberField(TEXT("run_timeout"), RunTimeout);
+			FBridgeJobSubmitResult Submit = JobManager->Submit(
+				Script, RequestId, QueueDeadline, IdempotencyKey,
+				PollScript, PollInterval, RunTimeout);
+			if (!Submit.Job.IsValid())
+			{
+				Response->SetBoolField(TEXT("success"), false);
+				Response->SetStringField(TEXT("output"), TEXT(""));
+				Response->SetStringField(TEXT("error"), Submit.Error);
+			}
+			else
+			{
+				FBridgeJobSnapshot Snapshot;
+				JobManager->GetSnapshot(Submit.Job->JobId, Snapshot);
+				Response->SetBoolField(TEXT("success"), true);
+				Response->SetStringField(TEXT("output"), Submit.Job->JobId);
+				Response->SetStringField(TEXT("error"), TEXT(""));
+				Response->SetBoolField(TEXT("deduplicated"), Submit.bDeduplicated);
+				AddJobSnapshotFields(Snapshot, Response, false);
+			}
+		}
+		Response->SetBoolField(TEXT("ready"), (bool)bEditorReady);
 	}
 	else if (!bEditorReady)
 	{
@@ -574,7 +930,14 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 		{
 			double TimeoutNum = 30.0;
 			Request->TryGetNumberField(TEXT("timeout"), TimeoutNum);
-			const float Timeout = FMath::Clamp((float)TimeoutNum, 0.1f, 300.0f);
+			double QueueTimeoutNum = TimeoutNum;
+			Request->TryGetNumberField(TEXT("queue_timeout"), QueueTimeoutNum);
+			double WaitTimeoutNum = TimeoutNum;
+			Request->TryGetNumberField(TEXT("wait_timeout"), WaitTimeoutNum);
+			const float QueueTimeout = FMath::Clamp((float)QueueTimeoutNum, 0.1f, 3600.0f);
+			const float WaitTimeout = FMath::Clamp((float)WaitTimeoutNum, 0.0f, 300.0f);
+			FString IdempotencyKey;
+			Request->TryGetStringField(TEXT("idempotency_key"), IdempotencyKey);
 
 			// Capture a preview of the script for the call-log ring. Cap at
 			// ~80 chars; newlines collapse to spaces so the log stays
@@ -582,7 +945,18 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 			CallRecord.ScriptPreview = Script.Left(80).Replace(TEXT("\n"), TEXT(" ")).Replace(TEXT("\r"), TEXT(""));
 
 			const double ExecT0 = FPlatformTime::Seconds();
-			FExecResult Result = EnqueueAndWaitForExec(Script, Timeout, RequestId);
+			TSharedPtr<FBridgeJob, ESPMode::ThreadSafe> Job;
+			bool bClientWaitTimedOut = false;
+			bool bDeduplicated = false;
+			FBridgeJobResult Result = EnqueueAndWaitForExec(
+				Script,
+				QueueTimeout,
+				WaitTimeout,
+				RequestId,
+				IdempotencyKey,
+				Job,
+				bClientWaitTimedOut,
+				bDeduplicated);
 			const double ExecMs = (FPlatformTime::Seconds() - ExecT0) * 1000.0;
 			CallRecord.ExecDurationMs = ExecMs;
 
@@ -595,6 +969,30 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 			Response->SetBoolField(TEXT("success"), Result.bSuccess);
 			Response->SetStringField(TEXT("output"), Result.Output);
 			Response->SetStringField(TEXT("error"), Result.Error);
+			Response->SetBoolField(TEXT("client_wait_timed_out"), bClientWaitTimedOut);
+			Response->SetBoolField(TEXT("deduplicated"), bDeduplicated);
+			if (Job.IsValid() && JobManager.IsValid())
+			{
+				FBridgeJobSnapshot Snapshot;
+				if (JobManager->GetSnapshot(Job->JobId, Snapshot))
+				{
+					AddJobSnapshotFields(Snapshot, Response, !bClientWaitTimedOut);
+				}
+			}
+			if (!Result.ErrorCode.IsEmpty())
+			{
+				TSharedRef<FJsonObject> ErrorInfo = MakeShared<FJsonObject>();
+				ErrorInfo->SetStringField(TEXT("code"), Result.ErrorCode);
+				ErrorInfo->SetStringField(TEXT("message"), Result.Error);
+				ErrorInfo->SetStringField(TEXT("phase"), Result.Phase);
+				ErrorInfo->SetBoolField(TEXT("retryable"), Result.bRetryable);
+				ErrorInfo->SetStringField(TEXT("side_effect_state"), Result.SideEffectState);
+				if (Job.IsValid())
+				{
+					ErrorInfo->SetStringField(TEXT("trace_id"), Job->TraceId);
+				}
+				Response->SetObjectField(TEXT("error_info"), ErrorInfo);
+			}
 			Response->SetBoolField(TEXT("ready"), true);
 		}
 	}
@@ -651,43 +1049,127 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 		*EndpointStr, *RequestId, (FPlatformTime::Seconds() - T0) * 1000.0);
 }
 
+void FUnrealBridgeServer::AddJobSnapshotFields(
+	const FBridgeJobSnapshot& Snapshot,
+	const TSharedRef<FJsonObject>& Response,
+	bool bIncludeResult) const
+{
+	const double Now = FPlatformTime::Seconds();
+	const double QueueEnd = Snapshot.StartedSeconds > 0.0
+		? Snapshot.StartedSeconds
+		: (Snapshot.FinishedSeconds > 0.0 ? Snapshot.FinishedSeconds : Now);
+	const double RunEnd = Snapshot.FinishedSeconds > 0.0 ? Snapshot.FinishedSeconds : Now;
+
+	Response->SetStringField(TEXT("job_id"), Snapshot.JobId);
+	Response->SetStringField(TEXT("trace_id"), Snapshot.TraceId);
+	Response->SetStringField(TEXT("job_state"), LexToString(Snapshot.State));
+	Response->SetBoolField(TEXT("terminal"), IsBridgeJobTerminal(Snapshot.State));
+	Response->SetBoolField(TEXT("cancel_requested"), Snapshot.bCancelRequested);
+	Response->SetBoolField(TEXT("polling"), Snapshot.bPolling);
+	Response->SetNumberField(TEXT("step_count"), Snapshot.StepCount);
+	Response->SetNumberField(TEXT("queue_ms"),
+		FMath::Max(0.0, QueueEnd - Snapshot.CreatedSeconds) * 1000.0);
+	Response->SetNumberField(TEXT("run_ms"), Snapshot.StartedSeconds > 0.0
+		? FMath::Max(0.0, RunEnd - Snapshot.StartedSeconds) * 1000.0
+		: 0.0);
+	Response->SetNumberField(TEXT("deadline_remaining_ms"),
+		FMath::Max(0.0, Snapshot.DeadlineSeconds - Now) * 1000.0);
+	Response->SetNumberField(TEXT("run_deadline_remaining_ms"), Snapshot.RunDeadlineSeconds > 0.0
+		? FMath::Max(0.0, Snapshot.RunDeadlineSeconds - Now) * 1000.0
+		: 0.0);
+	Response->SetNumberField(TEXT("next_poll_ms"), Snapshot.NextPollSeconds > 0.0
+		? FMath::Max(0.0, Snapshot.NextPollSeconds - Now) * 1000.0
+		: 0.0);
+	if (!Snapshot.IdempotencyKey.IsEmpty())
+	{
+		Response->SetStringField(TEXT("idempotency_key"), Snapshot.IdempotencyKey);
+	}
+
+	if (bIncludeResult && (IsBridgeJobTerminal(Snapshot.State)
+		|| (Snapshot.bPolling && Snapshot.State == EBridgeJobState::Running)))
+	{
+		TSharedRef<FJsonObject> ResultJson = MakeShared<FJsonObject>();
+		ResultJson->SetBoolField(TEXT("success"), Snapshot.Result.bSuccess);
+		ResultJson->SetStringField(TEXT("output"), Snapshot.Result.Output);
+		ResultJson->SetStringField(TEXT("error"), Snapshot.Result.Error);
+		ResultJson->SetStringField(TEXT("error_code"), Snapshot.Result.ErrorCode);
+		ResultJson->SetStringField(TEXT("phase"), Snapshot.Result.Phase);
+		ResultJson->SetBoolField(TEXT("retryable"), Snapshot.Result.bRetryable);
+		ResultJson->SetStringField(TEXT("side_effect_state"), Snapshot.Result.SideEffectState);
+		Response->SetObjectField(TEXT("job_result"), ResultJson);
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // Python execution pipeline
 // ─────────────────────────────────────────────────────────────
 //
-// Worker threads enqueue heap-allocated FPendingExec and wait on the
-// associated TFuture. A single FTSTicker consumer on the GameThread drains
-// the queue one item per frame, guarded by bExecInFlight. This design:
-//   - Eliminates the reentrancy crash caused by AsyncTask(GameThread) being
-//     pulled off the task-graph queue during Python-triggered TaskGraph pumps.
-//   - Removes the dangling-reference / event-pool-reuse bug from the old
-//     per-request FEvent scheme: TSharedPtr<FPendingExec> keeps the promise
-//     alive until the ticker fulfills it, regardless of whether the worker
-//     has already returned a timeout to its client.
+// Worker threads submit durable FBridgeJob records. A single FTSTicker
+// consumer on the GameThread claims at most one job per frame. Client wait
+// deadlines are independent of job lifetime, and queue deadlines are checked
+// atomically before Python can run.
 // ─────────────────────────────────────────────────────────────
 
-FUnrealBridgeServer::FExecResult FUnrealBridgeServer::EnqueueAndWaitForExec(
-	const FString& Script, float TimeoutSeconds, const FString& RequestId)
+FBridgeJobResult FUnrealBridgeServer::EnqueueAndWaitForExec(
+	const FString& Script,
+	float QueueDeadlineSeconds,
+	float ClientWaitSeconds,
+	const FString& RequestId,
+	const FString& IdempotencyKey,
+	TSharedPtr<FBridgeJob, ESPMode::ThreadSafe>& OutJob,
+	bool& bOutClientWaitTimedOut,
+	bool& bOutDeduplicated)
 {
-	TSharedPtr<FPendingExec, ESPMode::ThreadSafe> Pending = MakeShared<FPendingExec, ESPMode::ThreadSafe>();
-	Pending->Script = Script;
-	Pending->TimeoutSeconds = TimeoutSeconds;
-	Pending->RequestId = RequestId;
-
-	TFuture<FExecResult> Future = Pending->Promise.GetFuture();
-	ExecQueue.Enqueue(Pending);
-
-	const bool bReady = Future.WaitFor(FTimespan::FromSeconds(TimeoutSeconds));
-	if (!bReady)
+	bOutClientWaitTimedOut = false;
+	bOutDeduplicated = false;
+	FBridgeJobResult Result;
+	if (!JobManager.IsValid())
 	{
-		FExecResult R;
-		R.bSuccess = false;
-		R.Error = FString::Printf(TEXT("exec timeout after %.1fs"), TimeoutSeconds);
-		// Leave the promise alone — the ticker will still fulfill it later,
-		// but Pending's shared-ptr means that's safe and leaks nothing.
-		return R;
+		Result.Error = TEXT("job manager is not available");
+		Result.ErrorCode = TEXT("JOB_MANAGER_UNAVAILABLE");
+		Result.Phase = TEXT("submit");
+		Result.bRetryable = true;
+		Result.SideEffectState = TEXT("none");
+		return Result;
 	}
-	return Future.Get();
+
+	FBridgeJobSubmitResult Submit = JobManager->Submit(
+		Script, RequestId, QueueDeadlineSeconds, IdempotencyKey);
+	if (!Submit.Job.IsValid())
+	{
+		Result.Error = Submit.Error.IsEmpty() ? TEXT("job submission failed") : Submit.Error;
+		Result.ErrorCode = TEXT("JOB_SUBMIT_FAILED");
+		Result.Phase = TEXT("submit");
+		Result.SideEffectState = TEXT("none");
+		return Result;
+	}
+
+	OutJob = Submit.Job;
+	bOutDeduplicated = Submit.bDeduplicated;
+	if (!JobManager->Wait(OutJob, ClientWaitSeconds))
+	{
+		bOutClientWaitTimedOut = true;
+		Result.Error = FString::Printf(
+			TEXT("client wait timed out after %.1fs; job continues and can be queried by job_id"),
+			ClientWaitSeconds);
+		Result.ErrorCode = TEXT("CLIENT_WAIT_TIMEOUT");
+		Result.Phase = TEXT("wait");
+		Result.bRetryable = true;
+		Result.SideEffectState = TEXT("unknown");
+		return Result;
+	}
+
+	FBridgeJobSnapshot Snapshot;
+	if (!JobManager->GetSnapshot(OutJob->JobId, Snapshot))
+	{
+		Result.Error = TEXT("job result was evicted before it could be read");
+		Result.ErrorCode = TEXT("JOB_RESULT_UNAVAILABLE");
+		Result.Phase = TEXT("result");
+		Result.bRetryable = true;
+		Result.SideEffectState = TEXT("unknown");
+		return Result;
+	}
+	return Snapshot.Result;
 }
 
 bool FUnrealBridgeServer::TickConsumeQueue(float /*DeltaTime*/)
@@ -701,28 +1183,52 @@ bool FUnrealBridgeServer::TickConsumeQueue(float /*DeltaTime*/)
 		return true; // belt-and-suspenders guard against ticker reentrancy
 	}
 
-	TSharedPtr<FPendingExec, ESPMode::ThreadSafe> Pending;
-	if (!ExecQueue.Dequeue(Pending) || !Pending.IsValid())
+	if (!JobManager.IsValid())
+	{
+		return true;
+	}
+
+	TSharedPtr<FBridgeJob, ESPMode::ThreadSafe> Job = JobManager->ClaimNextJob();
+	if (!Job.IsValid())
 	{
 		return true;
 	}
 
 	bExecInFlight = true;
-	FExecResult Result = DoPythonExec(Pending->Script);
-	Pending->Promise.SetValue(MoveTemp(Result));
+	const bool bPollStep = Job->IsPollStep();
+	BridgeChangeSetRuntime::BeginJob(Job->JobId);
+	FBridgeJobResult Result = DoPythonExec(Job->GetExecutableScript());
+	bool bPollComplete = false;
+	if (Job->IsPolling() && bPollStep && Result.bSuccess)
+	{
+		DecodePollingStepResult(Result, bPollComplete);
+	}
+	BridgeChangeSetRuntime::EndJob(Job->JobId, Result.bSuccess);
+	if (Job->IsPolling())
+	{
+		JobManager->CompletePollingStep(Job, MoveTemp(Result), bPollComplete);
+	}
+	else
+	{
+		JobManager->Complete(Job, MoveTemp(Result));
+	}
 	bExecInFlight = false;
 	return true;
 }
 
-FUnrealBridgeServer::FExecResult FUnrealBridgeServer::DoPythonExec(const FString& Script)
+FBridgeJobResult FUnrealBridgeServer::DoPythonExec(const FString& Script)
 {
-	FExecResult Result;
+	FBridgeJobResult Result;
 
 	IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
 	if (!PythonPlugin)
 	{
 		Result.bSuccess = false;
 		Result.Error = TEXT("PythonScriptPlugin is not available");
+		Result.ErrorCode = TEXT("PYTHON_PLUGIN_UNAVAILABLE");
+		Result.Phase = TEXT("execute");
+		Result.bRetryable = false;
+		Result.SideEffectState = TEXT("none");
 		return Result;
 	}
 
@@ -826,6 +1332,10 @@ FUnrealBridgeServer::FExecResult FUnrealBridgeServer::DoPythonExec(const FString
 
 	Result.Output.TrimEndInline();
 	Result.Error.TrimEndInline();
+	Result.ErrorCode = Result.bSuccess ? FString() : TEXT("PYTHON_EXEC_FAILED");
+	Result.Phase = TEXT("execute");
+	Result.bRetryable = false;
+	Result.SideEffectState = Result.bSuccess ? TEXT("complete") : TEXT("unknown");
 	return Result;
 }
 
@@ -902,17 +1412,46 @@ bool FUnrealBridgeServer::RecvAll(FSocket* Socket, uint8* Buffer, int32 NumBytes
 	return true;
 }
 
-bool FUnrealBridgeServer::SendAll(FSocket* Socket, const uint8* Buffer, int32 NumBytes)
+bool FUnrealBridgeServer::SendAll(
+	FSocket* Socket,
+	const uint8* Buffer,
+	int32 NumBytes,
+	float TimeoutSeconds)
 {
 	int32 BytesSent = 0;
+	int32 ZeroSendCount = 0;
+	const double Deadline = FPlatformTime::Seconds() + FMath::Max(0.1f, TimeoutSeconds);
 
 	while (BytesSent < NumBytes)
 	{
+		if (FPlatformTime::Seconds() >= Deadline
+			|| Socket->GetConnectionState() != SCS_Connected)
+		{
+			return false;
+		}
+
+		if (!Socket->Wait(
+			ESocketWaitConditions::WaitForWrite,
+			FTimespan::FromMilliseconds(50)))
+		{
+			continue;
+		}
+
 		int32 Sent = 0;
 		if (!Socket->Send(Buffer + BytesSent, NumBytes - BytesSent, Sent))
 		{
 			return false;
 		}
+		if (Sent <= 0)
+		{
+			if (++ZeroSendCount >= 8)
+			{
+				return false;
+			}
+			FPlatformProcess::Sleep(0.001f);
+			continue;
+		}
+		ZeroSendCount = 0;
 		BytesSent += Sent;
 	}
 

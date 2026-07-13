@@ -5,6 +5,7 @@
 
 class FUnrealBridgeServer;
 class FBridgeDiscoveryService;
+class FUnrealBridgeHttpServer;
 
 class FUnrealBridgeModule : public IModuleInterface
 {
@@ -14,5 +15,6 @@ public:
 
 private:
 	TSharedPtr<FUnrealBridgeServer> Server;
+	TUniquePtr<FUnrealBridgeHttpServer> HttpServer;
 	TUniquePtr<FBridgeDiscoveryService> Discovery;
 };

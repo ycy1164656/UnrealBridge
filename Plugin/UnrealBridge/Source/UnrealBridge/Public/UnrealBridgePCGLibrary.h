@@ -49,21 +49,101 @@ struct FBridgePCGWaitResult
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString Note;
 };
 
+USTRUCT(BlueprintType)
+struct FBridgePCGGenerationPollResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bComplete = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bSuccess = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bGenerated = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString Status;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString Error;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgePCGPinInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString Label;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") int64 AllowedTypes = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bOutput = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bRequired = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") int32 ConnectionCount = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgePCGNodeInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString Id;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString Title;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString SettingsClassPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") int32 PositionX = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") int32 PositionY = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bInputNode = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bOutputNode = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bEnabled = true;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") TArray<FBridgePCGPinInfo> Pins;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgePCGEdgeInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString FromNodeId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString FromPin;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString ToNodeId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString ToPin;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgePCGGraphInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bFound = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString AssetPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") TArray<FBridgePCGNodeInfo> Nodes;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") TArray<FBridgePCGEdgeInfo> Edges;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgePCGGraphValidationResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bSuccess = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") int32 ErrorCount = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") int32 WarningCount = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") TArray<FString> Messages;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgePCGGraphEditResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") bool bSuccess = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString NodeId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|PCG") FString Error;
+};
+
 /**
- * PCG read + trigger — Lane 3 of the procedural-content roadmap.
+ * PCG inspection, graph editing, and asynchronous generation control.
  *
  * Hard contract (roadmap §5, §8):
- *  - Read-only graph access + override edit + Generate/Cleanup trigger ONLY.
- *    NO graph editing (graph topology is PCG's territory; agents write
- *    code, not visual graphs).
- *  - Whole library is gated to UE 5.7+. On 5.4-5.6 the UFUNCTIONs exist
+	 *  - Topology edits use UPCGGraph's public API and never remove nodes.
+	 *  - Whole library is gated to UE 5.6+. On 5.4-5.5 the UFUNCTIONs exist
  *    (UHT requires unconditional decls) but bodies live in the
  *    UnrealBridgePCGLibrary_Stubs.cpp and log a warning + return T{}.
  *  - Editor-world only — runtime/PIE PCG generation is PCG's own concern;
  *    bridge does not duplicate it.
- *  - WaitForPCGGenerate polls on the GameThread (FPlatformProcess::Sleep
- *    in 50ms steps) — caller must know this blocks. Same pattern as
- *    hot_reload.py.
+	 *  - Wait operations are non-blocking polls. Client-side orchestration
+	 *    sleeps between calls so PCG and the Editor keep ticking.
  */
 UCLASS()
 class UNREALBRIDGE_API UUnrealBridgePCGLibrary : public UBlueprintFunctionLibrary
@@ -112,7 +192,59 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG")
 	static FBridgePCGWaitResult WaitForPCGGenerate(const FString& ActorLabel, const FString& ComponentName, float TimeoutSec = 60.0f);
 
+	/** Non-blocking PCG generation poll; call repeatedly across Editor ticks. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "AsyncPoll", ToolSaveBehavior = "Never"))
+	static FBridgePCGGenerationPollResult WaitPCGGeneration(
+		const FString& ActorLabel,
+		const FString& ComponentName);
+
 	/** L3-8 — clean up generated content (purge actors / components tagged by this PCG generation). */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG")
 	static bool CleanupPCGComponent(const FString& ActorLabel, const FString& ComponentName, bool bRemoveComponents = false);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FBridgePCGGraphInfo GetPCGGraphStructure(const FString& GraphPath);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FBridgePCGGraphValidationResult ValidatePCGGraph(const FString& GraphPath);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgePCGGraphEditResult AddPCGGraphNode(
+		const FString& GraphPath,
+		const FString& SettingsClassPath,
+		const FString& NodeTitle,
+		int32 PositionX,
+		int32 PositionY,
+		bool bSave = false);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgePCGGraphEditResult ConnectPCGGraphNodes(
+		const FString& GraphPath,
+		const FString& FromNodeId,
+		const FString& FromPin,
+		const FString& ToNodeId,
+		const FString& ToPin,
+		bool bSave = false);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgePCGGraphEditResult SetPCGNodeSettingsProperty(
+		const FString& GraphPath,
+		const FString& NodeId,
+		const FString& PropertyName,
+		const FString& ValueExportText,
+		bool bSave = false);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|PCG", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgePCGGraphEditResult SetPCGNodeEnabled(
+		const FString& GraphPath,
+		const FString& NodeId,
+		bool bEnabled,
+		bool bSave = false);
 };

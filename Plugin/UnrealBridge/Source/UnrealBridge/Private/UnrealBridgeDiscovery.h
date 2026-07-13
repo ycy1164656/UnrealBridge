@@ -61,6 +61,11 @@ public:
 
 		/** Optional token for auth — only the fingerprint is leaked in responses. */
 		FString TokenFingerprint;
+
+		/** Optional loopback HTTP MCP endpoint advertised alongside TCP. */
+		FString HttpBindAddress;
+		int32 HttpPort = 0;
+		FString HttpTokenFingerprint;
 	};
 
 	explicit FBridgeDiscoveryService(const FConfig& InConfig);

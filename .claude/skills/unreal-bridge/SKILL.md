@@ -1,6 +1,6 @@
 ---
 name: unreal-bridge
-description: Execute Python scripts inside a running Unreal Engine 5.3+ editor via TCP bridge. Use when the user asks to interact with UE, manipulate assets, query scenes, automate workflows, or run Python in Unreal.
+description: Execute typed, durable operations inside a running Unreal Engine 5.3+ editor through UnrealBridge TCP or HTTP MCP endpoints. Use for UE inspection, asset editing, scene automation, Job polling, or Python execution.
 allowed-tools: Bash Read Write Edit Glob Grep Monitor
 ---
 
@@ -76,17 +76,24 @@ python "${CLAUDE_SKILL_DIR}/scripts/bridge.py" [options] <command> [args]
 | Command | Purpose |
 |---------|---------|
 | `ping` | Check UE connection (TCP-only, doesn't touch GameThread) |
+| `health` / `capabilities` | Inspect queue depth, running Job, protocol and strict handshake state |
+| `submit-job` / `get-job` / `wait-job` / `cancel-job` / `jobs` | Submit and recover durable work independently of client wait time |
 | `exec "<code>"` | Execute single inline statement |
 | `exec --stdin <<'EOF' ... EOF` | Multi-line script from stdin (default for >1 line; `-` is shorthand for `--stdin`) |
 | `exec-file <path>` | Execute a .py file (use when iterating, debugging, or keeping the script) |
 | `preflight <path>` | Lint a script for bridge-call errors WITHOUT sending to UE |
 | `suggest [pattern]` | Look up the bridge equivalent for a raw `unreal.*` fallback |
+| `unreal_bridge_mcp_server.py` | Optional grouped MCP adapter for Codex-style tool clients |
 | `gamethread-ping` | Probe GameThread liveness (bypasses exec queue; use when `exec` hangs) |
 | `resume` | Unstick a paused BP breakpoint |
 | `list-editors` | Print every editor that responded to a discovery probe |
 | `wait-compile <material>` / `wait-pose-index <psd>` | Client-side polling helpers |
 
-Optional flags: `--project=<name|path>` (disambiguate when >1 editors run; or env `UNREAL_BRIDGE_PROJECT`), `--endpoint=host:port`, `--token=<secret>`, `--timeout=<s>`, `--json`, `--no-preflight`.
+Optional flags: `--project=<name|path>` (disambiguate when >1 editors run; or env `UNREAL_BRIDGE_PROJECT`), `--endpoint=host:port`, `--token=<secret>`, `--timeout=<s>`, `--queue-timeout=<s>`, `--idempotency-key=<key>`, `--json`, `--no-preflight`.
+
+The embedded MCP/REST endpoint listens on `http://127.0.0.1:11438` and reads
+its bearer token from `<Project>/Saved/UnrealBridge/http-token.txt`. It exposes
+grouped typed tools and durable Job routes; `GET /mcp` intentionally has no SSE.
 
 ## Workflow
 
@@ -95,6 +102,7 @@ Optional flags: `--project=<name|path>` (disambiguate when >1 editors run; or en
 3. `--json` for parseable output.
 4. Exit codes: `0` success · `1` runtime/transport · `2` bad CLI args · `3` AST preflight rejected.
 5. **If `exec` hangs**: from a separate terminal try `gamethread-ping` (high latency = GT mid-exec, queue will drain) or `resume` (BP breakpoint).
+6. Use `submit-job` when a timeout/disconnect must not lose the result. For multi-frame work, add `--poll-code`/`--poll-file`; the poll script must print JSON with a boolean `complete` field and must remain short.
 
 Multi-line example:
 
@@ -116,7 +124,7 @@ from unreal_bridge import Asset, Level, Blueprint, Editor, Anim, Material, PoseS
 paths, _ = Asset.search_assets_in_all_content(query="Hero", max_results=20)
 ```
 
-The wrapper has 21 classes (one per `UnrealBridge*Library`) with **kwargs-only signatures** — positional args raise `TypeError` immediately, no UE round-trip. This is the structural fix for positional-arg-order hallucinations. Regenerate after C++ header changes via `python tools/gen_manifest.py`.
+The wrapper has one class per `UnrealBridge*Library` with **kwargs-only signatures** — positional args raise `TypeError` immediately, no UE round-trip. This is the structural fix for positional-arg-order hallucinations. Regenerate after C++ header changes via `python tools/gen_manifest.py --timeout 120`, synchronize the plugin, and require `ping` to report `ready=true`.
 
 Fallback: raw `unreal.UnrealBridge*Library.foo(...)` works (preflight catches errors), but prefer the wrapper.
 
@@ -141,7 +149,7 @@ Bypass with `--no-preflight` (rare). Preview with `bridge.py preflight <path>`.
 | Bridge call returns `[]` for an asset you know exists | Wrong scope: `PROJECT` covers `/Game` only; plugin assets need `ALL_ASSETS`. Use `Asset.search_assets_in_all_content(...)`. |
 | `get_derived_classes` hangs / huge results | Don't pass `UObject` / `AActor` — narrow to most specific base. |
 | Multi-step BP edit feels chatty | Batch with `exec --stdin` heredoc or `exec-file`, not 3 inline `exec` calls. |
-| Pawn movement script freezes the editor | `time.sleep` inside `exec` blocks GameThread — see `bridge-gameplay-api.md` "chase a target" pattern (use `register_runtime_timer`). |
+| Pawn movement script freezes the editor | `time.sleep` inside `exec` blocks GameThread — use a Reactive timer or a durable polling Job; see `bridge-gameplay-api.md`. |
 | `print('中文' / '한글' / '日本語')` shows `���` or `涓枃` mojibake | Almost always **display-only** — the wire is byte-perfect UTF-8. See "Non-ASCII output (CJK / Greek / emoji)" below. |
 | Need "where is this GameplayTag used?" / Find References on a tag | `unreal.UnrealBridgeGameplayTagLibrary.find_assets_referencing_tag(tag, include_children, ...)`. Mutations: `add_gameplay_tag` / `rename_gameplay_tag` (auto-redirect) / `remove_gameplay_tag`; pick the target ini via `list_tag_source_inis(...)`. For `PrimaryAssetId` / other named-value structs use the generic `UnrealBridgeAssetLibrary.find_assets_referencing_searchable_name(struct_type, value, ...)`. See `bridge-gameplaytag-api.md`. |
 
@@ -181,6 +189,10 @@ Signatures are now mechanically enforced (preflight). References carry semantic 
 | Blueprint queries + authoring | `references/bridge-blueprint-api.md` | Class hierarchy, variables/functions/components, node search, write ops, auto-layout flow, lint loop |
 | Asset queries | `references/bridge-asset-api.md` | Asset lookup, search, references/dependencies, **`SoftObjectPath` stringification** (top-of-file block) |
 | UMG / Widget | `references/bridge-umg-api.md` | Widget Blueprint hierarchy/tree |
+| Asset creation helpers | generated manifest / wrapper | UserDefinedEnum, UserDefinedStruct, DataTable, InputAction, InputMappingContext creation |
+| AI helpers | generated manifest / wrapper | BehaviorTree / Blackboard creation, keys, and basic inspection |
+| Niagara helpers | generated manifest / wrapper | Niagara system search and editor-world spawn |
+| Sequencer helpers | generated manifest / wrapper | LevelSequence creation, actor bindings, transform tracks |
 | Animation | `references/bridge-anim-api.md` | ABP state machines, slots, sequences, montages, blend spaces. **Authoring an ABP? Read the "Authoring an Animation Blueprint (agent workflow)" section first.** |
 | DataTable | `references/bridge-datatable-api.md` | Schema, rows, fields, search, CSV |
 | Material | `references/bridge-material-api.md` | Material instance parameters |

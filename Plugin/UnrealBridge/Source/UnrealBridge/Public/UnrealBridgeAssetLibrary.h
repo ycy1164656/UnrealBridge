@@ -217,6 +217,81 @@ struct FBridgeSearchableNameRef
 	FString ValueName;
 };
 
+USTRUCT(BlueprintType)
+struct FBridgeAssetDependencyNode
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString PackageName;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString ClassPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") int32 Depth = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") bool bExists = false;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeAssetDependencyEdge
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString FromPackage;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString ToPackage;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") bool bHard = false;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeAssetDependencyTree
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString RootPackage;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") bool bTruncated = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") TArray<FBridgeAssetDependencyNode> Nodes;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") TArray<FBridgeAssetDependencyEdge> Edges;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeAssetDependencyCycle
+{
+	GENERATED_BODY()
+
+	/** Ordered cycle with the first package repeated at the end. */
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") TArray<FString> Packages;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeAssetCycleReport
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString PackagePath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") int32 ScannedPackageCount = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") bool bTruncated = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") TArray<FBridgeAssetDependencyCycle> Cycles;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeOrphanAssetCandidate
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString AssetPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString PackageName;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString ClassPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") int64 DiskSize = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString Reason;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeOrphanAssetReport
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") FString PackagePath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") int32 ScannedAssetCount = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") bool bTruncated = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Asset") TArray<FBridgeOrphanAssetCandidate> Candidates;
+};
+
 /**
  * Asset query utilities exposed to Python/Blueprint via UnrealBridge.
  * Ported from UnrealClientProtocol (MIT License - Italink).
@@ -553,6 +628,35 @@ public:
 		bool bHardOnly,
 		int32 MaxDepth,
 		TArray<FString>& OutDependencyPackageNames);
+
+	/** Bounded, flat dependency tree suitable for one bridge response. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Asset", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "ReadOnlyWorker", ToolSaveBehavior = "Never"))
+	static FBridgeAssetDependencyTree GetAssetDependencyTree(
+		const FString& PackageName,
+		bool bHardOnly = false,
+		int32 MaxDepth = 8,
+		int32 MaxNodes = 1000);
+
+	/** Find cycles whose packages are all inside PackagePath. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Asset", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "AsyncJob", ToolSaveBehavior = "Never"))
+	static FBridgeAssetCycleReport FindAssetDependencyCycles(
+		const FString& PackagePath,
+		bool bHardOnly = false,
+		int32 MaxAssets = 5000,
+		int32 MaxDepth = 128,
+		int32 MaxCycles = 200);
+
+	/** Candidates only: registry references do not include every config or C++ soft load. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Asset", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "AsyncJob", ToolSaveBehavior = "Never"))
+	static FBridgeOrphanAssetReport FindOrphanAssetCandidates(
+		const FString& PackagePath,
+		bool bHardOnly = false,
+		bool bIncludeMaps = false,
+		int32 MaxAssets = 10000,
+		int32 MaxResults = 500);
 
 	// ── Asset introspection ──────────────────────────────────
 

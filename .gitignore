@@ -41,6 +41,7 @@
 
 # Local scratch dir
 temp/
+.tmp/
 
 # Python bytecode caches
 __pycache__/

@@ -1180,6 +1180,364 @@ void UUnrealBridgeAssetLibrary::GetPackageDependenciesRecursive(
 	}
 }
 
+namespace BridgeAssetDependencyReports
+{
+	FString NormalizePackageName(const FString& InName)
+	{
+		FString PackageName = InName.TrimStartAndEnd();
+		int32 DotIndex = INDEX_NONE;
+		if (PackageName.FindChar(TEXT('.'), DotIndex))
+		{
+			PackageName = PackageName.Left(DotIndex);
+		}
+		if (!PackageName.IsEmpty() && !PackageName.StartsWith(TEXT("/")))
+		{
+			PackageName = TEXT("/") + PackageName;
+		}
+		return PackageName;
+	}
+
+	UE::AssetRegistry::FDependencyQuery MakeQuery(bool bHardOnly)
+	{
+		UE::AssetRegistry::FDependencyQuery Query;
+		if (bHardOnly)
+		{
+			Query.Required = UE::AssetRegistry::EDependencyProperty::Hard | UE::AssetRegistry::EDependencyProperty::Game;
+		}
+		return Query;
+	}
+
+	FBridgeAssetDependencyNode MakeNode(IAssetRegistry& Registry, const FName PackageName, int32 Depth)
+	{
+		FBridgeAssetDependencyNode Node;
+		Node.PackageName = PackageName.ToString();
+		Node.Depth = Depth;
+		TArray<FAssetData> Assets;
+		Registry.GetAssetsByPackageName(PackageName, Assets);
+		Node.bExists = !Assets.IsEmpty();
+		if (!Assets.IsEmpty())
+		{
+			Node.ClassPath = Assets[0].AssetClassPath.ToString();
+		}
+		return Node;
+	}
+
+	FString CanonicalCycleKey(const TArray<FName>& CycleWithRepeatedStart, TArray<FString>& OutPackages)
+	{
+		OutPackages.Reset();
+		const int32 CoreCount = FMath::Max(0, CycleWithRepeatedStart.Num() - 1);
+		if (CoreCount == 0)
+		{
+			return FString();
+		}
+		int32 BestStart = 0;
+		for (int32 Candidate = 1; Candidate < CoreCount; ++Candidate)
+		{
+			for (int32 Offset = 0; Offset < CoreCount; ++Offset)
+			{
+				const FString CandidateValue = CycleWithRepeatedStart[(Candidate + Offset) % CoreCount].ToString();
+				const FString BestValue = CycleWithRepeatedStart[(BestStart + Offset) % CoreCount].ToString();
+				const int32 Compare = CandidateValue.Compare(BestValue, ESearchCase::CaseSensitive);
+				if (Compare < 0)
+				{
+					BestStart = Candidate;
+					break;
+				}
+				if (Compare > 0)
+				{
+					break;
+				}
+			}
+		}
+		for (int32 Offset = 0; Offset < CoreCount; ++Offset)
+		{
+			OutPackages.Add(CycleWithRepeatedStart[(BestStart + Offset) % CoreCount].ToString());
+		}
+		OutPackages.Add(OutPackages[0]);
+		return FString::Join(OutPackages, TEXT(" -> "));
+	}
+}
+
+FBridgeAssetDependencyTree UUnrealBridgeAssetLibrary::GetAssetDependencyTree(
+	const FString& PackageName,
+	bool bHardOnly,
+	int32 MaxDepth,
+	int32 MaxNodes)
+{
+	using namespace BridgeAssetDependencyReports;
+	FBridgeAssetDependencyTree Result;
+	Result.RootPackage = NormalizePackageName(PackageName);
+	if (Result.RootPackage.IsEmpty())
+	{
+		return Result;
+	}
+
+	const int32 DepthLimit = MaxDepth <= 0 ? MAX_int32 : MaxDepth;
+	const int32 NodeLimit = FMath::Max(1, MaxNodes);
+	IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	const UE::AssetRegistry::FDependencyQuery Query = MakeQuery(bHardOnly);
+	TArray<TPair<FName, int32>> Queue;
+	TSet<FName> Visited;
+	const FName RootName(*Result.RootPackage);
+	Queue.Emplace(RootName, 0);
+	Visited.Add(RootName);
+
+	for (int32 QueueIndex = 0; QueueIndex < Queue.Num(); ++QueueIndex)
+	{
+		const FName CurrentName = Queue[QueueIndex].Key;
+		const int32 CurrentDepth = Queue[QueueIndex].Value;
+		Result.Nodes.Add(MakeNode(Registry, CurrentName, CurrentDepth));
+		if (CurrentDepth >= DepthLimit)
+		{
+			continue;
+		}
+
+		TArray<FAssetDependency> Dependencies;
+		Registry.GetDependencies(FAssetIdentifier(CurrentName), Dependencies, UE::AssetRegistry::EDependencyCategory::Package, Query);
+		Dependencies.Sort([](const FAssetDependency& A, const FAssetDependency& B)
+		{
+			return A.AssetId.PackageName.LexicalLess(B.AssetId.PackageName);
+		});
+		for (const FAssetDependency& Dependency : Dependencies)
+		{
+			if (Dependency.AssetId.PackageName.IsNone())
+			{
+				continue;
+			}
+			FBridgeAssetDependencyEdge Edge;
+			Edge.FromPackage = CurrentName.ToString();
+			Edge.ToPackage = Dependency.AssetId.PackageName.ToString();
+			Edge.bHard = EnumHasAnyFlags(Dependency.Properties, UE::AssetRegistry::EDependencyProperty::Hard);
+			Result.Edges.Add(MoveTemp(Edge));
+
+			if (!Visited.Contains(Dependency.AssetId.PackageName))
+			{
+				if (Visited.Num() >= NodeLimit)
+				{
+					Result.bTruncated = true;
+					continue;
+				}
+				Visited.Add(Dependency.AssetId.PackageName);
+				Queue.Emplace(Dependency.AssetId.PackageName, CurrentDepth + 1);
+			}
+		}
+	}
+	return Result;
+}
+
+FBridgeAssetCycleReport UUnrealBridgeAssetLibrary::FindAssetDependencyCycles(
+	const FString& PackagePath,
+	bool bHardOnly,
+	int32 MaxAssets,
+	int32 MaxDepth,
+	int32 MaxCycles)
+{
+	using namespace BridgeAssetDependencyReports;
+	FBridgeAssetCycleReport Result;
+	Result.PackagePath = NormalizePackageName(PackagePath);
+	if (Result.PackagePath.IsEmpty())
+	{
+		return Result;
+	}
+
+	IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	FARFilter Filter;
+	Filter.PackagePaths.Add(FName(*Result.PackagePath));
+	Filter.bRecursivePaths = true;
+	TArray<FAssetData> Assets;
+	Registry.GetAssets(Filter, Assets);
+	Assets.Sort([](const FAssetData& A, const FAssetData& B)
+	{
+		return A.PackageName.LexicalLess(B.PackageName);
+	});
+
+	const int32 AssetLimit = FMath::Max(1, MaxAssets);
+	TSet<FName> Packages;
+	for (const FAssetData& Asset : Assets)
+	{
+		if (Packages.Num() >= AssetLimit)
+		{
+			Result.bTruncated = true;
+			break;
+		}
+		Packages.Add(Asset.PackageName);
+	}
+	Result.ScannedPackageCount = Packages.Num();
+
+	const UE::AssetRegistry::FDependencyQuery Query = MakeQuery(bHardOnly);
+	TMap<FName, TArray<FName>> Adjacency;
+	for (const FName Package : Packages)
+	{
+		TArray<FName> Dependencies;
+		Registry.GetDependencies(Package, Dependencies, UE::AssetRegistry::EDependencyCategory::Package, Query);
+		for (const FName Dependency : Dependencies)
+		{
+			if (Packages.Contains(Dependency))
+			{
+				Adjacency.FindOrAdd(Package).AddUnique(Dependency);
+			}
+		}
+		Adjacency.FindOrAdd(Package).Sort(FNameLexicalLess());
+	}
+
+	const int32 DepthLimit = MaxDepth <= 0 ? MAX_int32 : MaxDepth;
+	const int32 CycleLimit = FMath::Max(1, MaxCycles);
+	TMap<FName, uint8> VisitState;
+	TArray<FName> Stack;
+	TSet<FString> CycleKeys;
+	bool bStop = false;
+	TFunction<void(FName, int32)> Visit = [&](FName Package, int32 Depth)
+	{
+		if (bStop)
+		{
+			return;
+		}
+		if (Depth > DepthLimit)
+		{
+			Result.bTruncated = true;
+			return;
+		}
+		VisitState.Add(Package, 1);
+		Stack.Add(Package);
+		for (const FName Next : Adjacency.FindRef(Package))
+		{
+			const uint8 State = VisitState.FindRef(Next);
+			if (State == 0)
+			{
+				Visit(Next, Depth + 1);
+			}
+			else if (State == 1)
+			{
+				const int32 StartIndex = Stack.Find(Next);
+				if (StartIndex != INDEX_NONE)
+				{
+					TArray<FName> CycleNames;
+					for (int32 Index = StartIndex; Index < Stack.Num(); ++Index)
+					{
+						CycleNames.Add(Stack[Index]);
+					}
+					CycleNames.Add(Next);
+					FBridgeAssetDependencyCycle Cycle;
+					const FString Key = CanonicalCycleKey(CycleNames, Cycle.Packages);
+					if (!Key.IsEmpty() && !CycleKeys.Contains(Key))
+					{
+						CycleKeys.Add(Key);
+						Result.Cycles.Add(MoveTemp(Cycle));
+						if (Result.Cycles.Num() >= CycleLimit)
+						{
+							Result.bTruncated = true;
+							bStop = true;
+							break;
+						}
+					}
+				}
+			}
+		}
+		Stack.Pop();
+		VisitState.Add(Package, 2);
+	};
+
+	TArray<FName> SortedPackages = Packages.Array();
+	SortedPackages.Sort(FNameLexicalLess());
+	for (const FName Package : SortedPackages)
+	{
+		if (VisitState.FindRef(Package) == 0)
+		{
+			Visit(Package, 0);
+		}
+		if (bStop)
+		{
+			break;
+		}
+	}
+	return Result;
+}
+
+FBridgeOrphanAssetReport UUnrealBridgeAssetLibrary::FindOrphanAssetCandidates(
+	const FString& PackagePath,
+	bool bHardOnly,
+	bool bIncludeMaps,
+	int32 MaxAssets,
+	int32 MaxResults)
+{
+	using namespace BridgeAssetDependencyReports;
+	FBridgeOrphanAssetReport Result;
+	Result.PackagePath = NormalizePackageName(PackagePath);
+	if (Result.PackagePath.IsEmpty())
+	{
+		return Result;
+	}
+
+	IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	FARFilter Filter;
+	Filter.PackagePaths.Add(FName(*Result.PackagePath));
+	Filter.bRecursivePaths = true;
+	TArray<FAssetData> Assets;
+	Registry.GetAssets(Filter, Assets);
+	Assets.Sort([](const FAssetData& A, const FAssetData& B)
+	{
+		return A.GetSoftObjectPath().ToString() < B.GetSoftObjectPath().ToString();
+	});
+
+	const int32 AssetLimit = FMath::Max(1, MaxAssets);
+	const int32 ResultLimit = FMath::Max(1, MaxResults);
+	const UE::AssetRegistry::FDependencyQuery Query = MakeQuery(bHardOnly);
+	TMap<FName, bool> PackageHasReferencers;
+	for (const FAssetData& Asset : Assets)
+	{
+		if (Result.ScannedAssetCount >= AssetLimit)
+		{
+			Result.bTruncated = true;
+			break;
+		}
+		++Result.ScannedAssetCount;
+		if (Asset.IsRedirector())
+		{
+			continue;
+		}
+		const FString ClassName = Asset.AssetClassPath.GetAssetName().ToString();
+		if (!bIncludeMaps && (ClassName == TEXT("World") || ClassName == TEXT("MapBuildDataRegistry")))
+		{
+			continue;
+		}
+
+		bool* bCachedHasReferencers = PackageHasReferencers.Find(Asset.PackageName);
+		bool bHasReferencers = bCachedHasReferencers ? *bCachedHasReferencers : false;
+		if (!bCachedHasReferencers)
+		{
+			TArray<FName> Referencers;
+			Registry.GetReferencers(Asset.PackageName, Referencers, UE::AssetRegistry::EDependencyCategory::Package, Query);
+			Referencers.Remove(Asset.PackageName);
+			bHasReferencers = !Referencers.IsEmpty();
+			PackageHasReferencers.Add(Asset.PackageName, bHasReferencers);
+		}
+		if (bHasReferencers)
+		{
+			continue;
+		}
+
+		FBridgeOrphanAssetCandidate Candidate;
+		Candidate.AssetPath = Asset.GetSoftObjectPath().ToString();
+		Candidate.PackageName = Asset.PackageName.ToString();
+		Candidate.ClassPath = Asset.AssetClassPath.ToString();
+		Candidate.Reason = bHardOnly
+			? TEXT("No hard package referencers; verify config, C++, PrimaryAsset, and runtime soft loads before removal.")
+			: TEXT("No package referencers; verify config, C++, PrimaryAsset, and runtime soft loads before removal.");
+		FString Filename;
+		if (FPackageName::DoesPackageExist(Candidate.PackageName, &Filename))
+		{
+			Candidate.DiskSize = IFileManager::Get().FileSize(*Filename);
+		}
+		Result.Candidates.Add(MoveTemp(Candidate));
+		if (Result.Candidates.Num() >= ResultLimit)
+		{
+			Result.bTruncated = Result.ScannedAssetCount < Assets.Num();
+			break;
+		}
+	}
+	return Result;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //   Asset introspection — StaticMesh / SkeletalMesh / Texture / Sound
 // ═══════════════════════════════════════════════════════════════════

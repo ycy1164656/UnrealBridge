@@ -16,8 +16,62 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-05-22T16:07:54+00:00'
-_UE_VERSION = '5.7.1-48512491+++UE5+Release-5.7'
+_GENERATED_AT = '2026-07-13T12:16:42+00:00'
+_UE_VERSION = '5.6.1-44394996+++UE5+Release-5.6'
+_PROTOCOL_VERSION = 2
+_PLUGIN_VERSION = '2.0.0'
+_REGISTRY_HASH = '1cc45afc978d8e07a41e2599ca3fc7a7'
+_MANIFEST_HASH = '9f6eea7df915bc5a1d95e0fd55364875a2fc804ab794b4ea3d07c7904859621f'
+
+def verify_runtime_compatibility():
+    """Fail fast when the generated wrapper no longer matches the loaded plugin."""
+    if not _REGISTRY_HASH:
+        return True
+    registry = getattr(unreal, 'UnrealBridgeRegistryLibrary', None)
+    if registry is None:
+        raise RuntimeError('UnrealBridge wrapper requires a plugin with Registry support')
+    runtime_hash = str(registry.get_tool_registry_hash())
+    if runtime_hash != _REGISTRY_HASH:
+        raise RuntimeError(
+            'UnrealBridge wrapper/plugin mismatch: regenerate with python tools/gen_manifest.py'
+        )
+    return True
+
+verify_runtime_compatibility()
+
+class AI:
+    """Wraps unreal.UnrealBridgeAILibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_blackboard_key(*, blackboard_path, key_name, key_type="object", base_class_path="", enum_path=""):
+        """X.add_blackboard_key(blackboard_path, key_name, key_type="object", base_class_path="", enum_path="") -> bool"""
+        return unreal.UnrealBridgeAILibrary.add_blackboard_key(blackboard_path, key_name, key_type, base_class_path, enum_path)
+
+    @staticmethod
+    def create_behavior_tree(*, path, name):
+        """X.create_behavior_tree(path, name) -> str"""
+        return unreal.UnrealBridgeAILibrary.create_behavior_tree(path, name)
+
+    @staticmethod
+    def create_blackboard(*, path, name):
+        """X.create_blackboard(path, name) -> str"""
+        return unreal.UnrealBridgeAILibrary.create_blackboard(path, name)
+
+    @staticmethod
+    def get_behavior_tree_info(*, behavior_tree_path):
+        """X.get_behavior_tree_info(behavior_tree_path) -> BridgeBehaviorTreeInfo"""
+        return unreal.UnrealBridgeAILibrary.get_behavior_tree_info(behavior_tree_path)
+
+    @staticmethod
+    def get_blackboard_keys(*, blackboard_path):
+        """X.get_blackboard_keys(blackboard_path) -> Array[BridgeBlackboardKeyInfo]"""
+        return unreal.UnrealBridgeAILibrary.get_blackboard_keys(blackboard_path)
+
+    @staticmethod
+    def set_behavior_tree_blackboard(*, behavior_tree_path, blackboard_path):
+        """X.set_behavior_tree_blackboard(behavior_tree_path, blackboard_path) -> bool"""
+        return unreal.UnrealBridgeAILibrary.set_behavior_tree_blackboard(behavior_tree_path, blackboard_path)
+
 
 class Anim:
     """Wraps unreal.UnrealBridgeAnimLibrary (kwargs-only)."""
@@ -343,6 +397,40 @@ class Anim:
         return unreal.UnrealBridgeAnimLibrary.set_skeleton_socket_transform(skeleton_path, socket_name, relative_location, relative_rotation, relative_scale)
 
 
+class AssetFactory:
+    """Wraps unreal.UnrealBridgeAssetFactoryLibrary (kwargs-only)."""
+
+    @staticmethod
+    def create_blueprint(*, path, name, parent_class_path, save=False):
+        """X.create_blueprint(path, name, parent_class_path, save=False) -> str"""
+        return unreal.UnrealBridgeAssetFactoryLibrary.create_blueprint(path, name, parent_class_path, save)
+
+    @staticmethod
+    def create_data_table(*, path, name, row_struct_path):
+        """X.create_data_table(path, name, row_struct_path) -> str"""
+        return unreal.UnrealBridgeAssetFactoryLibrary.create_data_table(path, name, row_struct_path)
+
+    @staticmethod
+    def create_input_action(*, path, name, value_type="Boolean"):
+        """X.create_input_action(path, name, value_type="Boolean") -> str"""
+        return unreal.UnrealBridgeAssetFactoryLibrary.create_input_action(path, name, value_type)
+
+    @staticmethod
+    def create_input_mapping_context(*, path, name):
+        """X.create_input_mapping_context(path, name) -> str"""
+        return unreal.UnrealBridgeAssetFactoryLibrary.create_input_mapping_context(path, name)
+
+    @staticmethod
+    def create_user_defined_enum(*, path, name, entries):
+        """X.create_user_defined_enum(path, name, entries) -> str"""
+        return unreal.UnrealBridgeAssetFactoryLibrary.create_user_defined_enum(path, name, entries)
+
+    @staticmethod
+    def create_user_defined_struct(*, path, name):
+        """X.create_user_defined_struct(path, name) -> str"""
+        return unreal.UnrealBridgeAssetFactoryLibrary.create_user_defined_struct(path, name)
+
+
 class Asset:
     """Wraps unreal.UnrealBridgeAssetLibrary (kwargs-only)."""
 
@@ -357,9 +445,19 @@ class Asset:
         return unreal.UnrealBridgeAssetLibrary.does_folder_exist(folder_path)
 
     @staticmethod
+    def find_asset_dependency_cycles(*, package_path, hard_only=False, max_assets=5000, max_depth=128, max_cycles=200):
+        """X.find_asset_dependency_cycles(package_path, hard_only=False, max_assets=5000, max_depth=128, max_cycles=200) -> BridgeAssetCycleReport"""
+        return unreal.UnrealBridgeAssetLibrary.find_asset_dependency_cycles(package_path, hard_only, max_assets, max_depth, max_cycles)
+
+    @staticmethod
     def find_assets_referencing_searchable_name(*, struct_type, value_name, package_path_filter, max_results):
         """X.find_assets_referencing_searchable_name(struct_type, value_name, package_path_filter, max_results) -> Array[str]"""
         return unreal.UnrealBridgeAssetLibrary.find_assets_referencing_searchable_name(struct_type, value_name, package_path_filter, max_results)
+
+    @staticmethod
+    def find_orphan_asset_candidates(*, package_path, hard_only=False, include_maps=False, max_assets=10000, max_results=500):
+        """X.find_orphan_asset_candidates(package_path, hard_only=False, include_maps=False, max_assets=10000, max_results=500) -> BridgeOrphanAssetReport"""
+        return unreal.UnrealBridgeAssetLibrary.find_orphan_asset_candidates(package_path, hard_only, include_maps, max_assets, max_results)
 
     @staticmethod
     def find_redirectors_under_path(*, folder_path, recursive):
@@ -380,6 +478,11 @@ class Asset:
     def get_asset_count_under_path(*, folder_path, class_filter, recursive):
         """X.get_asset_count_under_path(folder_path, class_filter, recursive) -> int32"""
         return unreal.UnrealBridgeAssetLibrary.get_asset_count_under_path(folder_path, class_filter, recursive)
+
+    @staticmethod
+    def get_asset_dependency_tree(*, package_name, hard_only=False, max_depth=8, max_nodes=1000):
+        """X.get_asset_dependency_tree(package_name, hard_only=False, max_depth=8, max_nodes=1000) -> BridgeAssetDependencyTree"""
+        return unreal.UnrealBridgeAssetLibrary.get_asset_dependency_tree(package_name, hard_only, max_depth, max_nodes)
 
     @staticmethod
     def get_asset_disk_sizes_batch(*, asset_paths):
@@ -1216,9 +1319,24 @@ class Blueprint:
         return unreal.UnrealBridgeBlueprintLibrary.set_blueprint_debug_object(blueprint_path, actor_name)
 
     @staticmethod
+    def set_blueprint_mesh_component_material(*, blueprint_path, component_name, material_index, material_path):
+        """X.set_blueprint_mesh_component_material(blueprint_path, component_name, material_index, material_path) -> bool"""
+        return unreal.UnrealBridgeBlueprintLibrary.set_blueprint_mesh_component_material(blueprint_path, component_name, material_index, material_path)
+
+    @staticmethod
     def set_blueprint_metadata(*, blueprint_path, display_name, description, category="UnrealBridge|Blueprint", namespace):
         """X.set_blueprint_metadata(blueprint_path, display_name, description, category="UnrealBridge|Blueprint", namespace) -> bool"""
         return unreal.UnrealBridgeBlueprintLibrary.set_blueprint_metadata(blueprint_path, display_name, description, category, namespace)
+
+    @staticmethod
+    def set_blueprint_primitive_component_physics(*, blueprint_path, component_name, simulate_physics, enable_collision, collision_profile_name="BlockAll"):
+        """X.set_blueprint_primitive_component_physics(blueprint_path, component_name, simulate_physics, enable_collision, collision_profile_name="BlockAll") -> bool"""
+        return unreal.UnrealBridgeBlueprintLibrary.set_blueprint_primitive_component_physics(blueprint_path, component_name, simulate_physics, enable_collision, collision_profile_name)
+
+    @staticmethod
+    def set_blueprint_static_mesh_component_asset(*, blueprint_path, component_name, static_mesh_path):
+        """X.set_blueprint_static_mesh_component_asset(blueprint_path, component_name, static_mesh_path) -> bool"""
+        return unreal.UnrealBridgeBlueprintLibrary.set_blueprint_static_mesh_component_asset(blueprint_path, component_name, static_mesh_path)
 
     @staticmethod
     def set_blueprint_variable_default(*, blueprint_path, variable_name, value):
@@ -1314,6 +1432,35 @@ class Blueprint:
     def wrap_nodes_in_comment_box(*, blueprint_path, graph_name, node_guids, text):
         """X.wrap_nodes_in_comment_box(blueprint_path, graph_name, node_guids, text) -> str"""
         return unreal.UnrealBridgeBlueprintLibrary.wrap_nodes_in_comment_box(blueprint_path, graph_name, node_guids, text)
+
+
+class ChangeSet:
+    """Wraps unreal.UnrealBridgeChangeSetLibrary (kwargs-only)."""
+
+    @staticmethod
+    def begin_change_set(*, name, target_packages):
+        """X.begin_change_set(name, target_packages) -> str"""
+        return unreal.UnrealBridgeChangeSetLibrary.begin_change_set(name, target_packages)
+
+    @staticmethod
+    def commit_change_set(*, change_set_id, save=False):
+        """X.commit_change_set(change_set_id, save=False) -> BridgeChangeSetInfo"""
+        return unreal.UnrealBridgeChangeSetLibrary.commit_change_set(change_set_id, save)
+
+    @staticmethod
+    def get_dirty_packages_for_job(*, job_id):
+        """X.get_dirty_packages_for_job(job_id) -> Array[str]"""
+        return unreal.UnrealBridgeChangeSetLibrary.get_dirty_packages_for_job(job_id)
+
+    @staticmethod
+    def preview_change_set(*, change_set_id):
+        """X.preview_change_set(change_set_id) -> BridgeChangeSetInfo"""
+        return unreal.UnrealBridgeChangeSetLibrary.preview_change_set(change_set_id)
+
+    @staticmethod
+    def rollback_change_set(*, change_set_id):
+        """X.rollback_change_set(change_set_id) -> BridgeChangeSetInfo"""
+        return unreal.UnrealBridgeChangeSetLibrary.rollback_change_set(change_set_id)
 
 
 class Chooser:
@@ -1787,6 +1934,11 @@ class Editor:
         return unreal.UnrealBridgeEditorLibrary.capture_channel_from_pose(channel, location, rotation, fov, width, height, max_depth_clamp, out_file_path, include_base64)
 
     @staticmethod
+    def capture_screenshot_job(*, out_file_path, include_base64=False):
+        """X.capture_screenshot_job(out_file_path, include_base64=False) -> BridgeScreenshotResult"""
+        return unreal.UnrealBridgeEditorLibrary.capture_screenshot_job(out_file_path, include_base64)
+
+    @staticmethod
     def capture_viewport_channel(*, channel, out_file_path, width, height, max_depth_clamp, include_base64):
         """X.capture_viewport_channel(channel, out_file_path, width, height, max_depth_clamp, include_base64) -> BridgeChannelCaptureResult"""
         return unreal.UnrealBridgeEditorLibrary.capture_viewport_channel(channel, out_file_path, width, height, max_depth_clamp, include_base64)
@@ -1925,6 +2077,11 @@ class Editor:
     def get_c_var(*, name):
         """X.get_c_var(name) -> str"""
         return unreal.UnrealBridgeEditorLibrary.get_c_var(name)
+
+    @staticmethod
+    def get_compact_project_context_json():
+        """X.get_compact_project_context_json() -> str"""
+        return unreal.UnrealBridgeEditorLibrary.get_compact_project_context_json()
 
     @staticmethod
     def get_content_browser_path():
@@ -2467,9 +2624,53 @@ class Editor:
         return unreal.UnrealBridgeEditorLibrary.undo()
 
     @staticmethod
+    def wait_asset_compilation():
+        """X.wait_asset_compilation() -> BridgeLongTaskPollResult"""
+        return unreal.UnrealBridgeEditorLibrary.wait_asset_compilation()
+
+    @staticmethod
+    def wait_shader_compilation():
+        """X.wait_shader_compilation() -> BridgeLongTaskPollResult"""
+        return unreal.UnrealBridgeEditorLibrary.wait_shader_compilation()
+
+    @staticmethod
     def write_log_message(*, message, severity="Log"):
         """X.write_log_message(message, severity="Log") -> bool"""
         return unreal.UnrealBridgeEditorLibrary.write_log_message(message, severity)
+
+
+class Foliage:
+    """Wraps unreal.UnrealBridgeFoliageLibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_foliage_instance(*, foliage_type_path, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000]):
+        """X.add_foliage_instance(foliage_type_path, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000]) -> int32"""
+        return unreal.UnrealBridgeFoliageLibrary.add_foliage_instance(foliage_type_path, location, rotation, scale)
+
+    @staticmethod
+    def add_foliage_instances(*, foliage_type_path, transforms):
+        """X.add_foliage_instances(foliage_type_path, transforms) -> int32"""
+        return unreal.UnrealBridgeFoliageLibrary.add_foliage_instances(foliage_type_path, transforms)
+
+    @staticmethod
+    def get_current_level_foliage_stats():
+        """X.get_current_level_foliage_stats() -> Array[BridgeFoliageInstanceStats]"""
+        return unreal.UnrealBridgeFoliageLibrary.get_current_level_foliage_stats()
+
+    @staticmethod
+    def list_foliage_types(*, package_path="/Game", max_results=500):
+        """X.list_foliage_types(package_path="/Game", max_results=500) -> Array[BridgeFoliageTypeInfo]"""
+        return unreal.UnrealBridgeFoliageLibrary.list_foliage_types(package_path, max_results)
+
+    @staticmethod
+    def remove_foliage_instances_in_box(*, foliage_type_path, bounds_min, bounds_max):
+        """X.remove_foliage_instances_in_box(foliage_type_path, bounds_min, bounds_max) -> int32"""
+        return unreal.UnrealBridgeFoliageLibrary.remove_foliage_instances_in_box(foliage_type_path, bounds_min, bounds_max)
+
+    @staticmethod
+    def remove_foliage_instances_in_sphere(*, foliage_type_path, center, radius):
+        """X.remove_foliage_instances_in_sphere(foliage_type_path, center, radius) -> int32"""
+        return unreal.UnrealBridgeFoliageLibrary.remove_foliage_instances_in_sphere(foliage_type_path, center, radius)
 
 
 class GameplayAbility:
@@ -3568,6 +3769,159 @@ class Geometry:
         return unreal.UnrealBridgeGeometryLibrary.sweep_along_spline(handle, profile_xy, actor_label, component_name, num_path_samples)
 
 
+class IK:
+    """Wraps unreal.UnrealBridgeIKLibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_ik_rig_goal(*, ik_rig_path, goal_name, bone_name, save=False):
+        """X.add_ik_rig_goal(ik_rig_path, goal_name, bone_name, save=False) -> BridgeIKEditResult"""
+        return unreal.UnrealBridgeIKLibrary.add_ik_rig_goal(ik_rig_path, goal_name, bone_name, save)
+
+    @staticmethod
+    def add_ik_rig_retarget_chain(*, ik_rig_path, chain_name, start_bone, end_bone, goal_name="", save=False):
+        """X.add_ik_rig_retarget_chain(ik_rig_path, chain_name, start_bone, end_bone, goal_name="", save=False) -> BridgeIKEditResult"""
+        return unreal.UnrealBridgeIKLibrary.add_ik_rig_retarget_chain(ik_rig_path, chain_name, start_bone, end_bone, goal_name, save)
+
+    @staticmethod
+    def add_ik_rig_solver(*, ik_rig_path, solver_struct_path, start_bone="", end_bone="", save=False):
+        """X.add_ik_rig_solver(ik_rig_path, solver_struct_path, start_bone="", end_bone="", save=False) -> BridgeIKEditResult"""
+        return unreal.UnrealBridgeIKLibrary.add_ik_rig_solver(ik_rig_path, solver_struct_path, start_bone, end_bone, save)
+
+    @staticmethod
+    def auto_map_ik_retarget_chains(*, retargeter_path, mode="Fuzzy", force_remap=False, mapping_op_name="", save=False):
+        """X.auto_map_ik_retarget_chains(retargeter_path, mode="Fuzzy", force_remap=False, mapping_op_name="", save=False) -> BridgeIKEditResult"""
+        return unreal.UnrealBridgeIKLibrary.auto_map_ik_retarget_chains(retargeter_path, mode, force_remap, mapping_op_name, save)
+
+    @staticmethod
+    def connect_ik_rig_goal_to_solver(*, ik_rig_path, goal_name, solver_index, save=False):
+        """X.connect_ik_rig_goal_to_solver(ik_rig_path, goal_name, solver_index, save=False) -> BridgeIKEditResult"""
+        return unreal.UnrealBridgeIKLibrary.connect_ik_rig_goal_to_solver(ik_rig_path, goal_name, solver_index, save)
+
+    @staticmethod
+    def create_ik_retargeter(*, path, name, factory_class_path="/Script/IKRigEditor.IKRetargetFactory", asset_class_path="/Script/IKRig.IKRetargeter", save=False):
+        """X.create_ik_retargeter(path, name, factory_class_path="/Script/IKRigEditor.IKRetargetFactory", asset_class_path="/Script/IKRig.IKRetargeter", save=False) -> str"""
+        return unreal.UnrealBridgeIKLibrary.create_ik_retargeter(path, name, factory_class_path, asset_class_path, save)
+
+    @staticmethod
+    def create_ik_rig(*, path, name, factory_class_path="/Script/IKRigEditor.IKRigDefinitionFactory", asset_class_path="/Script/IKRig.IKRigDefinition", save=False):
+        """X.create_ik_rig(path, name, factory_class_path="/Script/IKRigEditor.IKRigDefinitionFactory", asset_class_path="/Script/IKRig.IKRigDefinition", save=False) -> str"""
+        return unreal.UnrealBridgeIKLibrary.create_ik_rig(path, name, factory_class_path, asset_class_path, save)
+
+    @staticmethod
+    def get_ik_asset_info(*, asset_path, max_property_value_length=4096):
+        """X.get_ik_asset_info(asset_path, max_property_value_length=4096) -> BridgeIKAssetInfo"""
+        return unreal.UnrealBridgeIKLibrary.get_ik_asset_info(asset_path, max_property_value_length)
+
+    @staticmethod
+    def get_ik_asset_property(*, asset_path, property_name):
+        """X.get_ik_asset_property(asset_path, property_name) -> (str, out_success=bool)"""
+        return unreal.UnrealBridgeIKLibrary.get_ik_asset_property(asset_path, property_name)
+
+    @staticmethod
+    def get_ik_retargeter_structure(*, retargeter_path, mapping_op_name=""):
+        """X.get_ik_retargeter_structure(retargeter_path, mapping_op_name="") -> BridgeIKRetargeterStructure"""
+        return unreal.UnrealBridgeIKLibrary.get_ik_retargeter_structure(retargeter_path, mapping_op_name)
+
+    @staticmethod
+    def get_ik_rig_structure(*, ik_rig_path):
+        """X.get_ik_rig_structure(ik_rig_path) -> BridgeIKRigStructure"""
+        return unreal.UnrealBridgeIKLibrary.get_ik_rig_structure(ik_rig_path)
+
+    @staticmethod
+    def list_ik_retargeter_assets(*, package_path="/Game", max_results=500):
+        """X.list_ik_retargeter_assets(package_path="/Game", max_results=500) -> Array[BridgeIKAssetInfo]"""
+        return unreal.UnrealBridgeIKLibrary.list_ik_retargeter_assets(package_path, max_results)
+
+    @staticmethod
+    def list_ik_rig_assets(*, package_path="/Game", max_results=500):
+        """X.list_ik_rig_assets(package_path="/Game", max_results=500) -> Array[BridgeIKAssetInfo]"""
+        return unreal.UnrealBridgeIKLibrary.list_ik_rig_assets(package_path, max_results)
+
+    @staticmethod
+    def set_ik_asset_property(*, asset_path, property_name, value_export_text, save=False):
+        """X.set_ik_asset_property(asset_path, property_name, value_export_text, save=False) -> bool"""
+        return unreal.UnrealBridgeIKLibrary.set_ik_asset_property(asset_path, property_name, value_export_text, save)
+
+    @staticmethod
+    def set_ik_retarget_chain_mapping(*, retargeter_path, target_chain_name, source_chain_name, mapping_op_name="", save=False):
+        """X.set_ik_retarget_chain_mapping(retargeter_path, target_chain_name, source_chain_name, mapping_op_name="", save=False) -> BridgeIKEditResult"""
+        return unreal.UnrealBridgeIKLibrary.set_ik_retarget_chain_mapping(retargeter_path, target_chain_name, source_chain_name, mapping_op_name, save)
+
+    @staticmethod
+    def set_ik_retargeter_rigs(*, retargeter_path, source_ik_rig_path, target_ik_rig_path, add_default_ops=True, save=False):
+        """X.set_ik_retargeter_rigs(retargeter_path, source_ik_rig_path, target_ik_rig_path, add_default_ops=True, save=False) -> BridgeIKEditResult"""
+        return unreal.UnrealBridgeIKLibrary.set_ik_retargeter_rigs(retargeter_path, source_ik_rig_path, target_ik_rig_path, add_default_ops, save)
+
+    @staticmethod
+    def validate_ik_retargeter(*, retargeter_path, mapping_op_name=""):
+        """X.validate_ik_retargeter(retargeter_path, mapping_op_name="") -> BridgeIKValidationResult"""
+        return unreal.UnrealBridgeIKLibrary.validate_ik_retargeter(retargeter_path, mapping_op_name)
+
+    @staticmethod
+    def validate_ik_rig(*, ik_rig_path):
+        """X.validate_ik_rig(ik_rig_path) -> BridgeIKValidationResult"""
+        return unreal.UnrealBridgeIKLibrary.validate_ik_rig(ik_rig_path)
+
+
+class Landscape:
+    """Wraps unreal.UnrealBridgeLandscapeLibrary (kwargs-only)."""
+
+    @staticmethod
+    def get_landscape_height_at_location(*, landscape_name_or_label, world_location):
+        """X.get_landscape_height_at_location(landscape_name_or_label, world_location) -> (float, out_success=bool)"""
+        return unreal.UnrealBridgeLandscapeLibrary.get_landscape_height_at_location(landscape_name_or_label, world_location)
+
+    @staticmethod
+    def get_landscape_info(*, landscape_name_or_label):
+        """X.get_landscape_info(landscape_name_or_label) -> BridgeLandscapeInfo"""
+        return unreal.UnrealBridgeLandscapeLibrary.get_landscape_info(landscape_name_or_label)
+
+    @staticmethod
+    def get_landscape_layer_info_mapping(*, landscape_name_or_label):
+        """X.get_landscape_layer_info_mapping(landscape_name_or_label) -> Array[BridgeLandscapeLayerMapping]"""
+        return unreal.UnrealBridgeLandscapeLibrary.get_landscape_layer_info_mapping(landscape_name_or_label)
+
+    @staticmethod
+    def landscape_import_heightmap(*, landscape_name_or_label, heightmap_file_path, flip_y_axis=False, resample_to_fit=False, update_collision=True):
+        """X.landscape_import_heightmap(landscape_name_or_label, heightmap_file_path, flip_y_axis=False, resample_to_fit=False, update_collision=True) -> BridgeLandscapeImportResult"""
+        return unreal.UnrealBridgeLandscapeLibrary.landscape_import_heightmap(landscape_name_or_label, heightmap_file_path, flip_y_axis, resample_to_fit, update_collision)
+
+    @staticmethod
+    def landscape_import_weightmaps(*, landscape_name_or_label, layer_to_file_path, flip_y_axis=False, resample_to_fit=False, weight_adjust=False):
+        """X.landscape_import_weightmaps(landscape_name_or_label, layer_to_file_path, flip_y_axis=False, resample_to_fit=False, weight_adjust=False) -> BridgeLandscapeImportResult"""
+        return unreal.UnrealBridgeLandscapeLibrary.landscape_import_weightmaps(landscape_name_or_label, layer_to_file_path, flip_y_axis, resample_to_fit, weight_adjust)
+
+    @staticmethod
+    def list_landscapes():
+        """X.list_landscapes() -> Array[BridgeLandscapeInfo]"""
+        return unreal.UnrealBridgeLandscapeLibrary.list_landscapes()
+
+    @staticmethod
+    def sample_landscape_layers_batch(*, landscape_name_or_label, world_locations, layer_names):
+        """X.sample_landscape_layers_batch(landscape_name_or_label, world_locations, layer_names) -> Array[BridgeLandscapeLayerSample]"""
+        return unreal.UnrealBridgeLandscapeLibrary.sample_landscape_layers_batch(landscape_name_or_label, world_locations, layer_names)
+
+    @staticmethod
+    def set_landscape_material(*, landscape_name_or_label, material_path):
+        """X.set_landscape_material(landscape_name_or_label, material_path) -> bool"""
+        return unreal.UnrealBridgeLandscapeLibrary.set_landscape_material(landscape_name_or_label, material_path)
+
+    @staticmethod
+    def set_landscape_material_scalar_parameter(*, landscape_name_or_label, parameter_name, value):
+        """X.set_landscape_material_scalar_parameter(landscape_name_or_label, parameter_name, value) -> bool"""
+        return unreal.UnrealBridgeLandscapeLibrary.set_landscape_material_scalar_parameter(landscape_name_or_label, parameter_name, value)
+
+    @staticmethod
+    def set_landscape_material_texture_parameter(*, landscape_name_or_label, parameter_name, texture_path):
+        """X.set_landscape_material_texture_parameter(landscape_name_or_label, parameter_name, texture_path) -> bool"""
+        return unreal.UnrealBridgeLandscapeLibrary.set_landscape_material_texture_parameter(landscape_name_or_label, parameter_name, texture_path)
+
+    @staticmethod
+    def set_landscape_material_vector_parameter(*, landscape_name_or_label, parameter_name, value):
+        """X.set_landscape_material_vector_parameter(landscape_name_or_label, parameter_name, value) -> bool"""
+        return unreal.UnrealBridgeLandscapeLibrary.set_landscape_material_vector_parameter(landscape_name_or_label, parameter_name, value)
+
+
 class Level:
     """Wraps unreal.UnrealBridgeLevelLibrary (kwargs-only)."""
 
@@ -3690,6 +4044,11 @@ class Level:
     def find_nearest_actor(*, location, class_filter):
         """X.find_nearest_actor(location, class_filter) -> str"""
         return unreal.UnrealBridgeLevelLibrary.find_nearest_actor(location, class_filter)
+
+    @staticmethod
+    def find_placement_candidates(*, center, search_extent, object_extent, grid_step=100.000000, max_results=32, collision_profile_name="BlockAll", require_nav_mesh=True):
+        """X.find_placement_candidates(center, search_extent, object_extent, grid_step=100.000000, max_results=32, collision_profile_name="BlockAll", require_nav_mesh=True) -> Array[BridgePlacementCandidate]"""
+        return unreal.UnrealBridgeLevelLibrary.find_placement_candidates(center, search_extent, object_extent, grid_step, max_results, collision_profile_name, require_nav_mesh)
 
     @staticmethod
     def flush_level_streaming():
@@ -4110,6 +4469,11 @@ class Level:
     def probe_fan_xy(*, origin, num_rays, max_distance, start_angle_deg, span_deg):
         """X.probe_fan_xy(origin, num_rays, max_distance, start_angle_deg, span_deg) -> (int32, out_distances=Array[float], out_actor_labels=Array[str])"""
         return unreal.UnrealBridgeLevelLibrary.probe_fan_xy(origin, num_rays, max_distance, start_angle_deg, span_deg)
+
+    @staticmethod
+    def query_actors(*, class_filter, required_tags, name_filter, folder_filter, level_package_filter, selected_only, include_hidden, offset, limit):
+        """X.query_actors(class_filter, required_tags, name_filter, folder_filter, level_package_filter, selected_only, include_hidden, offset, limit) -> BridgeActorQueryResult"""
+        return unreal.UnrealBridgeLevelLibrary.query_actors(class_filter, required_tags, name_filter, folder_filter, level_package_filter, selected_only, include_hidden, offset, limit)
 
     @staticmethod
     def remove_actor_tag(*, actor_name, tag):
@@ -4535,13 +4899,146 @@ class Navigation:
         return unreal.UnrealBridgeNavigationLibrary.export_nav_mesh_to_obj(out_file_path)
 
 
+class Networking:
+    """Wraps unreal.UnrealBridgeNetworkingLibrary (kwargs-only)."""
+
+    @staticmethod
+    def get_actor_networking_info(*, actor_name_or_label):
+        """X.get_actor_networking_info(actor_name_or_label) -> BridgeActorNetworkingInfo"""
+        return unreal.UnrealBridgeNetworkingLibrary.get_actor_networking_info(actor_name_or_label)
+
+    @staticmethod
+    def set_actor_always_relevant(*, actor_name_or_label, always_relevant):
+        """X.set_actor_always_relevant(actor_name_or_label, always_relevant) -> bool"""
+        return unreal.UnrealBridgeNetworkingLibrary.set_actor_always_relevant(actor_name_or_label, always_relevant)
+
+    @staticmethod
+    def set_actor_net_dormancy(*, actor_name_or_label, dormancy):
+        """X.set_actor_net_dormancy(actor_name_or_label, dormancy) -> bool"""
+        return unreal.UnrealBridgeNetworkingLibrary.set_actor_net_dormancy(actor_name_or_label, dormancy)
+
+    @staticmethod
+    def set_actor_net_update_settings(*, actor_name_or_label, net_update_frequency, min_net_update_frequency=-1.000000, net_priority=-1.000000, net_cull_distance_squared=-1.000000):
+        """X.set_actor_net_update_settings(actor_name_or_label, net_update_frequency, min_net_update_frequency=-1.000000, net_priority=-1.000000, net_cull_distance_squared=-1.000000) -> bool"""
+        return unreal.UnrealBridgeNetworkingLibrary.set_actor_net_update_settings(actor_name_or_label, net_update_frequency, min_net_update_frequency, net_priority, net_cull_distance_squared)
+
+    @staticmethod
+    def set_actor_replicate_movement(*, actor_name_or_label, replicate_movement):
+        """X.set_actor_replicate_movement(actor_name_or_label, replicate_movement) -> bool"""
+        return unreal.UnrealBridgeNetworkingLibrary.set_actor_replicate_movement(actor_name_or_label, replicate_movement)
+
+    @staticmethod
+    def set_actor_replicates(*, actor_name_or_label, replicates):
+        """X.set_actor_replicates(actor_name_or_label, replicates) -> bool"""
+        return unreal.UnrealBridgeNetworkingLibrary.set_actor_replicates(actor_name_or_label, replicates)
+
+
+class Niagara:
+    """Wraps unreal.UnrealBridgeNiagaraLibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_niagara_emitter_to_system(*, system_path, emitter_asset_path, request_compile=True, save=False):
+        """X.add_niagara_emitter_to_system(system_path, emitter_asset_path, request_compile=True, save=False) -> BridgeNiagaraEditResult"""
+        return unreal.UnrealBridgeNiagaraLibrary.add_niagara_emitter_to_system(system_path, emitter_asset_path, request_compile, save)
+
+    @staticmethod
+    def add_niagara_module_to_stack(*, system_path, emitter_handle_id, usage, module_script_path, usage_id="", target_index=-1, request_compile=True, save=False):
+        """X.add_niagara_module_to_stack(system_path, emitter_handle_id, usage, module_script_path, usage_id="", target_index=-1, request_compile=True, save=False) -> BridgeNiagaraEditResult"""
+        return unreal.UnrealBridgeNiagaraLibrary.add_niagara_module_to_stack(system_path, emitter_handle_id, usage, module_script_path, usage_id, target_index, request_compile, save)
+
+    @staticmethod
+    def get_niagara_component_info(*, component_path):
+        """X.get_niagara_component_info(component_path) -> BridgeNiagaraComponentInfo"""
+        return unreal.UnrealBridgeNiagaraLibrary.get_niagara_component_info(component_path)
+
+    @staticmethod
+    def get_niagara_system_structure(*, system_path):
+        """X.get_niagara_system_structure(system_path) -> BridgeNiagaraSystemStructure"""
+        return unreal.UnrealBridgeNiagaraLibrary.get_niagara_system_structure(system_path)
+
+    @staticmethod
+    def get_niagara_user_parameters(*, system_path):
+        """X.get_niagara_user_parameters(system_path) -> Array[BridgeNiagaraUserParameterInfo]"""
+        return unreal.UnrealBridgeNiagaraLibrary.get_niagara_user_parameters(system_path)
+
+    @staticmethod
+    def list_niagara_components(*, actor_label=""):
+        """X.list_niagara_components(actor_label="") -> Array[BridgeNiagaraComponentInfo]"""
+        return unreal.UnrealBridgeNiagaraLibrary.list_niagara_components(actor_label)
+
+    @staticmethod
+    def list_niagara_systems(*, package_path="/Game", max_results=500):
+        """X.list_niagara_systems(package_path="/Game", max_results=500) -> Array[BridgeNiagaraSystemInfo]"""
+        return unreal.UnrealBridgeNiagaraLibrary.list_niagara_systems(package_path, max_results)
+
+    @staticmethod
+    def poll_niagara_system_compilation(*, system_path):
+        """X.poll_niagara_system_compilation(system_path) -> BridgeNiagaraCompileStatus"""
+        return unreal.UnrealBridgeNiagaraLibrary.poll_niagara_system_compilation(system_path)
+
+    @staticmethod
+    def request_niagara_system_compile(*, system_path, force=True):
+        """X.request_niagara_system_compile(system_path, force=True) -> BridgeNiagaraEditResult"""
+        return unreal.UnrealBridgeNiagaraLibrary.request_niagara_system_compile(system_path, force)
+
+    @staticmethod
+    def set_niagara_component_variable_bool(*, component_path, variable_name, value):
+        """X.set_niagara_component_variable_bool(component_path, variable_name, value) -> bool"""
+        return unreal.UnrealBridgeNiagaraLibrary.set_niagara_component_variable_bool(component_path, variable_name, value)
+
+    @staticmethod
+    def set_niagara_component_variable_float(*, component_path, variable_name, value):
+        """X.set_niagara_component_variable_float(component_path, variable_name, value) -> bool"""
+        return unreal.UnrealBridgeNiagaraLibrary.set_niagara_component_variable_float(component_path, variable_name, value)
+
+    @staticmethod
+    def set_niagara_component_variable_linear_color(*, component_path, variable_name, value):
+        """X.set_niagara_component_variable_linear_color(component_path, variable_name, value) -> bool"""
+        return unreal.UnrealBridgeNiagaraLibrary.set_niagara_component_variable_linear_color(component_path, variable_name, value)
+
+    @staticmethod
+    def set_niagara_component_variable_object(*, component_path, variable_name, object_path):
+        """X.set_niagara_component_variable_object(component_path, variable_name, object_path) -> bool"""
+        return unreal.UnrealBridgeNiagaraLibrary.set_niagara_component_variable_object(component_path, variable_name, object_path)
+
+    @staticmethod
+    def set_niagara_component_variable_vec3(*, component_path, variable_name, value):
+        """X.set_niagara_component_variable_vec3(component_path, variable_name, value) -> bool"""
+        return unreal.UnrealBridgeNiagaraLibrary.set_niagara_component_variable_vec3(component_path, variable_name, value)
+
+    @staticmethod
+    def set_niagara_module_enabled(*, system_path, node_guid, enabled, request_compile=True, save=False):
+        """X.set_niagara_module_enabled(system_path, node_guid, enabled, request_compile=True, save=False) -> BridgeNiagaraEditResult"""
+        return unreal.UnrealBridgeNiagaraLibrary.set_niagara_module_enabled(system_path, node_guid, enabled, request_compile, save)
+
+    @staticmethod
+    def spawn_niagara_system_at_location(*, system_path, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000]):
+        """X.spawn_niagara_system_at_location(system_path, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000]) -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.spawn_niagara_system_at_location(system_path, location, rotation, scale)
+
+    @staticmethod
+    def validate_niagara_system_graph(*, system_path):
+        """X.validate_niagara_system_graph(system_path) -> BridgeNiagaraValidationResult"""
+        return unreal.UnrealBridgeNiagaraLibrary.validate_niagara_system_graph(system_path)
+
+
 class PCG:
     """Wraps unreal.UnrealBridgePCGLibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_pcg_graph_node(*, graph_path, settings_class_path, node_title, position_x, position_y, save=False):
+        """X.add_pcg_graph_node(graph_path, settings_class_path, node_title, position_x, position_y, save=False) -> BridgePCGGraphEditResult"""
+        return unreal.UnrealBridgePCGLibrary.add_pcg_graph_node(graph_path, settings_class_path, node_title, position_x, position_y, save)
 
     @staticmethod
     def cleanup_pcg_component(*, actor_label, component_name, remove_components=False):
         """X.cleanup_pcg_component(actor_label, component_name, remove_components=False) -> bool"""
         return unreal.UnrealBridgePCGLibrary.cleanup_pcg_component(actor_label, component_name, remove_components)
+
+    @staticmethod
+    def connect_pcg_graph_nodes(*, graph_path, from_node_id, from_pin, to_node_id, to_pin, save=False):
+        """X.connect_pcg_graph_nodes(graph_path, from_node_id, from_pin, to_node_id, to_pin, save=False) -> BridgePCGGraphEditResult"""
+        return unreal.UnrealBridgePCGLibrary.connect_pcg_graph_nodes(graph_path, from_node_id, from_pin, to_node_id, to_pin, save)
 
     @staticmethod
     def get_pcg_component_overrides(*, actor_label, component_name):
@@ -4552,6 +5049,11 @@ class PCG:
     def get_pcg_component_state(*, actor_label, component_name):
         """X.get_pcg_component_state(actor_label, component_name) -> BridgePCGComponentState"""
         return unreal.UnrealBridgePCGLibrary.get_pcg_component_state(actor_label, component_name)
+
+    @staticmethod
+    def get_pcg_graph_structure(*, graph_path):
+        """X.get_pcg_graph_structure(graph_path) -> BridgePCGGraphInfo"""
+        return unreal.UnrealBridgePCGLibrary.get_pcg_graph_structure(graph_path)
 
     @staticmethod
     def list_pcg_components_in_level(*, level_filter, max=200):
@@ -4569,14 +5071,34 @@ class PCG:
         return unreal.UnrealBridgePCGLibrary.set_pcg_component_override(actor_label, component_name, name, exported_value)
 
     @staticmethod
+    def set_pcg_node_enabled(*, graph_path, node_id, enabled, save=False):
+        """X.set_pcg_node_enabled(graph_path, node_id, enabled, save=False) -> BridgePCGGraphEditResult"""
+        return unreal.UnrealBridgePCGLibrary.set_pcg_node_enabled(graph_path, node_id, enabled, save)
+
+    @staticmethod
+    def set_pcg_node_settings_property(*, graph_path, node_id, property_name, value_export_text, save=False):
+        """X.set_pcg_node_settings_property(graph_path, node_id, property_name, value_export_text, save=False) -> BridgePCGGraphEditResult"""
+        return unreal.UnrealBridgePCGLibrary.set_pcg_node_settings_property(graph_path, node_id, property_name, value_export_text, save)
+
+    @staticmethod
     def trigger_pcg_generate(*, actor_label, component_name, force=False):
         """X.trigger_pcg_generate(actor_label, component_name, force=False) -> bool"""
         return unreal.UnrealBridgePCGLibrary.trigger_pcg_generate(actor_label, component_name, force)
 
     @staticmethod
+    def validate_pcg_graph(*, graph_path):
+        """X.validate_pcg_graph(graph_path) -> BridgePCGGraphValidationResult"""
+        return unreal.UnrealBridgePCGLibrary.validate_pcg_graph(graph_path)
+
+    @staticmethod
     def wait_for_pcg_generate(*, actor_label, component_name, timeout_sec=60.000000):
         """X.wait_for_pcg_generate(actor_label, component_name, timeout_sec=60.000000) -> BridgePCGWaitResult"""
         return unreal.UnrealBridgePCGLibrary.wait_for_pcg_generate(actor_label, component_name, timeout_sec)
+
+    @staticmethod
+    def wait_pcg_generation(*, actor_label, component_name):
+        """X.wait_pcg_generation(actor_label, component_name) -> BridgePCGGenerationPollResult"""
+        return unreal.UnrealBridgePCGLibrary.wait_pcg_generation(actor_label, component_name)
 
 
 class Perf:
@@ -4891,6 +5413,11 @@ class PoseSearch:
         """X.set_database_blend_space_sampling(database_path, index, h_samples, v_samples, use_grid_for_sampling, use_single_sample, blend_param_x, blend_param_y) -> bool"""
         return unreal.UnrealBridgePoseSearchLibrary.set_database_blend_space_sampling(database_path, index, h_samples, v_samples, use_grid_for_sampling, use_single_sample, blend_param_x, blend_param_y)
 
+    @staticmethod
+    def wait_pose_search_index(*, database_path):
+        """X.wait_pose_search_index(database_path) -> BridgePoseSearchIndexPollResult"""
+        return unreal.UnrealBridgePoseSearchLibrary.wait_pose_search_index(database_path)
+
 
 class Procedural:
     """Wraps unreal.UnrealBridgeProceduralLibrary (kwargs-only)."""
@@ -5169,6 +5696,197 @@ class Reactive:
         return unreal.UnrealBridgeReactiveLibrary.unregister(handler_id)
 
 
+class Registry:
+    """Wraps unreal.UnrealBridgeRegistryLibrary (kwargs-only)."""
+
+    @staticmethod
+    def get_tool_registry_hash():
+        """X.get_tool_registry_hash() -> str"""
+        return unreal.UnrealBridgeRegistryLibrary.get_tool_registry_hash()
+
+    @staticmethod
+    def get_tool_registry_json():
+        """X.get_tool_registry_json() -> str"""
+        return unreal.UnrealBridgeRegistryLibrary.get_tool_registry_json()
+
+
+class Sequencer:
+    """Wraps unreal.UnrealBridgeSequencerLibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_actor_binding(*, sequence_path, actor_label):
+        """X.add_actor_binding(sequence_path, actor_label) -> BridgeSequencerBindingInfo"""
+        return unreal.UnrealBridgeSequencerLibrary.add_actor_binding(sequence_path, actor_label)
+
+    @staticmethod
+    def add_property_key(*, sequence_path, actor_label, property_name, property_path, property_type, seconds, value_export_text, create_track_if_missing=True, interpolation="Auto", save=False):
+        """X.add_property_key(sequence_path, actor_label, property_name, property_path, property_type, seconds, value_export_text, create_track_if_missing=True, interpolation="Auto", save=False) -> bool"""
+        return unreal.UnrealBridgeSequencerLibrary.add_property_key(sequence_path, actor_label, property_name, property_path, property_type, seconds, value_export_text, create_track_if_missing, interpolation, save)
+
+    @staticmethod
+    def add_property_track(*, sequence_path, actor_label, property_name, property_path, property_type, start_seconds=0.000000, end_seconds=5.000000, save=False):
+        """X.add_property_track(sequence_path, actor_label, property_name, property_path, property_type, start_seconds=0.000000, end_seconds=5.000000, save=False) -> str"""
+        return unreal.UnrealBridgeSequencerLibrary.add_property_track(sequence_path, actor_label, property_name, property_path, property_type, start_seconds, end_seconds, save)
+
+    @staticmethod
+    def add_skeletal_animation_section(*, sequence_path, actor_label, animation_path, start_seconds=0.000000, end_seconds=-1.000000, play_rate=1.000000, save=False):
+        """X.add_skeletal_animation_section(sequence_path, actor_label, animation_path, start_seconds=0.000000, end_seconds=-1.000000, play_rate=1.000000, save=False) -> str"""
+        return unreal.UnrealBridgeSequencerLibrary.add_skeletal_animation_section(sequence_path, actor_label, animation_path, start_seconds, end_seconds, play_rate, save)
+
+    @staticmethod
+    def add_transform_key(*, sequence_path, actor_label, seconds, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000], create_track_if_missing=True, interpolation="Auto"):
+        """X.add_transform_key(sequence_path, actor_label, seconds, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000], create_track_if_missing=True, interpolation="Auto") -> bool"""
+        return unreal.UnrealBridgeSequencerLibrary.add_transform_key(sequence_path, actor_label, seconds, location, rotation, scale, create_track_if_missing, interpolation)
+
+    @staticmethod
+    def add_transform_track(*, sequence_path, actor_label, start_seconds=0.000000, end_seconds=5.000000):
+        """X.add_transform_track(sequence_path, actor_label, start_seconds=0.000000, end_seconds=5.000000) -> str"""
+        return unreal.UnrealBridgeSequencerLibrary.add_transform_track(sequence_path, actor_label, start_seconds, end_seconds)
+
+    @staticmethod
+    def create_level_sequence(*, path, name, save=False):
+        """X.create_level_sequence(path, name, save=False) -> str"""
+        return unreal.UnrealBridgeSequencerLibrary.create_level_sequence(path, name, save)
+
+    @staticmethod
+    def list_sequence_sections(*, sequence_path):
+        """X.list_sequence_sections(sequence_path) -> Array[BridgeSequencerSectionInfo]"""
+        return unreal.UnrealBridgeSequencerLibrary.list_sequence_sections(sequence_path)
+
+    @staticmethod
+    def list_sequence_tracks(*, sequence_path):
+        """X.list_sequence_tracks(sequence_path) -> Array[BridgeSequencerTrackInfo]"""
+        return unreal.UnrealBridgeSequencerLibrary.list_sequence_tracks(sequence_path)
+
+    @staticmethod
+    def set_playback_range(*, sequence_path, start_seconds, end_seconds):
+        """X.set_playback_range(sequence_path, start_seconds, end_seconds) -> bool"""
+        return unreal.UnrealBridgeSequencerLibrary.set_playback_range(sequence_path, start_seconds, end_seconds)
+
+    @staticmethod
+    def validate_level_sequence(*, sequence_path):
+        """X.validate_level_sequence(sequence_path) -> BridgeSequencerValidationResult"""
+        return unreal.UnrealBridgeSequencerLibrary.validate_level_sequence(sequence_path)
+
+
+class Spline:
+    """Wraps unreal.UnrealBridgeSplineLibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_spline_component(*, actor_label, component_name="Spline"):
+        """X.add_spline_component(actor_label, component_name="Spline") -> str"""
+        return unreal.UnrealBridgeSplineLibrary.add_spline_component(actor_label, component_name)
+
+    @staticmethod
+    def add_spline_point(*, actor_label, location, component_name="", index=-1, world_space=True, point_type="Curve", update_spline=True):
+        """X.add_spline_point(actor_label, location, component_name="", index=-1, world_space=True, point_type="Curve", update_spline=True) -> bool"""
+        return unreal.UnrealBridgeSplineLibrary.add_spline_point(actor_label, location, component_name, index, world_space, point_type, update_spline)
+
+    @staticmethod
+    def clear_spline_points(*, actor_label, component_name="", update_spline=True):
+        """X.clear_spline_points(actor_label, component_name="", update_spline=True) -> bool"""
+        return unreal.UnrealBridgeSplineLibrary.clear_spline_points(actor_label, component_name, update_spline)
+
+    @staticmethod
+    def get_spline_points(*, actor_label, component_name="", world_space=True):
+        """X.get_spline_points(actor_label, component_name="", world_space=True) -> Array[BridgeSplinePointInfo]"""
+        return unreal.UnrealBridgeSplineLibrary.get_spline_points(actor_label, component_name, world_space)
+
+    @staticmethod
+    def list_spline_components(*, actor_label=""):
+        """X.list_spline_components(actor_label="") -> Array[BridgeSplineInfo]"""
+        return unreal.UnrealBridgeSplineLibrary.list_spline_components(actor_label)
+
+    @staticmethod
+    def remove_spline_point(*, actor_label, index, component_name="", update_spline=True):
+        """X.remove_spline_point(actor_label, index, component_name="", update_spline=True) -> bool"""
+        return unreal.UnrealBridgeSplineLibrary.remove_spline_point(actor_label, index, component_name, update_spline)
+
+    @staticmethod
+    def set_spline_closed_loop(*, actor_label, closed_loop, component_name="", update_spline=True):
+        """X.set_spline_closed_loop(actor_label, closed_loop, component_name="", update_spline=True) -> bool"""
+        return unreal.UnrealBridgeSplineLibrary.set_spline_closed_loop(actor_label, closed_loop, component_name, update_spline)
+
+    @staticmethod
+    def set_spline_point_location(*, actor_label, index, location, component_name="", world_space=True, update_spline=True):
+        """X.set_spline_point_location(actor_label, index, location, component_name="", world_space=True, update_spline=True) -> bool"""
+        return unreal.UnrealBridgeSplineLibrary.set_spline_point_location(actor_label, index, location, component_name, world_space, update_spline)
+
+    @staticmethod
+    def set_spline_point_type(*, actor_label, index, point_type, component_name="", update_spline=True):
+        """X.set_spline_point_type(actor_label, index, point_type, component_name="", update_spline=True) -> bool"""
+        return unreal.UnrealBridgeSplineLibrary.set_spline_point_type(actor_label, index, point_type, component_name, update_spline)
+
+
+class StateTree:
+    """Wraps unreal.UnrealBridgeStateTreeLibrary (kwargs-only)."""
+
+    @staticmethod
+    def add_state_tree_state(*, state_tree_path, parent_state_id, name, state_type="State", compile=True, save=False):
+        """X.add_state_tree_state(state_tree_path, parent_state_id, name, state_type="State", compile=True, save=False) -> BridgeStateTreeEditResult"""
+        return unreal.UnrealBridgeStateTreeLibrary.add_state_tree_state(state_tree_path, parent_state_id, name, state_type, compile, save)
+
+    @staticmethod
+    def add_state_tree_task(*, state_tree_path, state_id, task_struct_path, instance_data_export_text="", compile=True, save=False):
+        """X.add_state_tree_task(state_tree_path, state_id, task_struct_path, instance_data_export_text="", compile=True, save=False) -> BridgeStateTreeEditResult"""
+        return unreal.UnrealBridgeStateTreeLibrary.add_state_tree_task(state_tree_path, state_id, task_struct_path, instance_data_export_text, compile, save)
+
+    @staticmethod
+    def add_state_tree_transition(*, state_tree_path, source_state_id, trigger, transition_type, target_state_id="", required_event_tag="", compile=True, save=False):
+        """X.add_state_tree_transition(state_tree_path, source_state_id, trigger, transition_type, target_state_id="", required_event_tag="", compile=True, save=False) -> BridgeStateTreeEditResult"""
+        return unreal.UnrealBridgeStateTreeLibrary.add_state_tree_transition(state_tree_path, source_state_id, trigger, transition_type, target_state_id, required_event_tag, compile, save)
+
+    @staticmethod
+    def create_state_tree(*, path, name, schema_class_path, factory_class_path="/Script/StateTreeEditorModule.StateTreeFactory", asset_class_path="/Script/StateTreeModule.StateTree", save=False):
+        """X.create_state_tree(path, name, schema_class_path, factory_class_path="/Script/StateTreeEditorModule.StateTreeFactory", asset_class_path="/Script/StateTreeModule.StateTree", save=False) -> str"""
+        return unreal.UnrealBridgeStateTreeLibrary.create_state_tree(path, name, schema_class_path, factory_class_path, asset_class_path, save)
+
+    @staticmethod
+    def get_state_tree_info(*, state_tree_path, max_property_value_length=4096):
+        """X.get_state_tree_info(state_tree_path, max_property_value_length=4096) -> BridgeStateTreeAssetInfo"""
+        return unreal.UnrealBridgeStateTreeLibrary.get_state_tree_info(state_tree_path, max_property_value_length)
+
+    @staticmethod
+    def get_state_tree_property(*, state_tree_path, property_name):
+        """X.get_state_tree_property(state_tree_path, property_name) -> (str, out_success=bool)"""
+        return unreal.UnrealBridgeStateTreeLibrary.get_state_tree_property(state_tree_path, property_name)
+
+    @staticmethod
+    def get_state_tree_structure(*, state_tree_path):
+        """X.get_state_tree_structure(state_tree_path) -> BridgeStateTreeStructure"""
+        return unreal.UnrealBridgeStateTreeLibrary.get_state_tree_structure(state_tree_path)
+
+    @staticmethod
+    def list_state_tree_assets(*, package_path="/Game", max_results=500):
+        """X.list_state_tree_assets(package_path="/Game", max_results=500) -> Array[BridgeStateTreeAssetInfo]"""
+        return unreal.UnrealBridgeStateTreeLibrary.list_state_tree_assets(package_path, max_results)
+
+    @staticmethod
+    def set_state_tree_property(*, state_tree_path, property_name, value_export_text, compile=True, save=False):
+        """X.set_state_tree_property(state_tree_path, property_name, value_export_text, compile=True, save=False) -> bool"""
+        return unreal.UnrealBridgeStateTreeLibrary.set_state_tree_property(state_tree_path, property_name, value_export_text, compile, save)
+
+    @staticmethod
+    def set_state_tree_state_enabled(*, state_tree_path, state_id, enabled, compile=True, save=False):
+        """X.set_state_tree_state_enabled(state_tree_path, state_id, enabled, compile=True, save=False) -> BridgeStateTreeEditResult"""
+        return unreal.UnrealBridgeStateTreeLibrary.set_state_tree_state_enabled(state_tree_path, state_id, enabled, compile, save)
+
+    @staticmethod
+    def set_state_tree_task_instance_property(*, state_tree_path, task_id, property_name, value_export_text, compile=True, save=False):
+        """X.set_state_tree_task_instance_property(state_tree_path, task_id, property_name, value_export_text, compile=True, save=False) -> BridgeStateTreeEditResult"""
+        return unreal.UnrealBridgeStateTreeLibrary.set_state_tree_task_instance_property(state_tree_path, task_id, property_name, value_export_text, compile, save)
+
+    @staticmethod
+    def set_state_tree_transition_enabled(*, state_tree_path, transition_id, enabled, compile=True, save=False):
+        """X.set_state_tree_transition_enabled(state_tree_path, transition_id, enabled, compile=True, save=False) -> BridgeStateTreeEditResult"""
+        return unreal.UnrealBridgeStateTreeLibrary.set_state_tree_transition_enabled(state_tree_path, transition_id, enabled, compile, save)
+
+    @staticmethod
+    def validate_state_tree_asset(*, state_tree_path):
+        """X.validate_state_tree_asset(state_tree_path) -> BridgeStateTreeValidationResult"""
+        return unreal.UnrealBridgeStateTreeLibrary.validate_state_tree_asset(state_tree_path)
+
+
 class Struct:
     """Wraps unreal.UnrealBridgeStructLibrary (kwargs-only)."""
 
@@ -5237,6 +5955,41 @@ class UMG:
     """Wraps unreal.UnrealBridgeUMGLibrary (kwargs-only)."""
 
     @staticmethod
+    def add_widget(*, widget_blueprint_path, class_name, widget_name, parent_widget_name, is_variable, properties, slot_properties, index):
+        """X.add_widget(widget_blueprint_path, class_name, widget_name, parent_widget_name, is_variable, properties, slot_properties, index) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.add_widget(widget_blueprint_path, class_name, widget_name, parent_widget_name, is_variable, properties, slot_properties, index)
+
+    @staticmethod
+    def add_widget_animation_binding(*, widget_blueprint_path, animation_name, widget_name):
+        """X.add_widget_animation_binding(widget_blueprint_path, animation_name, widget_name) -> str"""
+        return unreal.UnrealBridgeUMGLibrary.add_widget_animation_binding(widget_blueprint_path, animation_name, widget_name)
+
+    @staticmethod
+    def add_widget_animation_float_key(*, widget_blueprint_path, animation_name, widget_name, property_path, time_seconds, value):
+        """X.add_widget_animation_float_key(widget_blueprint_path, animation_name, widget_name, property_path, time_seconds, value) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.add_widget_animation_float_key(widget_blueprint_path, animation_name, widget_name, property_path, time_seconds, value)
+
+    @staticmethod
+    def bind_widget_event(*, widget_blueprint_path, widget_name, event_name, function_name="", pos_x=0, pos_y=0):
+        """X.bind_widget_event(widget_blueprint_path, widget_name, event_name, function_name="", pos_x=0, pos_y=0) -> str"""
+        return unreal.UnrealBridgeUMGLibrary.bind_widget_event(widget_blueprint_path, widget_name, event_name, function_name, pos_x, pos_y)
+
+    @staticmethod
+    def compile_save_widget_blueprint(*, widget_blueprint_path, compile=True, save=True, validate=True):
+        """X.compile_save_widget_blueprint(widget_blueprint_path, compile=True, save=True, validate=True) -> BridgeWidgetCompileResult"""
+        return unreal.UnrealBridgeUMGLibrary.compile_save_widget_blueprint(widget_blueprint_path, compile, save, validate)
+
+    @staticmethod
+    def create_widget_animation(*, widget_blueprint_path, animation_name):
+        """X.create_widget_animation(widget_blueprint_path, animation_name) -> str"""
+        return unreal.UnrealBridgeUMGLibrary.create_widget_animation(widget_blueprint_path, animation_name)
+
+    @staticmethod
+    def create_widget_blueprint(*, path, name, parent_class="", root_class="CanvasPanel", root_name="RootCanvas", compile=False, save=False):
+        """X.create_widget_blueprint(path, name, parent_class="", root_class="CanvasPanel", root_name="RootCanvas", compile=False, save=False) -> str"""
+        return unreal.UnrealBridgeUMGLibrary.create_widget_blueprint(path, name, parent_class, root_class, root_name, compile, save)
+
+    @staticmethod
     def get_widget_animations(*, widget_blueprint_path):
         """X.get_widget_animations(widget_blueprint_path) -> Array[BridgeWidgetAnimationInfo]"""
         return unreal.UnrealBridgeUMGLibrary.get_widget_animations(widget_blueprint_path)
@@ -5262,12 +6015,57 @@ class UMG:
         return unreal.UnrealBridgeUMGLibrary.get_widget_tree(widget_blueprint_path)
 
     @staticmethod
+    def preview_widget(*, widget_blueprint_path, width=1920, height=1080, output_path=""):
+        """X.preview_widget(widget_blueprint_path, width=1920, height=1080, output_path="") -> BridgeWidgetPreviewResult"""
+        return unreal.UnrealBridgeUMGLibrary.preview_widget(widget_blueprint_path, width, height, output_path)
+
+    @staticmethod
+    def remove_widget(*, widget_blueprint_path, widget_name):
+        """X.remove_widget(widget_blueprint_path, widget_name) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.remove_widget(widget_blueprint_path, widget_name)
+
+    @staticmethod
+    def remove_widget_animation(*, widget_blueprint_path, animation_name):
+        """X.remove_widget_animation(widget_blueprint_path, animation_name) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.remove_widget_animation(widget_blueprint_path, animation_name)
+
+    @staticmethod
+    def rename_widget(*, widget_blueprint_path, widget_name, new_name):
+        """X.rename_widget(widget_blueprint_path, widget_name, new_name) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.rename_widget(widget_blueprint_path, widget_name, new_name)
+
+    @staticmethod
+    def reparent_widget(*, widget_blueprint_path, widget_name, new_parent_widget_name, slot_properties, index):
+        """X.reparent_widget(widget_blueprint_path, widget_name, new_parent_widget_name, slot_properties, index) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.reparent_widget(widget_blueprint_path, widget_name, new_parent_widget_name, slot_properties, index)
+
+    @staticmethod
     def search_widgets(*, widget_blueprint_path, query):
         """X.search_widgets(widget_blueprint_path, query) -> Array[BridgeWidgetInfo]"""
         return unreal.UnrealBridgeUMGLibrary.search_widgets(widget_blueprint_path, query)
 
     @staticmethod
+    def set_widget_common_ui_style(*, widget_blueprint_path, widget_name, style_path, style_property="Style"):
+        """X.set_widget_common_ui_style(widget_blueprint_path, widget_name, style_path, style_property="Style") -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.set_widget_common_ui_style(widget_blueprint_path, widget_name, style_path, style_property)
+
+    @staticmethod
+    def set_widget_properties(*, widget_blueprint_path, widget_name, properties):
+        """X.set_widget_properties(widget_blueprint_path, widget_name, properties) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.set_widget_properties(widget_blueprint_path, widget_name, properties)
+
+    @staticmethod
     def set_widget_property(*, widget_blueprint_path, widget_name, property_name, value):
         """X.set_widget_property(widget_blueprint_path, widget_name, property_name, value) -> bool"""
         return unreal.UnrealBridgeUMGLibrary.set_widget_property(widget_blueprint_path, widget_name, property_name, value)
+
+    @staticmethod
+    def set_widget_slot_properties(*, widget_blueprint_path, widget_name, slot_properties):
+        """X.set_widget_slot_properties(widget_blueprint_path, widget_name, slot_properties) -> bool"""
+        return unreal.UnrealBridgeUMGLibrary.set_widget_slot_properties(widget_blueprint_path, widget_name, slot_properties)
+
+    @staticmethod
+    def validate_widget_blueprint(*, widget_blueprint_path):
+        """X.validate_widget_blueprint(widget_blueprint_path) -> Array[BridgeWidgetValidationIssue]"""
+        return unreal.UnrealBridgeUMGLibrary.validate_widget_blueprint(widget_blueprint_path)
 

@@ -2,20 +2,26 @@
 
 #include "Misc/EngineVersionComparison.h"
 
-#if !UE_VERSION_OLDER_THAN(5, 7, 0)
+#if !UE_VERSION_OLDER_THAN(5, 6, 0)
 
 #include "PCGComponent.h"
+#include "PCGCommon.h"
+#include "PCGEdge.h"
 #include "PCGGraph.h"
+#include "PCGNode.h"
+#include "PCGPin.h"
+#include "PCGSettings.h"
 
 #include "Engine/World.h"
 #include "Editor.h"
+#include "EditorAssetLibrary.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "Components/ActorComponent.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Misc/DateTime.h"
-#include "HAL/PlatformProcess.h"
+#include "ScopedTransaction.h"
 #include "UObject/UnrealType.h"
 #include "StructUtils/InstancedStruct.h"
 #include "StructUtils/PropertyBag.h"
@@ -74,6 +80,108 @@ namespace BridgePCGImpl
 	FString PathForGraph(const UPCGGraph* Graph)
 	{
 		return Graph ? Graph->GetPathName() : FString{};
+	}
+
+	UPCGGraph* LoadGraph(const FString& GraphPath)
+	{
+		return LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	}
+
+	void GetAllNodes(UPCGGraph* Graph, TArray<UPCGNode*>& OutNodes)
+	{
+		OutNodes.Reset();
+		if (!Graph)
+		{
+			return;
+		}
+		if (UPCGNode* InputNode = Graph->GetInputNode())
+		{
+			OutNodes.Add(InputNode);
+		}
+		for (UPCGNode* Node : Graph->GetNodes())
+		{
+			if (Node)
+			{
+				OutNodes.AddUnique(Node);
+			}
+		}
+		if (UPCGNode* OutputNode = Graph->GetOutputNode())
+		{
+			OutNodes.AddUnique(OutputNode);
+		}
+	}
+
+	UPCGNode* FindNode(UPCGGraph* Graph, const FString& NodeId)
+	{
+		TArray<UPCGNode*> Nodes;
+		GetAllNodes(Graph, Nodes);
+		for (UPCGNode* Node : Nodes)
+		{
+			if (Node && (Node->GetName() == NodeId || Node->GetPathName() == NodeId))
+			{
+				return Node;
+			}
+		}
+		return nullptr;
+	}
+
+	FBridgePCGPinInfo MakePinInfo(const UPCGPin& Pin)
+	{
+		FBridgePCGPinInfo Info;
+		Info.Label = Pin.Properties.Label.ToString();
+		Info.AllowedTypes = static_cast<int64>(Pin.Properties.AllowedTypes);
+		Info.bOutput = Pin.IsOutputPin();
+		Info.bRequired = Pin.Properties.IsRequiredPin();
+		Info.ConnectionCount = Pin.EdgeCount();
+		return Info;
+	}
+
+	FBridgePCGNodeInfo MakeNodeInfo(UPCGGraph* Graph, UPCGNode& Node)
+	{
+		FBridgePCGNodeInfo Info;
+		Info.Id = Node.GetName();
+		Info.Title = Node.GetNodeTitle(EPCGNodeTitleType::ListView).ToString();
+		Info.bInputNode = Graph && Graph->GetInputNode() == &Node;
+		Info.bOutputNode = Graph && Graph->GetOutputNode() == &Node;
+		Node.GetNodePosition(Info.PositionX, Info.PositionY);
+		if (UPCGSettings* Settings = Node.GetSettings())
+		{
+			Info.SettingsClassPath = Settings->GetClass()->GetPathName();
+			Info.bEnabled = Settings->bEnabled;
+		}
+		for (UPCGPin* Pin : Node.GetInputPins())
+		{
+			if (Pin)
+			{
+				Info.Pins.Add(MakePinInfo(*Pin));
+			}
+		}
+		for (UPCGPin* Pin : Node.GetOutputPins())
+		{
+			if (Pin)
+			{
+				Info.Pins.Add(MakePinInfo(*Pin));
+			}
+		}
+		return Info;
+	}
+
+	bool SaveGraphIfRequested(UPCGGraph* Graph, EPCGChangeType ChangeType, bool bSave, FBridgePCGGraphEditResult& Result)
+	{
+		(void)ChangeType;
+		if (!Graph)
+		{
+			Result.Error = TEXT("PCG graph is unavailable.");
+			return false;
+		}
+		Graph->PostEditChange();
+		Graph->MarkPackageDirty();
+		if (bSave && !UEditorAssetLibrary::SaveAsset(Graph->GetPathName(), false))
+		{
+			Result.Error = TEXT("The graph edit succeeded but the asset could not be saved.");
+			return false;
+		}
+		return true;
 	}
 }
 
@@ -310,33 +418,38 @@ bool UUnrealBridgePCGLibrary::TriggerPCGGenerate(const FString& ActorLabel, cons
 
 FBridgePCGWaitResult UUnrealBridgePCGLibrary::WaitForPCGGenerate(const FString& ActorLabel, const FString& ComponentName, float TimeoutSec)
 {
-	using namespace BridgePCGImpl;
 	FBridgePCGWaitResult Result;
+	const FBridgePCGGenerationPollResult Poll = WaitPCGGeneration(ActorLabel, ComponentName);
+	Result.bSuccess = Poll.bComplete && Poll.Error.IsEmpty();
+	Result.ElapsedMs = 0.f;
+	Result.Note = Poll.Error.IsEmpty()
+		? (Poll.bComplete ? Poll.Status : TEXT("pending; poll WaitPCGGeneration across Editor ticks"))
+		: Poll.Error;
+	return Result;
+}
+
+FBridgePCGGenerationPollResult UUnrealBridgePCGLibrary::WaitPCGGeneration(
+	const FString& ActorLabel,
+	const FString& ComponentName)
+{
+	using namespace BridgePCGImpl;
+	FBridgePCGGenerationPollResult Result;
 	UWorld* World = GetEditorWorld();
-	AActor* A = FindActor(World, ActorLabel);
-	UPCGComponent* C = FindPCGComponent(A, ComponentName);
-	if (!C)
+	AActor* Actor = FindActor(World, ActorLabel);
+	UPCGComponent* Component = FindPCGComponent(Actor, ComponentName);
+	if (!Component)
 	{
-		Result.Note = TEXT("component not found");
+		Result.Status = TEXT("Failed");
+		Result.Error = TEXT("PCG component not found");
 		return Result;
 	}
 
-	const double Start = FPlatformTime::Seconds();
-	const double Deadline = Start + FMath::Max(0.f, TimeoutSec);
-
-	while (FPlatformTime::Seconds() < Deadline)
-	{
-		if (!C->IsGenerating())
-		{
-			Result.bSuccess = true;
-			Result.ElapsedMs = (FPlatformTime::Seconds() - Start) * 1000.0f;
-			Result.Note = C->bGenerated ? TEXT("generated") : TEXT("not generated (no work to do?)");
-			return Result;
-		}
-		FPlatformProcess::Sleep(0.05f);
-	}
-	Result.ElapsedMs = (FPlatformTime::Seconds() - Start) * 1000.0f;
-	Result.Note = TEXT("timeout");
+	Result.bGenerated = Component->bGenerated;
+	Result.bComplete = !Component->IsGenerating();
+	Result.bSuccess = Result.bComplete;
+	Result.Status = Result.bComplete
+		? (Result.bGenerated ? TEXT("Generated") : TEXT("Idle"))
+		: TEXT("Generating");
 	return Result;
 }
 
@@ -354,6 +467,340 @@ bool UUnrealBridgePCGLibrary::CleanupPCGComponent(const FString& ActorLabel, con
 	return true;
 }
 
+FBridgePCGGraphInfo UUnrealBridgePCGLibrary::GetPCGGraphStructure(const FString& GraphPath)
+{
+	using namespace BridgePCGImpl;
+	FBridgePCGGraphInfo Result;
+	UPCGGraph* Graph = LoadGraph(GraphPath);
+	if (!Graph)
+	{
+		return Result;
+	}
+
+	Result.bFound = true;
+	Result.AssetPath = Graph->GetPathName();
+	TArray<UPCGNode*> Nodes;
+	GetAllNodes(Graph, Nodes);
+	for (UPCGNode* Node : Nodes)
+	{
+		if (!Node)
+		{
+			continue;
+		}
+		Result.Nodes.Add(MakeNodeInfo(Graph, *Node));
+		for (UPCGPin* Pin : Node->GetOutputPins())
+		{
+			if (!Pin)
+			{
+				continue;
+			}
+			for (UPCGEdge* Edge : Pin->Edges)
+			{
+				UPCGPin* OtherPin = Edge ? Edge->GetOtherPin(Pin) : nullptr;
+				if (!OtherPin || !OtherPin->Node)
+				{
+					continue;
+				}
+				FBridgePCGEdgeInfo EdgeInfo;
+				EdgeInfo.FromNodeId = Node->GetName();
+				EdgeInfo.FromPin = Pin->Properties.Label.ToString();
+				EdgeInfo.ToNodeId = OtherPin->Node->GetName();
+				EdgeInfo.ToPin = OtherPin->Properties.Label.ToString();
+				Result.Edges.Add(MoveTemp(EdgeInfo));
+			}
+		}
+	}
+	return Result;
+}
+
+FBridgePCGGraphValidationResult UUnrealBridgePCGLibrary::ValidatePCGGraph(const FString& GraphPath)
+{
+	using namespace BridgePCGImpl;
+	FBridgePCGGraphValidationResult Result;
+	UPCGGraph* Graph = LoadGraph(GraphPath);
+	if (!Graph)
+	{
+		Result.ErrorCount = 1;
+		Result.Messages.Add(TEXT("Error: PCG graph could not be loaded."));
+		return Result;
+	}
+	if (!Graph->GetInputNode() || !Graph->GetOutputNode())
+	{
+		++Result.ErrorCount;
+		Result.Messages.Add(TEXT("Error: PCG graph is missing its input or output node."));
+	}
+
+	TArray<UPCGNode*> Nodes;
+	GetAllNodes(Graph, Nodes);
+	TMap<UPCGNode*, TArray<UPCGNode*>> Adjacency;
+	for (UPCGNode* Node : Nodes)
+	{
+		if (!Node)
+		{
+			++Result.ErrorCount;
+			Result.Messages.Add(TEXT("Error: PCG graph contains a null node."));
+			continue;
+		}
+		if (!Node->GetSettings())
+		{
+			++Result.ErrorCount;
+			Result.Messages.Add(FString::Printf(TEXT("Error: Node %s has no settings object."), *Node->GetName()));
+		}
+		int32 ConnectionCount = 0;
+		for (UPCGPin* InputPin : Node->GetInputPins())
+		{
+			if (!InputPin)
+			{
+				++Result.ErrorCount;
+				Result.Messages.Add(FString::Printf(TEXT("Error: Node %s contains a null input pin."), *Node->GetName()));
+				continue;
+			}
+			ConnectionCount += InputPin->EdgeCount();
+			if (InputPin->Properties.IsRequiredPin() && !InputPin->IsConnected())
+			{
+				++Result.WarningCount;
+				Result.Messages.Add(FString::Printf(TEXT("Warning: Required pin %s.%s is not connected."),
+					*Node->GetName(), *InputPin->Properties.Label.ToString()));
+			}
+		}
+		for (UPCGPin* OutputPin : Node->GetOutputPins())
+		{
+			if (!OutputPin)
+			{
+				++Result.ErrorCount;
+				Result.Messages.Add(FString::Printf(TEXT("Error: Node %s contains a null output pin."), *Node->GetName()));
+				continue;
+			}
+			ConnectionCount += OutputPin->EdgeCount();
+			for (UPCGEdge* Edge : OutputPin->Edges)
+			{
+				UPCGPin* OtherPin = Edge ? Edge->GetOtherPin(OutputPin) : nullptr;
+				if (!Edge || !Edge->IsValid() || !OtherPin || !OtherPin->Node)
+				{
+					++Result.ErrorCount;
+					Result.Messages.Add(FString::Printf(TEXT("Error: Node %s has an invalid edge."), *Node->GetName()));
+					continue;
+				}
+				if (!OutputPin->IsCompatible(OtherPin))
+				{
+					++Result.ErrorCount;
+					Result.Messages.Add(FString::Printf(TEXT("Error: Incompatible edge %s.%s -> %s.%s."),
+						*Node->GetName(), *OutputPin->Properties.Label.ToString(),
+						*OtherPin->Node->GetName(), *OtherPin->Properties.Label.ToString()));
+				}
+				Adjacency.FindOrAdd(Node).AddUnique(OtherPin->Node);
+			}
+		}
+		if (ConnectionCount == 0 && Node != Graph->GetInputNode() && Node != Graph->GetOutputNode())
+		{
+			++Result.WarningCount;
+			Result.Messages.Add(FString::Printf(TEXT("Warning: Node %s is isolated."), *Node->GetName()));
+		}
+	}
+
+	TMap<UPCGNode*, uint8> VisitState;
+	TFunction<void(UPCGNode*)> Visit = [&](UPCGNode* Node)
+	{
+		VisitState.Add(Node, 1);
+		for (UPCGNode* Next : Adjacency.FindRef(Node))
+		{
+			const uint8 State = VisitState.FindRef(Next);
+			if (State == 1)
+			{
+				++Result.ErrorCount;
+				Result.Messages.Add(FString::Printf(TEXT("Error: Cycle detected through node %s."), *Next->GetName()));
+			}
+			else if (State == 0)
+			{
+				Visit(Next);
+			}
+		}
+		VisitState.Add(Node, 2);
+	};
+	for (UPCGNode* Node : Nodes)
+	{
+		if (Node && VisitState.FindRef(Node) == 0)
+		{
+			Visit(Node);
+		}
+	}
+
+	Result.bSuccess = Result.ErrorCount == 0;
+	if (Result.Messages.IsEmpty())
+	{
+		Result.Messages.Add(TEXT("PCG graph validation passed."));
+	}
+	return Result;
+}
+
+FBridgePCGGraphEditResult UUnrealBridgePCGLibrary::AddPCGGraphNode(
+	const FString& GraphPath,
+	const FString& SettingsClassPath,
+	const FString& NodeTitle,
+	int32 PositionX,
+	int32 PositionY,
+	bool bSave)
+{
+	using namespace BridgePCGImpl;
+	FBridgePCGGraphEditResult Result;
+	UPCGGraph* Graph = LoadGraph(GraphPath);
+	UClass* SettingsClass = StaticLoadClass(UPCGSettings::StaticClass(), nullptr, *SettingsClassPath);
+	if (!Graph || !SettingsClass || SettingsClass->HasAnyClassFlags(CLASS_Abstract))
+	{
+		Result.Error = TEXT("PCG graph or concrete UPCGSettings class could not be loaded.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeAddPCGNode", "Bridge: Add PCG Node"));
+	Graph->Modify();
+	UPCGSettings* NewSettings = nullptr;
+	UPCGNode* Node = Graph->AddNodeOfType(SettingsClass, NewSettings);
+	if (!Node || !NewSettings)
+	{
+		Result.Error = TEXT("UPCGGraph rejected the settings class.");
+		return Result;
+	}
+	Node->Modify();
+	NewSettings->Modify();
+	if (!NodeTitle.IsEmpty())
+	{
+		Node->NodeTitle = FName(*NodeTitle);
+	}
+	Node->SetNodePosition(PositionX, PositionY);
+	Node->UpdateAfterSettingsChangeDuringCreation();
+	Result.NodeId = Node->GetName();
+	Result.bSuccess = SaveGraphIfRequested(Graph, EPCGChangeType::Structural, bSave, Result);
+	return Result;
+}
+
+FBridgePCGGraphEditResult UUnrealBridgePCGLibrary::ConnectPCGGraphNodes(
+	const FString& GraphPath,
+	const FString& FromNodeId,
+	const FString& FromPin,
+	const FString& ToNodeId,
+	const FString& ToPin,
+	bool bSave)
+{
+	using namespace BridgePCGImpl;
+	FBridgePCGGraphEditResult Result;
+	UPCGGraph* Graph = LoadGraph(GraphPath);
+	UPCGNode* FromNode = FindNode(Graph, FromNodeId);
+	UPCGNode* ToNode = FindNode(Graph, ToNodeId);
+	UPCGPin* SourcePin = FromNode ? FromNode->GetOutputPin(FName(*FromPin)) : nullptr;
+	UPCGPin* TargetPin = ToNode ? ToNode->GetInputPin(FName(*ToPin)) : nullptr;
+	if (!Graph || !FromNode || !ToNode || !SourcePin || !TargetPin)
+	{
+		Result.Error = TEXT("Graph, node id, or pin label was not found.");
+		return Result;
+	}
+	for (UPCGEdge* ExistingEdge : SourcePin->Edges)
+	{
+		if (ExistingEdge && ExistingEdge->GetOtherPin(SourcePin) == TargetPin)
+		{
+			Result.bSuccess = true;
+			Result.NodeId = ToNode->GetName();
+			return Result;
+		}
+	}
+	if (!SourcePin->CanConnect(TargetPin))
+	{
+		Result.Error = TEXT("The PCG pins are not type-compatible or do not allow another connection.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeConnectPCGNodes", "Bridge: Connect PCG Nodes"));
+	Graph->Modify();
+	FromNode->Modify();
+	ToNode->Modify();
+	Graph->AddEdge(FromNode, FName(*FromPin), ToNode, FName(*ToPin));
+	bool bConnected = false;
+	for (UPCGEdge* AddedEdge : SourcePin->Edges)
+	{
+		if (AddedEdge && AddedEdge->GetOtherPin(SourcePin) == TargetPin)
+		{
+			bConnected = true;
+			break;
+		}
+	}
+	if (!bConnected)
+	{
+		Result.Error = TEXT("UPCGGraph did not create the requested edge.");
+		return Result;
+	}
+	Result.NodeId = ToNode->GetName();
+	Result.bSuccess = SaveGraphIfRequested(Graph, EPCGChangeType::Edge, bSave, Result);
+	return Result;
+}
+
+FBridgePCGGraphEditResult UUnrealBridgePCGLibrary::SetPCGNodeSettingsProperty(
+	const FString& GraphPath,
+	const FString& NodeId,
+	const FString& PropertyName,
+	const FString& ValueExportText,
+	bool bSave)
+{
+	using namespace BridgePCGImpl;
+	FBridgePCGGraphEditResult Result;
+	UPCGGraph* Graph = LoadGraph(GraphPath);
+	UPCGNode* Node = FindNode(Graph, NodeId);
+	UPCGSettings* Settings = Node ? Node->GetSettings() : nullptr;
+	FProperty* Property = Settings ? Settings->GetClass()->FindPropertyByName(FName(*PropertyName)) : nullptr;
+	if (!Graph || !Node || !Settings || !Property)
+	{
+		Result.Error = TEXT("Graph, node, settings object, or property was not found.");
+		return Result;
+	}
+
+	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Settings);
+	FString OriginalValue;
+	Property->ExportTextItem_Direct(OriginalValue, ValuePtr, nullptr, Settings, PPF_None);
+	const FScopedTransaction Transaction(LOCTEXT("BridgeSetPCGNodeProperty", "Bridge: Set PCG Node Property"));
+	Graph->Modify();
+	Node->Modify();
+	Settings->Modify();
+	const TCHAR* Start = *ValueExportText;
+	const TCHAR* Parsed = Property->ImportText_Direct(Start, ValuePtr, Settings, PPF_None, GLog);
+	if (!Parsed || Parsed == Start)
+	{
+		const TCHAR* OriginalStart = *OriginalValue;
+		Property->ImportText_Direct(OriginalStart, ValuePtr, Settings, PPF_None, GLog);
+		Result.Error = TEXT("ValueExportText could not be imported for the PCG settings property.");
+		return Result;
+	}
+	Settings->PostEditChange();
+	Node->UpdateAfterSettingsChangeDuringCreation();
+	Result.NodeId = Node->GetName();
+	Result.bSuccess = SaveGraphIfRequested(Graph, EPCGChangeType::Settings, bSave, Result);
+	return Result;
+}
+
+FBridgePCGGraphEditResult UUnrealBridgePCGLibrary::SetPCGNodeEnabled(
+	const FString& GraphPath,
+	const FString& NodeId,
+	bool bEnabled,
+	bool bSave)
+{
+	using namespace BridgePCGImpl;
+	FBridgePCGGraphEditResult Result;
+	UPCGGraph* Graph = LoadGraph(GraphPath);
+	UPCGNode* Node = FindNode(Graph, NodeId);
+	UPCGSettings* Settings = Node ? Node->GetSettings() : nullptr;
+	if (!Graph || !Node || !Settings || !Settings->CanBeDisabled())
+	{
+		Result.Error = TEXT("Graph/node was not found or this node type cannot be disabled.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeSetPCGNodeEnabled", "Bridge: Set PCG Node Enabled"));
+	Graph->Modify();
+	Node->Modify();
+	Settings->Modify();
+	Settings->SetEnabled(bEnabled);
+	Result.NodeId = Node->GetName();
+	Result.bSuccess = SaveGraphIfRequested(Graph, EPCGChangeType::Settings, bSave, Result);
+	return Result;
+}
+
 #undef LOCTEXT_NAMESPACE
 
-#endif // !UE_VERSION_OLDER_THAN(5, 7, 0)
+#endif // !UE_VERSION_OLDER_THAN(5, 6, 0)

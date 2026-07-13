@@ -22,8 +22,9 @@ Same three forms for enums (`unreal.BridgeAssetSearchScope` and aliases of it).
 Limitations (deliberate, first iteration):
   • Multi-hop aliases (`a = lib_alias; a.fn(...)`) are NOT tracked — only
     one hop from `unreal.X`. Models virtually never chain renames.
-  • Type validation: not done — the manifest doesn't carry param types.
-    Catches name/count/kwarg errors, not value-type errors.
+  • Type validation is strict for statically-known literals. Dynamic values
+    (variables, function calls, unreal.Vector(...)) are intentionally deferred
+    to UE because their runtime type cannot be proven from the AST alone.
 """
 
 from __future__ import annotations
@@ -484,6 +485,87 @@ def _check_call(node: ast.Call, unreal_aliases: Set[str],
                 f"  signature: {fn}({', '.join(pnames)}) "
                 f"({n_required} required of {n_total})"
             )
+
+    # 5. Literal type/schema validation. Dynamic expressions are deliberately
+    # skipped; this catches the common bad-call class without false positives.
+    bound_values = {}
+    for index, value_node in enumerate(node.args[:n_total]):
+        bound_values[pnames[index]] = value_node
+    for keyword_node in node.keywords:
+        if keyword_node.arg is not None and keyword_node.arg in pnames:
+            bound_values[keyword_node.arg] = keyword_node.value
+    param_by_name = {p["name"]: p for p in params}
+    for param_name, value_node in bound_values.items():
+        schema = param_by_name[param_name].get("json_schema") or {}
+        mismatch = _literal_schema_mismatch(value_node, schema)
+        if mismatch:
+            expected = param_by_name[param_name].get("type") or schema.get("type") or "declared type"
+            return (
+                f"preflight L{node.lineno}: {lib}.{fn}() arg '{param_name}' "
+                f"expects {expected}; {mismatch}."
+            )
+
+    return ""
+
+
+def _literal_schema_mismatch(node: ast.AST, schema: dict) -> str:
+    """Return a short reason for a provable literal mismatch, else empty."""
+    if not schema:
+        return ""
+
+    expected = schema.get("type")
+    expected_types = set(expected if isinstance(expected, list) else [expected])
+    expected_types.discard(None)
+
+    if isinstance(node, ast.Constant):
+        value = node.value
+        if value is None:
+            return "" if "null" in expected_types else "got null"
+        if isinstance(value, bool):
+            actual = "boolean"
+        elif isinstance(value, int):
+            actual = "integer"
+        elif isinstance(value, float):
+            actual = "number"
+        elif isinstance(value, str):
+            actual = "string"
+        else:
+            return ""
+
+        compatible = actual in expected_types
+        if actual == "integer" and "number" in expected_types:
+            compatible = True
+        if not compatible:
+            return f"got {actual} literal {value!r}"
+        enum_values = schema.get("enum")
+        if enum_values and value not in enum_values:
+            return f"got invalid enum literal {value!r}; valid values: {enum_values}"
+        return ""
+
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        if "array" not in expected_types:
+            return "got array literal"
+        item_schema = schema.get("items") or {}
+        for index, child in enumerate(node.elts):
+            mismatch = _literal_schema_mismatch(child, item_schema)
+            if mismatch:
+                return f"array item {index}: {mismatch}"
+        return ""
+
+    if isinstance(node, ast.Dict):
+        if "object" not in expected_types:
+            return "got object literal"
+        value_schema = schema.get("additionalProperties")
+        if isinstance(value_schema, dict):
+            for index, child in enumerate(node.values):
+                mismatch = _literal_schema_mismatch(child, value_schema)
+                if mismatch:
+                    return f"object value {index}: {mismatch}"
+        return ""
+
+    # Unary numeric literals, e.g. -1 or -0.5.
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        return _literal_schema_mismatch(node.operand, schema)
 
     return ""
 

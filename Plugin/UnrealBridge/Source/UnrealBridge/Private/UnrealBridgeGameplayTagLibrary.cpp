@@ -402,7 +402,30 @@ bool UUnrealBridgeGameplayTagLibrary::RenameGameplayTag(
 #if !UE_VERSION_OLDER_THAN(5, 7, 0)
 	const bool bOk = IGameplayTagsEditorModule::Get().RenameTagInINI(OldTag, NewTag, bRenameChildren);
 #else
+	TArray<TPair<FString, FString>> ChildRenames;
+	if (bRenameChildren)
+	{
+		FGameplayTagContainer AllTags;
+		TagsMgr.RequestAllGameplayTags(AllTags, /*OnlyIncludeDictionaryTags=*/false);
+		const FString OldPrefix = OldTag + TEXT(".");
+		for (const FGameplayTag& Tag : AllTags)
+		{
+			const FString ChildTag = Tag.ToString();
+			if (ChildTag.StartsWith(OldPrefix, ESearchCase::CaseSensitive))
+			{
+				ChildRenames.Emplace(ChildTag, NewTag + ChildTag.RightChop(OldTag.Len()));
+			}
+		}
+	}
+
 	const bool bOk = IGameplayTagsEditorModule::Get().RenameTagInINI(OldTag, NewTag);
+	if (bOk && bRenameChildren)
+	{
+		for (const TPair<FString, FString>& ChildRename : ChildRenames)
+		{
+			IGameplayTagsEditorModule::Get().RenameTagInINI(ChildRename.Key, ChildRename.Value);
+		}
+	}
 #endif
 
 	// Re-append the just-written redirect if a follow-up serialise dropped it,

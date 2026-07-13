@@ -7,6 +7,12 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "Components/ActorComponent.h"
+#include "Components/MeshComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
+#include "ScopedTransaction.h"
 #include "UObject/UnrealType.h"
 #include "EdGraphSchema_K2.h"
 #include "EdGraph/EdGraph.h"
@@ -77,6 +83,7 @@
 #include "K2Node_Tunnel.h"
 #include "K2Node_Composite.h"
 #include "Misc/SecureHash.h"
+#include "Misc/PackageName.h"
 #include "UObject/Script.h"
 #include "UObject/Stack.h"
 #if !UE_VERSION_OLDER_THAN(5, 4, 0)
@@ -102,6 +109,37 @@
 static UBlueprint* LoadBP(const FString& Path)
 {
 	return LoadObject<UBlueprint>(nullptr, *Path);
+}
+
+static UActorComponent* FindOwnedComponentTemplate(UBlueprint* Blueprint, const FString& ComponentName)
+{
+	if (!Blueprint || !Blueprint->SimpleConstructionScript || ComponentName.IsEmpty())
+	{
+		return nullptr;
+	}
+	for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+	{
+		if (Node && Node->GetVariableName().ToString() == ComponentName)
+		{
+			return Node->ComponentTemplate;
+		}
+	}
+	return nullptr;
+}
+
+template <typename T>
+static T* LoadBridgeAsset(const FString& AssetPath)
+{
+	if (AssetPath.IsEmpty())
+	{
+		return nullptr;
+	}
+	if (T* Asset = LoadObject<T>(nullptr, *AssetPath))
+	{
+		return Asset;
+	}
+	const FString ShortName = FPackageName::GetShortName(AssetPath);
+	return LoadObject<T>(nullptr, *FString::Printf(TEXT("%s.%s"), *AssetPath, *ShortName));
 }
 
 static FBridgeClassInfo MakeClassInfo(const UClass* InClass)
@@ -1406,20 +1444,7 @@ bool UUnrealBridgeBlueprintLibrary::SetComponentProperty(
 	UBlueprint* BP = LoadBP(BlueprintPath);
 	if (!BP) return false;
 
-	UActorComponent* Template = nullptr;
-
-	if (BP->SimpleConstructionScript)
-	{
-		for (USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
-		{
-			if (Node && Node->GetVariableName().ToString() == ComponentName)
-			{
-				Template = Node->ComponentTemplate;
-				break;
-			}
-		}
-	}
-
+	UActorComponent* Template = FindOwnedComponentTemplate(BP, ComponentName);
 	if (!Template) return false;
 
 	FProperty* Prop = Template->GetClass()->FindPropertyByName(FName(*PropertyName));
@@ -1429,6 +1454,76 @@ bool UUnrealBridgeBlueprintLibrary::SetComponentProperty(
 	if (!Prop->ImportText_Direct(*Value, ValuePtr, Template, PPF_None))
 		return false;
 
+	FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+	return true;
+}
+
+bool UUnrealBridgeBlueprintLibrary::SetBlueprintStaticMeshComponentAsset(
+	const FString& BlueprintPath,
+	const FString& ComponentName,
+	const FString& StaticMeshPath)
+{
+	UBlueprint* BP = LoadBP(BlueprintPath);
+	UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(FindOwnedComponentTemplate(BP, ComponentName));
+	UStaticMesh* Mesh = LoadBridgeAsset<UStaticMesh>(StaticMeshPath);
+	if (!BP || !Component || !Mesh)
+	{
+		return false;
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("UnrealBridge", "SetBlueprintStaticMesh", "Set Blueprint Static Mesh"));
+	BP->Modify();
+	Component->Modify();
+	Component->SetStaticMesh(Mesh);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+	return true;
+}
+
+bool UUnrealBridgeBlueprintLibrary::SetBlueprintMeshComponentMaterial(
+	const FString& BlueprintPath,
+	const FString& ComponentName,
+	int32 MaterialIndex,
+	const FString& MaterialPath)
+{
+	UBlueprint* BP = LoadBP(BlueprintPath);
+	UMeshComponent* Component = Cast<UMeshComponent>(FindOwnedComponentTemplate(BP, ComponentName));
+	UMaterialInterface* Material = LoadBridgeAsset<UMaterialInterface>(MaterialPath);
+	if (!BP || !Component || !Material || MaterialIndex < 0)
+	{
+		return false;
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("UnrealBridge", "SetBlueprintMaterial", "Set Blueprint Component Material"));
+	BP->Modify();
+	Component->Modify();
+	Component->SetMaterial(MaterialIndex, Material);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
+	return true;
+}
+
+bool UUnrealBridgeBlueprintLibrary::SetBlueprintPrimitiveComponentPhysics(
+	const FString& BlueprintPath,
+	const FString& ComponentName,
+	bool bSimulatePhysics,
+	bool bEnableCollision,
+	const FString& CollisionProfileName)
+{
+	UBlueprint* BP = LoadBP(BlueprintPath);
+	UPrimitiveComponent* Component = Cast<UPrimitiveComponent>(FindOwnedComponentTemplate(BP, ComponentName));
+	if (!BP || !Component)
+	{
+		return false;
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("UnrealBridge", "SetBlueprintPhysics", "Set Blueprint Component Physics"));
+	BP->Modify();
+	Component->Modify();
+	if (!CollisionProfileName.IsEmpty())
+	{
+		Component->SetCollisionProfileName(FName(*CollisionProfileName));
+	}
+	Component->SetCollisionEnabled(bEnableCollision ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
+	Component->SetSimulatePhysics(bSimulatePhysics);
 	FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
 	return true;
 }

@@ -1,4 +1,5 @@
 #include "UnrealBridgeEditorLibrary.h"
+#include "UnrealBridgeRegistryLibrary.h"
 
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
@@ -78,7 +79,11 @@
 #include "ILiveCodingModule.h"
 #endif
 #include "UnrealBridgeCallLog.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "UObject/UnrealType.h"
 
 #define LOCTEXT_NAMESPACE "UnrealBridgeEditor"
@@ -164,6 +169,76 @@ FBridgeEditorState UUnrealBridgeEditorLibrary::GetEditorState()
 		S.NumContentBrowserSelection = Sel.Num();
 	}
 	return S;
+}
+
+FString UUnrealBridgeEditorLibrary::GetCompactProjectContextJson()
+{
+	const FBridgeEditorState State = GetEditorState();
+	const TArray<FString> DirtyPackages = GetDirtyPackageNames();
+	const TArray<FBridgeOpenedAsset> OpenedAssets = GetOpenedAssets();
+	const TArray<FString> ContentSelection = GetContentBrowserSelection();
+
+	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("engine_version"), State.EngineVersion);
+	Root->SetStringField(TEXT("project_name"), State.ProjectName);
+	Root->SetStringField(TEXT("project_file"), FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath()));
+	Root->SetStringField(TEXT("current_level"), State.CurrentLevelPath);
+	Root->SetBoolField(TEXT("is_pie"), State.bIsPIE);
+	Root->SetBoolField(TEXT("is_paused"), State.bIsPaused);
+	Root->SetNumberField(TEXT("dirty_package_count"), DirtyPackages.Num());
+	Root->SetNumberField(TEXT("opened_asset_count"), OpenedAssets.Num());
+	Root->SetNumberField(TEXT("selected_actor_count"), State.NumSelectedActors);
+	Root->SetNumberField(TEXT("content_selection_count"), ContentSelection.Num());
+	Root->SetStringField(TEXT("registry_hash"), UUnrealBridgeRegistryLibrary::GetToolRegistryHash());
+
+	if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealBridge")))
+	{
+		Root->SetStringField(TEXT("plugin_version"), Plugin->GetDescriptor().VersionName);
+	}
+
+	auto ToJsonStringArray = [](const TArray<FString>& Values, int32 MaxValues)
+	{
+		TArray<TSharedPtr<FJsonValue>> JsonValues;
+		const int32 Count = FMath::Min(Values.Num(), MaxValues);
+		JsonValues.Reserve(Count);
+		for (int32 Index = 0; Index < Count; ++Index)
+		{
+			JsonValues.Add(MakeShared<FJsonValueString>(Values[Index]));
+		}
+		return JsonValues;
+	};
+
+	Root->SetArrayField(TEXT("dirty_packages"), ToJsonStringArray(DirtyPackages, 25));
+	Root->SetArrayField(TEXT("content_selection"), ToJsonStringArray(ContentSelection, 25));
+
+	TArray<FString> OpenedPaths;
+	for (const FBridgeOpenedAsset& Opened : OpenedAssets)
+	{
+		OpenedPaths.Add(Opened.Path);
+	}
+	Root->SetArrayField(TEXT("opened_assets"), ToJsonStringArray(OpenedPaths, 25));
+
+	TArray<FString> SelectedActors;
+	if (GEditor)
+	{
+		if (USelection* Selection = GEditor->GetSelectedActors())
+		{
+			for (FSelectionIterator It(*Selection); It && SelectedActors.Num() < 25; ++It)
+			{
+				if (const AActor* Actor = Cast<AActor>(*It))
+				{
+					SelectedActors.Add(Actor->GetActorLabel());
+				}
+			}
+		}
+	}
+	Root->SetArrayField(TEXT("selected_actors"), ToJsonStringArray(SelectedActors, 25));
+
+	FString Json;
+	TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Json);
+	FJsonSerializer::Serialize(Root, Writer);
+	return Json;
 }
 
 TArray<FBridgeOpenedAsset> UUnrealBridgeEditorLibrary::GetOpenedAssets()
@@ -1051,6 +1126,13 @@ FBridgeScreenshotResult UUnrealBridgeEditorLibrary::CaptureActiveViewport(const 
 
 	R.bSuccess = true;
 	return R;
+}
+
+FBridgeScreenshotResult UUnrealBridgeEditorLibrary::CaptureScreenshotJob(
+	const FString& OutFilePath,
+	bool bIncludeBase64)
+{
+	return CaptureActiveViewport(OutFilePath, bIncludeBase64);
 }
 
 // ─── GBuffer channel capture ───────────────────────────────
@@ -2225,6 +2307,26 @@ bool UUnrealBridgeEditorLibrary::FlushCompilation()
 	}
 	FAssetCompilingManager::Get().FinishAllCompilation();
 	return true;
+}
+
+FBridgeLongTaskPollResult UUnrealBridgeEditorLibrary::WaitShaderCompilation()
+{
+	FBridgeLongTaskPollResult Result;
+	Result.Remaining = GetShaderCompileJobCount();
+	Result.bComplete = Result.Remaining == 0;
+	Result.bSuccess = true;
+	Result.Status = Result.bComplete ? TEXT("Complete") : TEXT("Compiling");
+	return Result;
+}
+
+FBridgeLongTaskPollResult UUnrealBridgeEditorLibrary::WaitAssetCompilation()
+{
+	FBridgeLongTaskPollResult Result;
+	Result.Remaining = GetAssetCompileJobCount();
+	Result.bComplete = Result.Remaining == 0;
+	Result.bSuccess = true;
+	Result.Status = Result.bComplete ? TEXT("Complete") : TEXT("Compiling");
+	return Result;
 }
 
 // ─── Output log tail (ring buffer) ─────────────────────────────────────

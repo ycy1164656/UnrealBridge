@@ -76,9 +76,33 @@ except ImportError:
 
 DEFAULT_TIMEOUT = 30
 
+_MANIFEST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge_manifest.json")
+_HANDSHAKE_CACHE: "dict | None" = None
+
 AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024   # 5 MB per file
 AUDIT_LOG_BACKUPS = 3                    # 4 files total (1 active + 3 backups) = 20 MB hard cap
 AUDIT_LOG_NAME = "exec.log"
+
+
+def client_handshake() -> dict:
+    """Return the generated client contract attached to every executable request."""
+    global _HANDSHAKE_CACHE
+    if _HANDSHAKE_CACHE is not None:
+        return dict(_HANDSHAKE_CACHE)
+    try:
+        with open(_MANIFEST_PATH, encoding="utf-8") as stream:
+            manifest = json.load(stream)
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    manifest_hash = str(manifest.get("manifest_hash", ""))
+    _HANDSHAKE_CACHE = {
+        "protocol_version": int(manifest.get("protocol_version", 0) or 0),
+        "plugin_version": str(manifest.get("plugin_version", "")),
+        "registry_hash": str(manifest.get("registry_hash", "")),
+        "manifest_hash": manifest_hash,
+        "wrapper_version": manifest_hash[:16],
+    }
+    return dict(_HANDSHAKE_CACHE)
 
 
 # ── Resolution: turn CLI args into a (host, port, token, project_path) tuple ─
@@ -499,6 +523,171 @@ def cmd_ping(args):
     return 0
 
 
+def _control_request(args, command: str, **fields) -> "tuple[dict | None, int]":
+    """Send one non-Python protocol command with consistent transport errors."""
+    try:
+        host, port, token, _project_path = resolve_target(args)
+        payload = {"id": str(uuid.uuid4()), "command": command, **fields}
+        wait_timeout = float(fields.get("wait_timeout", 0.0) or 0.0)
+        resp = send_request(
+            host, port, payload, max(float(args.timeout), wait_timeout) + 5.0, token=token
+        )
+        return resp, 0
+    except Exception as exc:
+        if args.json:
+            print(json.dumps({"success": False, "error": str(exc)}))
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        return None, 1
+
+
+def _print_control_response(args, resp: dict, *, summary: str = "") -> int:
+    if args.json:
+        print(json.dumps(resp, ensure_ascii=False))
+    elif resp.get("success"):
+        if summary:
+            print(summary)
+        elif resp.get("output"):
+            print(resp["output"])
+        else:
+            print("ok")
+    else:
+        print(f"ERROR: {resp.get('error', 'unexpected response')}", file=sys.stderr)
+    return 0 if resp.get("success") else 1
+
+
+def cmd_health(args):
+    resp, status = _control_request(args, "health")
+    if resp is None:
+        return status
+    health = resp.get("health", {})
+    summary = (
+        f"ready={resp.get('ready')} queue={health.get('queue_depth', 0)} "
+        f"running={health.get('running_job_id') or '-'} "
+        f"tracked={health.get('tracked_jobs', 0)}"
+    )
+    return _print_control_response(args, resp, summary=summary)
+
+
+def cmd_capabilities(args):
+    resp, status = _control_request(args, "capabilities")
+    if resp is None:
+        return status
+    summary = f"protocol={resp.get('protocol_version', '?')} commands={len(resp.get('commands', []))}"
+    return _print_control_response(args, resp, summary=summary)
+
+
+def _job_source(args) -> "str | None":
+    if getattr(args, "file", None):
+        try:
+            with open(args.file, "r", encoding="utf-8") as stream:
+                return stream.read()
+        except OSError as exc:
+            print(f"ERROR: cannot read {args.file}: {exc}", file=sys.stderr)
+            return None
+    if getattr(args, "stdin", False) or getattr(args, "code", None) == "-":
+        return sys.stdin.read()
+    return getattr(args, "code", None)
+
+
+def cmd_submit_job(args):
+    code = _job_source(args)
+    if not code or not code.strip():
+        print("ERROR: provide code, --file, or --stdin", file=sys.stderr)
+        return 2
+    if not args.no_preflight:
+        errors, warnings = _preflight_or_skip(code)
+        for warning in warnings:
+            print(warning, file=sys.stderr)
+        if errors:
+            for error in errors:
+                print(error, file=sys.stderr)
+            return 3
+    poll_code = None
+    if args.poll_file:
+        try:
+            with open(args.poll_file, "r", encoding="utf-8") as stream:
+                poll_code = stream.read()
+        except OSError as exc:
+            print(f"ERROR: cannot read {args.poll_file}: {exc}", file=sys.stderr)
+            return 2
+    elif args.poll_code:
+        poll_code = args.poll_code
+    if poll_code and not args.no_preflight:
+        errors, warnings = _preflight_or_skip(poll_code)
+        for warning in warnings:
+            print(warning, file=sys.stderr)
+        if errors:
+            for error in errors:
+                print(error, file=sys.stderr)
+            return 3
+    wrapped = _wrap_for_attr_enrichment(code)
+    fields = {
+        "script": wrapped,
+        "queue_timeout": args.queue_timeout or args.timeout,
+        **client_handshake(),
+    }
+    if args.idempotency_key:
+        fields["idempotency_key"] = args.idempotency_key
+    if poll_code:
+        fields["poll_script"] = _wrap_for_attr_enrichment(poll_code)
+        fields["poll_interval"] = args.poll_interval
+        fields["run_timeout"] = args.run_timeout
+    resp, status = _control_request(args, "submit_job", **fields)
+    if resp is None:
+        return status
+    summary = (
+        f"job_id={resp.get('job_id', '?')} state={resp.get('job_state', '?')}"
+        f" deduplicated={bool(resp.get('deduplicated'))}"
+    )
+    return _print_control_response(args, resp, summary=summary)
+
+
+def cmd_get_job(args):
+    resp, status = _control_request(args, "get_job", job_id=args.job_id)
+    if resp is None:
+        return status
+    summary = f"job_id={args.job_id} state={resp.get('job_state', '?')} terminal={resp.get('terminal')}"
+    return _print_control_response(args, resp, summary=summary)
+
+
+def cmd_wait_job(args):
+    resp, status = _control_request(
+        args, "wait_job", job_id=args.job_id, wait_timeout=args.wait_timeout
+    )
+    if resp is None:
+        return status
+    summary = (
+        f"job_id={args.job_id} state={resp.get('job_state', '?')} "
+        f"completed={resp.get('wait_completed')}"
+    )
+    return _print_control_response(args, resp, summary=summary)
+
+
+def cmd_cancel_job(args):
+    resp, status = _control_request(args, "cancel_job", job_id=args.job_id)
+    if resp is None:
+        return status
+    summary = f"job_id={args.job_id} state={resp.get('job_state', '?')}"
+    return _print_control_response(args, resp, summary=summary)
+
+
+def cmd_list_jobs(args):
+    resp, status = _control_request(args, "list_jobs", limit=args.limit)
+    if resp is None:
+        return status
+    if args.json:
+        return _print_control_response(args, resp)
+    if not resp.get("success"):
+        return _print_control_response(args, resp)
+    jobs = resp.get("jobs", [])
+    if not jobs:
+        print("(no jobs)")
+    for job in jobs:
+        print(f"{job.get('job_id', '?')}  {job.get('job_state', '?')}  trace={job.get('trace_id', '?')}")
+    return 0
+
+
 def cmd_gt_ping(args):
     """Probe whether the UE GameThread is responsive."""
     host, port, token, _project_path = resolve_target(args)
@@ -582,7 +771,8 @@ def cmd_wait_compile(args):
     host, port, token, _project_path = resolve_target(args)
     last = None
     while _time.time() < deadline:
-        payload = {"id": str(uuid.uuid4()), "script": code, "timeout": 5}
+        payload = {"id": str(uuid.uuid4()), "script": code, "timeout": 5,
+                   **client_handshake()}
         try:
             resp = send_request(host, port, payload, 10.0, token=token)
         except Exception as e:
@@ -665,7 +855,8 @@ def cmd_wait_pose_index(args):
     host, port, token, _project_path = resolve_target(args)
     last = None
     while _time.time() < deadline:
-        payload = {"id": str(uuid.uuid4()), "script": code, "timeout": 5}
+        payload = {"id": str(uuid.uuid4()), "script": code, "timeout": 5,
+                   **client_handshake()}
         try:
             resp = send_request(host, port, payload, 10.0, token=token)
         except Exception as e:
@@ -724,6 +915,89 @@ def cmd_wait_pose_index(args):
         st = (last or {}).get("status", "?")
         print(f"TIMEOUT after {args.wait_timeout}s  (last status={st})", file=sys.stderr)
     return 1
+
+
+def _poll_bridge_status(args, code, description):
+    """Poll one non-blocking UFUNCTION while leaving the GameThread free between calls."""
+    import time as _time
+
+    deadline = _time.time() + args.wait_timeout
+    poll = max(0.1, float(args.poll_interval))
+    host, port, token, _project_path = resolve_target(args)
+    last = None
+    while _time.time() < deadline:
+        payload = {"id": str(uuid.uuid4()), "script": code, "timeout": 5,
+                   **client_handshake()}
+        try:
+            resp = send_request(host, port, payload, 10.0, token=token)
+        except Exception as exc:
+            if args.json:
+                print(json.dumps({"success": False, "error": f"transport: {exc}"}))
+            else:
+                print(f"ERROR: {exc}", file=sys.stderr)
+            return 3
+
+        if not resp.get("success"):
+            error = resp.get("error") or "unknown"
+            if args.json:
+                print(json.dumps({"success": False, "error": error}))
+            else:
+                print(f"ERROR: {error}", file=sys.stderr)
+            return 3
+
+        line = (resp.get("output") or "").strip().splitlines()[-1] if resp.get("output") else ""
+        try:
+            last = json.loads(line)
+        except Exception:
+            if args.json:
+                print(json.dumps({"success": False, "error": f"bad status payload: {line!r}"}))
+            else:
+                print(f"ERROR: bad status payload: {line!r}", file=sys.stderr)
+            return 3
+
+        if last.get("error"):
+            if args.json:
+                print(json.dumps({"success": False, "status": last}))
+            else:
+                print(f"FAILED: {last['error']}", file=sys.stderr)
+            return 2
+        if last.get("complete"):
+            ok = bool(last.get("success", True))
+            if args.json:
+                print(json.dumps({"success": ok, "status": last}))
+            else:
+                print(f"{description}: {last.get('status', 'Complete')}")
+            return 0 if ok else 2
+        _time.sleep(poll)
+
+    if args.json:
+        print(json.dumps({"success": False, "error": "timeout", "status": last}))
+    else:
+        print(f"TIMEOUT after {args.wait_timeout}s ({description})", file=sys.stderr)
+    return 1
+
+
+def cmd_wait_editor_compilation(args, shader):
+    method = "wait_shader_compilation" if shader else "wait_asset_compilation"
+    code = (
+        "import unreal, json\n"
+        f"r = unreal.UnrealBridgeEditorLibrary.{method}()\n"
+        "print(json.dumps({'complete': bool(r.complete), 'success': bool(r.success), "
+        "'remaining': int(r.remaining), 'status': str(r.status), 'error': str(r.error)}))\n"
+    )
+    return _poll_bridge_status(args, code, "shader compilation" if shader else "asset compilation")
+
+
+def cmd_wait_pcg_generation(args):
+    actor = repr(args.actor_label)
+    component = repr(args.component_name)
+    code = (
+        "import unreal, json\n"
+        f"r = unreal.UnrealBridgePCGLibrary.wait_pcg_generation({actor}, {component})\n"
+        "print(json.dumps({'complete': bool(r.complete), 'success': bool(r.success), "
+        "'generated': bool(r.generated), 'status': str(r.status), 'error': str(r.error)}))\n"
+    )
+    return _poll_bridge_status(args, code, "PCG generation")
 
 
 def cmd_exec(args):
@@ -892,7 +1166,14 @@ def _execute(args, code: str, mode: str = "exec", src: "str | None" = None) -> i
         "id": str(uuid.uuid4()),
         "script": wrapped,
         "timeout": args.timeout,
+        "queue_timeout": args.queue_timeout or args.timeout,
+        "wait_timeout": args.timeout,
+        **client_handshake(),
     }
+    if getattr(args, "manifest_bootstrap", False):
+        payload["manifest_bootstrap"] = True
+    if args.idempotency_key:
+        payload["idempotency_key"] = args.idempotency_key
 
     try:
         resp = send_request(host, port, payload, args.timeout + 5, token=token)
@@ -983,6 +1264,15 @@ def main():
         help=f"Per-request timeout in seconds (default: {DEFAULT_TIMEOUT})",
     )
     parser.add_argument(
+        "--queue-timeout",
+        type=float,
+        help="Maximum seconds a Python job may wait before starting; defaults to --timeout.",
+    )
+    parser.add_argument(
+        "--idempotency-key",
+        help="Deduplicate an exec/submit request without repeating editor side effects.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output in JSON format (machine-readable)",
@@ -999,6 +1289,46 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("ping", help="Check if UE is connected")
+    subparsers.add_parser("health", help="Show transport, queue, and running-job health")
+    subparsers.add_parser("capabilities", help="Show protocol capabilities")
+
+    submit_parser = subparsers.add_parser(
+        "submit-job", help="Submit Python and return immediately with a durable job id"
+    )
+    parser.add_argument(
+        "--manifest-bootstrap",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    submit_parser.add_argument("code", nargs="?", help="Python code, or '-' for stdin")
+    submit_parser.add_argument("--file", help="Read Python code from this file")
+    submit_parser.add_argument("--stdin", action="store_true", help="Read Python from stdin")
+    submit_parser.add_argument(
+        "--poll-code",
+        help="Optional short poll script; print JSON with a boolean complete field",
+    )
+    submit_parser.add_argument("--poll-file", help="Read the poll script from this file")
+    submit_parser.add_argument(
+        "--poll-interval", type=float, default=0.25,
+        help="Seconds between polling steps (default: 0.25)",
+    )
+    submit_parser.add_argument(
+        "--run-timeout", type=float, default=300.0,
+        help="Maximum polling Job runtime in seconds (default: 300)",
+    )
+
+    get_job_parser = subparsers.add_parser("get-job", help="Get one durable job snapshot")
+    get_job_parser.add_argument("job_id")
+
+    wait_job_parser = subparsers.add_parser("wait-job", help="Wait for a durable job")
+    wait_job_parser.add_argument("job_id")
+    wait_job_parser.add_argument("--wait-timeout", type=float, default=30.0)
+
+    cancel_job_parser = subparsers.add_parser("cancel-job", help="Cancel a queued job")
+    cancel_job_parser.add_argument("job_id")
+
+    jobs_parser = subparsers.add_parser("jobs", help="List recent durable jobs")
+    jobs_parser.add_argument("--limit", type=int, default=50)
 
     exec_parser = subparsers.add_parser(
         "exec",
@@ -1092,10 +1422,50 @@ def main():
     wpi_parser.add_argument("--poll-interval", type=float, default=1.0,
         help="Seconds between polls (default: 1.0)")
 
+    ws_parser = subparsers.add_parser(
+        "wait-shader-compilation",
+        help="Poll global shader compilation without blocking Editor ticks",
+    )
+    wa_parser = subparsers.add_parser(
+        "wait-asset-compilation",
+        help="Poll global async asset compilation without blocking Editor ticks",
+    )
+    for wait_parser in (ws_parser, wa_parser):
+        wait_parser.add_argument("--wait-timeout", type=float, default=300.0,
+            help="Max total seconds to poll before giving up (default: 300)")
+        wait_parser.add_argument("--poll-interval", type=float, default=0.5,
+            help="Seconds between non-blocking polls (default: 0.5)")
+
+    wpcg_parser = subparsers.add_parser(
+        "wait-pcg-generation",
+        help="Poll one PCG component while allowing PCG and Editor ticks to advance",
+    )
+    wpcg_parser.add_argument("actor_label", help="Actor label or internal name")
+    wpcg_parser.add_argument("component_name", nargs="?", default="",
+        help="PCG component name; empty selects the actor's first PCG component")
+    wpcg_parser.add_argument("--wait-timeout", type=float, default=300.0,
+        help="Max total seconds to poll before giving up (default: 300)")
+    wpcg_parser.add_argument("--poll-interval", type=float, default=0.5,
+        help="Seconds between non-blocking polls (default: 0.5)")
+
     args = parser.parse_args()
 
     if args.command == "ping":
         sys.exit(cmd_ping(args))
+    elif args.command == "health":
+        sys.exit(cmd_health(args))
+    elif args.command == "capabilities":
+        sys.exit(cmd_capabilities(args))
+    elif args.command == "submit-job":
+        sys.exit(cmd_submit_job(args))
+    elif args.command == "get-job":
+        sys.exit(cmd_get_job(args))
+    elif args.command == "wait-job":
+        sys.exit(cmd_wait_job(args))
+    elif args.command == "cancel-job":
+        sys.exit(cmd_cancel_job(args))
+    elif args.command == "jobs":
+        sys.exit(cmd_list_jobs(args))
     elif args.command == "exec":
         sys.exit(cmd_exec(args))
     elif args.command == "exec-file":
@@ -1108,6 +1478,12 @@ def main():
         sys.exit(cmd_wait_compile(args))
     elif args.command == "wait-pose-index":
         sys.exit(cmd_wait_pose_index(args))
+    elif args.command == "wait-shader-compilation":
+        sys.exit(cmd_wait_editor_compilation(args, shader=True))
+    elif args.command == "wait-asset-compilation":
+        sys.exit(cmd_wait_editor_compilation(args, shader=False))
+    elif args.command == "wait-pcg-generation":
+        sys.exit(cmd_wait_pcg_generation(args))
     elif args.command == "list-editors":
         sys.exit(cmd_list_editors(args))
     elif args.command == "preflight":

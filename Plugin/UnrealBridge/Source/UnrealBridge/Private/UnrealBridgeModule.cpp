@@ -1,5 +1,6 @@
 #include "UnrealBridgeModule.h"
 #include "UnrealBridgeDiscovery.h"
+#include "UnrealBridgeHttpServer.h"
 #include "UnrealBridgeServer.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Interfaces/IPluginManager.h"
@@ -10,6 +11,7 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Misc/SecureHash.h"
@@ -157,6 +159,9 @@ void FUnrealBridgeModule::StartupModule()
 	FString Token;
 	FString DiscoveryGroup = TEXT("239.255.42.99:9876");
 	int32 DiscoveryEnabled = 1;
+	int32 HttpEnabled = 1;
+	int32 HttpPort = 11438;
+	FString HttpToken;
 
 	ResolveStringConfig(TEXT("UnrealBridgeBind="), TEXT("UNREAL_BRIDGE_BIND"), TEXT("Bind"), BindStr);
 	ResolveIntConfig(TEXT("UnrealBridgePort="), TEXT("UNREAL_BRIDGE_PORT"), TEXT("Port"), Port);
@@ -165,6 +170,12 @@ void FUnrealBridgeModule::StartupModule()
 		TEXT("DiscoveryGroup"), DiscoveryGroup);
 	ResolveIntConfig(TEXT("UnrealBridgeDiscoveryEnabled="), TEXT("UNREAL_BRIDGE_DISCOVERY"),
 		TEXT("DiscoveryEnabled"), DiscoveryEnabled);
+	ResolveIntConfig(TEXT("UnrealBridgeHttpEnabled="), TEXT("UNREAL_BRIDGE_HTTP_ENABLED"),
+		TEXT("HttpEnabled"), HttpEnabled);
+	ResolveIntConfig(TEXT("UnrealBridgeHttpPort="), TEXT("UNREAL_BRIDGE_HTTP_PORT"),
+		TEXT("HttpPort"), HttpPort);
+	ResolveStringConfig(TEXT("UnrealBridgeHttpToken="), TEXT("UNREAL_BRIDGE_HTTP_TOKEN"),
+		TEXT("HttpToken"), HttpToken);
 
 	// Accept `-UnrealBridgeNoDiscovery` as a convenient shorthand toggle.
 	if (FParse::Param(FCommandLine::Get(), TEXT("UnrealBridgeNoDiscovery")))
@@ -223,6 +234,49 @@ void FUnrealBridgeModule::StartupModule()
 		UE_LOG(LogUnrealBridgeModule, Log, TEXT("token written to %s"), *TokenPath);
 	}
 
+	// ---- start the loopback HTTP MCP endpoint -------------------------
+	if (HttpEnabled != 0)
+	{
+		if (HttpPort <= 0 || HttpPort > 65535)
+		{
+			UE_LOG(LogUnrealBridgeModule, Warning,
+				TEXT("invalid UnrealBridge HTTP port %d — HTTP MCP disabled"), HttpPort);
+		}
+		else
+		{
+			if (HttpToken.IsEmpty())
+			{
+				HttpToken = Token;
+			}
+			if (HttpToken.IsEmpty())
+			{
+				HttpToken = FGuid::NewGuid().ToString(EGuidFormats::Digits)
+					+ FGuid::NewGuid().ToString(EGuidFormats::Digits);
+			}
+
+			HttpServer = MakeUnique<FUnrealBridgeHttpServer>(Server);
+			FUnrealBridgeHttpServer::FStartConfig HttpCfg;
+			HttpCfg.Port = HttpPort;
+			HttpCfg.Token = HttpToken;
+			if (!HttpServer->Start(HttpCfg))
+			{
+				UE_LOG(LogUnrealBridgeModule, Warning,
+					TEXT("HTTP MCP failed to start on 127.0.0.1:%d; stdio/TCP remain available"), HttpPort);
+				HttpServer.Reset();
+			}
+			else
+			{
+				const FString HttpTokenPath = FPaths::Combine(FPaths::ProjectSavedDir(),
+					TEXT("UnrealBridge"), TEXT("http-token.txt"));
+				FFileHelper::SaveStringToFile(HttpToken, *HttpTokenPath,
+					FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+				UE_LOG(LogUnrealBridgeModule, Log,
+					TEXT("HTTP MCP up on http://127.0.0.1:%d/mcp (token: %s)"),
+					HttpServer->GetPort(), *HttpTokenPath);
+			}
+		}
+	}
+
 	// ---- start the discovery responder --------------------------------
 	if (DiscoveryEnabled != 0)
 	{
@@ -235,6 +289,9 @@ void FUnrealBridgeModule::StartupModule()
 		DiscCfg.ProjectPath = ResolveProjectPath();
 		DiscCfg.EngineVersion = FEngineVersion::Current().ToString();
 		DiscCfg.TokenFingerprint = TokenFingerprint(Token);
+		DiscCfg.HttpBindAddress = HttpServer.IsValid() ? TEXT("127.0.0.1") : FString();
+		DiscCfg.HttpPort = HttpServer.IsValid() ? HttpServer->GetPort() : 0;
+		DiscCfg.HttpTokenFingerprint = HttpServer.IsValid() ? TokenFingerprint(HttpToken) : FString();
 
 		Discovery = MakeUnique<FBridgeDiscoveryService>(DiscCfg);
 		if (!Discovery->StartService())
@@ -276,6 +333,12 @@ void FUnrealBridgeModule::ShutdownModule()
 	BridgePerfSampler::Shutdown();
 	BridgePerfFrameHook::Unregister();
 	BridgeDebugState::Unregister();
+
+	if (HttpServer.IsValid())
+	{
+		HttpServer->Stop();
+		HttpServer.Reset();
+	}
 
 	if (Discovery.IsValid())
 	{

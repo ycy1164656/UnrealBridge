@@ -344,7 +344,7 @@ FBridgeGameplayAbilityInfo UUnrealBridgeGameplayAbilityLibrary::GetGameplayAbili
 	Result.NetExecutionPolicy = StaticEnum<EGameplayAbilityNetExecutionPolicy::Type>()
 		->GetNameStringByValue(static_cast<int64>(CDO->GetNetExecutionPolicy()));
 
-#if !UE_VERSION_OLDER_THAN(5, 7, 0)
+#if !UE_VERSION_OLDER_THAN(5, 5, 0)
 	BridgeGameplayAbilityImpl::TagContainerToStrings(CDO->GetAssetTags(), Result.AbilityTags);
 #else
 	// 5.4: GetAssetTags() not yet exposed; AbilityTags is the legacy field.
@@ -545,7 +545,7 @@ TArray<FString> UUnrealBridgeGameplayAbilityLibrary::ListAbilitiesByTag(
 		{
 			continue;
 		}
-#if !UE_VERSION_OLDER_THAN(5, 7, 0)
+#if !UE_VERSION_OLDER_THAN(5, 5, 0)
 		const FGameplayTagContainer AssetTags = CDO->GetAssetTags();
 #else
 		// 5.4: legacy field.
