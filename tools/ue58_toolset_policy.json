@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "provider": "EpicToolsetRegistry",
+  "engine_min": "5.8.0",
+  "execution": "PollingJob",
+  "module_prefix_map": {
+    "aimodule_toolset": "AIModuleToolset",
+    "animation_toolset": "AnimationAssistantToolset",
+    "conversation_toolset": "ConversationToolset",
+    "editor_toolset": "EditorToolset",
+    "state_tree_toolset": "StateTreeToolset"
+  },
+  "rules": {
+    "read_only": {
+      "classification": "Reuse",
+      "bridge_execution": "Allowed",
+      "save_behavior": "Never"
+    },
+    "mutating": {
+      "classification": "Wrap",
+      "bridge_execution": "BlockedPendingTypedWrapper",
+      "save_behavior": "ProviderDefined"
+    },
+    "unknown": {
+      "classification": "Extend",
+      "bridge_execution": "BlockedPendingAudit",
+      "save_behavior": "ProviderDefined"
+    },
+    "destructive": {
+      "classification": "Reject",
+      "bridge_execution": "Rejected",
+      "save_behavior": "ProviderDefined"
+    }
+  },
+  "read_only_name_prefixes": [
+    "can",
+    "check",
+    "describe",
+    "find",
+    "get",
+    "has",
+    "inspect",
+    "is",
+    "list",
+    "query",
+    "read",
+    "search",
+    "validate"
+  ],
+  "destructive_name_fragments": [
+    "clearall",
+    "delete",
+    "destroy",
+    "erase",
+    "overwrite",
+    "purge",
+    "remove",
+    "resetall"
+  ],
+  "overrides": [
+    {
+      "toolset": "UnrealBridge",
+      "tool": "Capabilities",
+      "classification": "Reuse",
+      "bridge_execution": "Allowed",
+      "risk": "ReadOnly",
+      "save_behavior": "Never",
+      "reason": "UnrealBridge-owned read-only capability query."
+    },
+    {
+      "toolset": "UnrealBridge",
+      "tool": "RegistryHash",
+      "classification": "Reuse",
+      "bridge_execution": "Allowed",
+      "risk": "ReadOnly",
+      "save_behavior": "Never",
+      "reason": "UnrealBridge-owned read-only registry hash query."
+    }
+  ]
+}

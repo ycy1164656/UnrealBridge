@@ -161,6 +161,8 @@ def _merge_native_signature(entry: dict, native_entry: "dict | None") -> dict:
         entry.setdefault("supports_dry_run", False)
         entry.setdefault("supports_idempotency", False)
         entry.setdefault("introduced_version", "unknown")
+        entry.setdefault("provider", "UnrealBridge")
+        entry.setdefault("engine_min", "5.3.0")
         return entry
 
     native_inputs = native_entry.get("inputs", [])
@@ -199,7 +201,7 @@ def _merge_native_signature(entry: dict, native_entry: "dict | None") -> dict:
     entry["output_schema"] = native_entry.get("output_schema", {})
     for field in (
         "risk", "execution", "save_behavior", "supports_dry_run",
-        "supports_idempotency", "introduced_version",
+        "supports_idempotency", "introduced_version", "provider", "engine_min",
     ):
         entry[field] = native_entry.get(field)
     return entry

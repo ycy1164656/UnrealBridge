@@ -112,6 +112,7 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(response["result"]["protocolVersion"], "2025-11-25")
         self.assertEqual(response["result"]["serverInfo"]["name"], "UnrealBridge")
+        self.assertEqual(response["result"]["serverInfo"]["version"], "3.0.0")
 
         notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         self.assertEqual(
@@ -123,6 +124,69 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
         self.assertGreaterEqual(len(names), 40)
         self.assertIn("editor_op", names)
         self.assertIn("bridge_get_job", names)
+        self.assertIn("bridge_list_official_toolsets", names)
+        self.assertIn("bridge_describe_official_toolset", names)
+        self.assertIn("bridge_submit_official_toolset_job", names)
+
+    def test_official_read_only_job_and_unannotated_rejection(self) -> None:
+        submitted = self.mcp(
+            200,
+            "tools/call",
+            {
+                "name": "bridge_submit_official_toolset_job",
+                "arguments": {
+                    "toolset": "UnrealBridge",
+                    "tool": "RegistryHash",
+                },
+            },
+        )
+        self.assertFalse(submitted["result"]["isError"])
+        job_id = submitted["result"]["structuredContent"]["job_id"]
+        terminal = None
+        for index in range(50):
+            polled = self.mcp(
+                210 + index,
+                "tools/call",
+                {"name": "bridge_get_job", "arguments": {"job_id": job_id}},
+            )
+            terminal = polled["result"]["structuredContent"]
+            if terminal["terminal"]:
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(terminal)
+        self.assertEqual(terminal["job_state"], "succeeded")
+        self.assertTrue(terminal["job_result"]["success"])
+
+        rejected = self.mcp(
+            300,
+            "tools/call",
+            {
+                "name": "bridge_submit_official_toolset_job",
+                "arguments": {
+                    "toolset": "EditorToolset.LogsToolset",
+                    "tool": "GetVerbosity",
+                    "arguments": {"Category": "LogTemp"},
+                },
+            },
+        )
+        rejected_job = rejected["result"]["structuredContent"]["job_id"]
+        rejected_terminal = None
+        for index in range(50):
+            polled = self.mcp(
+                310 + index,
+                "tools/call",
+                {"name": "bridge_get_job", "arguments": {"job_id": rejected_job}},
+            )
+            rejected_terminal = polled["result"]["structuredContent"]
+            if rejected_terminal["terminal"]:
+                break
+            time.sleep(0.05)
+        self.assertIsNotNone(rejected_terminal)
+        self.assertEqual(rejected_terminal["job_state"], "failed")
+        self.assertIn(
+            "no side-effect annotations",
+            str(rejected_terminal["job_result"]["error"]).lower(),
+        )
 
     def test_group_call_and_job_polling(self) -> None:
         submitted = self.mcp(

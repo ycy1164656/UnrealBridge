@@ -95,6 +95,16 @@ The embedded MCP/REST endpoint listens on `http://127.0.0.1:11438` and reads
 its bearer token from `<Project>/Saved/UnrealBridge/http-token.txt`. It exposes
 grouped typed tools and durable Job routes; `GET /mcp` intentionally has no SSE.
 
+When launching the grouped stdio adapter through `uv`, pin the compatible MCP
+major version: `uv run --with "mcp>=1.6.0,<2" python unreal_bridge_mcp_server.py`.
+MCP 2.x moved the FastMCP API used by this adapter.
+
+On UE 5.8, adapter tools `bridge_list_official_toolsets`,
+`bridge_describe_official_toolset`, and `bridge_submit_official_toolset_job`
+federate the official ToolsetRegistry. Generic execution is restricted to
+tools whose live schema explicitly declares `readOnlyHint=true`; never attempt
+to bypass this gate for unannotated, mutating, or destructive official tools.
+
 ## Workflow
 
 1. **Always ping first.**

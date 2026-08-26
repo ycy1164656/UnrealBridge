@@ -22,11 +22,14 @@
 
 UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It provides a typed operation surface for core scenarios such as animation-asset introspection, reactive event subscription, asset search and reference analysis, and automatic layout of Blueprint graphs. The Agent issues queries and modifications against a locally running editor instance; every change takes effect in real time, is bounded by the transaction system, and is undoable.
 
+> **Current release: 3.0.0.** UE 5.8.1 is the primary verified target. Protocol v2 remains wire-compatible, while the optional UE 5.8 `ToolsetRegistry` federation is isolated behind a version-gated adapter. See the [3.0 release notes](docs/unrealbridge-3.0-release-notes.md).
+
 ## Highlights
 
 - **Durable, recoverable execution.** Protocol v2 separates client wait time from Job lifetime, with queue deadlines, cancellation, idempotency keys, structured errors, stored results, health metrics, and multi-frame polling Jobs that yield between Editor ticks. The loopback-only HTTP MCP/REST endpoint on `127.0.0.1:11438` uses bearer authentication and exposes grouped typed tools without publishing every UFUNCTION as a separate MCP tool.
+- **UE 5.8 Toolset federation with a deny-by-default boundary.** On UE 5.8+, UnrealBridge can discover the official `ToolsetRegistry`, export its real schemas, and run only tools whose schema explicitly declares `readOnlyHint=true`. Official mutators, destructive tools, and tools without side-effect annotations stay blocked until a typed UnrealBridge wrapper owns their transaction and save policy. UE 5.3–5.7 builds never include the Experimental Toolset headers or module.
 - **Transaction-owned asset changes.** ChangeSets provide preview, explicit commit/rollback, dirty-package ownership, protection for packages that were already dirty, and save-only-owned behavior. A failed Bridge mutator is rolled back without saving unrelated editor work.
-- **AST-based hallucination defense.** Before any script reaches UE, `bridge_preflight.py` parses it as Python AST and validates every `unreal.UnrealBridge*Library.fn(...)` call against an auto-generated manifest (34 libraries × 1179 UFUNCTIONs) — catching unknown function/library names (with did-you-mean), wrong positional arg counts, unknown kwargs, and non-existent bridge-enum members **without ever round-tripping to the editor**. A second layer redirects raw `AssetRegistry` / `GameplayStatics` usage patterns to their bridge equivalents and tracks each returned value's type so attribute access on a `str` or `SoftObjectPath` doesn't silently misbehave; on a real `AttributeError` from a UE object the bridge calls back into UE Python, lists that live class's reflected `UPROPERTY`s, and emits a paste-ready correction (auto-handles `snake_case` ↔ `PascalCase` mismatches). A third layer ships a kwargs-only Python wrapper module so positional-arg-order errors are structurally impossible. Together these dropped a fresh-context agent's bridge-call failure rate from **24% → 16%** across A/B validation runs — protection that prompt-only "look-up-before-call" rules in `SKILL.md` had failed to deliver.
+- **AST-based hallucination defense.** Before any script reaches UE, `bridge_preflight.py` parses it as Python AST and validates every `unreal.UnrealBridge*Library.fn(...)` call against an auto-generated manifest (35 libraries × 1185 UFUNCTIONs) — catching unknown function/library names (with did-you-mean), wrong positional arg counts, unknown kwargs, and non-existent bridge-enum members **without ever round-tripping to the editor**. A second layer redirects raw `AssetRegistry` / `GameplayStatics` usage patterns to their bridge equivalents and tracks each returned value's type so attribute access on a `str` or `SoftObjectPath` doesn't silently misbehave; on a real `AttributeError` from a UE object the bridge calls back into UE Python, lists that live class's reflected `UPROPERTY`s, and emits a paste-ready correction (auto-handles `snake_case` ↔ `PascalCase` mismatches). A third layer ships a kwargs-only Python wrapper module so positional-arg-order errors are structurally impossible. Together these dropped a fresh-context agent's bridge-call failure rate from **24% → 16%** across A/B validation runs — protection that prompt-only "look-up-before-call" rules in `SKILL.md` had failed to deliver.
 
   <p align="center">
     <img src="docs/images/en/02-preflight.png" alt="Local AST preflight — stop hallucinations before they reach UE">
@@ -36,7 +39,7 @@ UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It p
 - **Reactive event subscription.** The Agent can subscribe to GAS events, attribute changes, actor lifecycle, AnimNotify, input, timers, and editor-side asset-change events. When the specified event fires, the bridge calls back proactively — no polling needed. This is a scenario that a pure request / response protocol cannot cover.
 - **Agent control surface at PIE runtime.** `UnrealBridgeGameplayLibrary` provides aggregated world observation, navigation pathfinding, and input operations for movement / look / jump — suitable for AI-behavior validation, automated testing, and in-game NPC prototyping.
 - **Blueprint graph quality toolchain.** More than just auto-layout: `auto_layout_graph`'s `pin_aligned` strategy reads live Slate geometry to align exec rails, `straighten_exec_chain` snaps the main rail, `collapse_nodes_to_function` extracts subgraphs, `lint_blueprint` scans by fixed rules for orphans / unnamed nodes / oversized functions / uncommented large graphs, and `add_comment_box` + preset palette (Section / Validation / Danger / Network / UI / Debug / Setup) partition graphs for readability. AnimGraph and state machines get dedicated `auto_layout_anim_graph` / `auto_layout_state_machine` (the latter recurses into each state's inner graph + every transition rule graph).
-- **Native Python execution.** 34 `UnrealBridge*Library` surfaces expose 1179 `UFUNCTION`s in total, covering common subsystems; un-wrapped capabilities are reachable directly through the native `unreal.*` API. Compared to fixed-tool-list MCP schemes or reflection protocols that expose only a single `call` command, this design strikes a balance between flexibility and structure. Every level write op is wrapped in `FScopedTransaction` and supports standard Undo / Redo.
+- **Native Python execution.** 35 `UnrealBridge*Library` surfaces expose 1185 `UFUNCTION`s in total, covering common subsystems; un-wrapped capabilities are reachable directly through the native `unreal.*` API. Compared to fixed-tool-list MCP schemes or reflection protocols that expose only a single `call` command, this design strikes a balance between flexibility and structure. Every level write op is wrapped in `FScopedTransaction` and supports standard Undo / Redo.
 
 ## Architecture
 
@@ -47,7 +50,7 @@ flowchart LR
     subgraph Host["Agent host"]
       CLI["bridge.py"]
       Pre["AST preflight<br/>(local — rejects bad calls<br/>before TCP send)"]
-      Mani[("bridge_manifest.json<br/>34 libs · 1179 UFUNCTIONs")]
+      Mani[("bridge_manifest.json<br/>35 libs · 1185 UFUNCTIONs")]
     end
 
     Gen["tools/gen_manifest.py<br/>scans C++ headers"]
@@ -58,7 +61,7 @@ flowchart LR
       Reactive["UnrealBridgeReactiveSubsystem<br/>+ 10 event adapters"]
       Exec["IPythonScriptPlugin::<br/>ExecPythonCommandEx<br/>(GameThread)"]
       Wrap["unreal_bridge<br/>kwargs-only wrapper<br/>(optional safer surface)"]
-      Libs["34× UnrealBridge*Library"]
+      Libs["35× UnrealBridge*Library"]
       Engine["UEditor · UWorld · Assets"]
     end
 
@@ -171,10 +174,28 @@ pip install -r requirements-mcp.txt
 python .claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
 ```
 
+The adapter currently targets the FastMCP API shipped by `mcp>=1.6.0,<2`.
+Keep that upper bound in Codex's `uv --with` argument as well; MCP 2.x moved
+the FastMCP import surface and is not wire-compatible with this adapter.
+
 The adapter exposes grouped tools such as `bridge_call`, `asset_op`,
 `level_op`, `blueprint_op`, `umg_op`, `asset_factory_op`, `ai_op`,
 `niagara_op`, and `sequencer_op` instead of registering hundreds of individual
-`UFUNCTION`s as tools.
+`UFUNCTION`s as tools. Version 3.0 also exposes
+`bridge_list_official_toolsets`, `bridge_describe_official_toolset`, and
+`bridge_submit_official_toolset_job`; the last endpoint is restricted to
+schema-declared read-only tools and always uses durable polling.
+
+Codex Desktop, the Codex CLI, and the IDE extension share the MCP server
+configuration in `~/.codex/config.toml`. A Windows configuration for this
+checkout is:
+
+```toml
+[mcp_servers.unreal_bridge]
+command = "uv"
+args = ["--directory", 'C:\dev\UnrealBridge', "run", "--with", "mcp>=1.6.0,<2", "python", '.claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py']
+startup_timeout_sec = 120
+```
 
 ## Usage
 
@@ -298,7 +319,7 @@ UnrealBridge/
 
 ## Requirements
 
-- **Unreal Engine 5.3+** with `PythonScriptPlugin` and `GameplayAbilities` (both ship with the engine). The matrix at `tools/build_matrix.py` verifies clean BuildPlugin against 5.3.2 / 5.4.4 / 5.5.4 / 5.6.1 / 5.7.1 / 5.8.0; some libraries (Chooser / PoseSearch / Material / Navigation + a few standalone UFUNCTIONs) require 5.7+, and a handful of inline shims cover 5.3 and 5.8 — see [docs/version-compatibility.md](docs/version-compatibility.md). UE 5.2 and earlier are not supported.
+- **Unreal Engine 5.3+** with `PythonScriptPlugin` and `GameplayAbilities` (both ship with the engine). The historical matrix has verified clean BuildPlugin against 5.3.2 / 5.4.4 / 5.5.4 / 5.6.1 / 5.7.1 / 5.8.0, and the 3.0 release is clean-build verified against 5.8.1. Some libraries (Chooser / PoseSearch / Material / Navigation + a few standalone UFUNCTIONs) require 5.7+; the official Toolset adapter requires 5.8+ and is compiled out on older engines. See [docs/version-compatibility.md](docs/version-compatibility.md). UE 5.2 and earlier are not supported.
 - **Windows 10/11** — the plugin itself is portable, but paths inside the helper scripts are hard-coded Windows-style
 - **Python 3.9+** on PATH
 - **Visual Studio 2022** with the UE workload — for plugin compilation. **Toolchain notes:**

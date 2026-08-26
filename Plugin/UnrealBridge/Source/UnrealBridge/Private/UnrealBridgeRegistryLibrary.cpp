@@ -1,4 +1,5 @@
 #include "UnrealBridgeRegistryLibrary.h"
+#include "UnrealBridgeVersion.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -292,6 +293,10 @@ namespace BridgeRegistry
 			MetadataOr(Function, TEXT("ToolExecution"), TEXT("GameThreadShort")));
 		Description->SetStringField(TEXT("save_behavior"),
 			MetadataOr(Function, TEXT("ToolSaveBehavior"), TEXT("Never")));
+		Description->SetStringField(TEXT("provider"),
+			MetadataOr(Function, TEXT("ToolProvider"), TEXT("UnrealBridge")));
+		Description->SetStringField(TEXT("engine_min"),
+			MetadataOr(Function, TEXT("ToolEngineMin"), UnrealBridgeVersion::MinimumEngine));
 		Description->SetBoolField(TEXT("supports_dry_run"),
 			Function->GetBoolMetaData(TEXT("ToolSupportsDryRun")));
 		Description->SetBoolField(TEXT("supports_idempotency"),
@@ -398,7 +403,7 @@ namespace BridgeRegistry
 		TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 		Root->SetNumberField(TEXT("registry_version"), 1);
 		Root->SetNumberField(TEXT("protocol_version"), 2);
-		Root->SetStringField(TEXT("plugin_version"), TEXT("2.0.0"));
+		Root->SetStringField(TEXT("plugin_version"), UnrealBridgeVersion::Plugin);
 		Root->SetStringField(TEXT("engine_version"), FEngineVersion::Current().ToString());
 
 		TSharedRef<FJsonObject> Libraries = MakeShared<FJsonObject>();

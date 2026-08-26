@@ -116,8 +116,12 @@ for tool calls; `GET /mcp` intentionally does not provide SSE.
 Codex can also connect through the optional grouped MCP adapter:
 
 ```powershell
-python C:\dev\UnrealBridge\.claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
+uv --directory C:\dev\UnrealBridge run --with "mcp>=1.6.0,<2" python C:\dev\UnrealBridge\.claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
 ```
 
 The adapter exposes grouped tools (`bridge_call`, `asset_op`, `level_op`,
-`blueprint_op`, `umg_op`, etc.) instead of one tool per `UFUNCTION`.
+`blueprint_op`, `umg_op`, etc.) instead of one tool per `UFUNCTION`. It also
+exposes UE 5.8 ToolsetRegistry discovery and read-only official-tool Jobs;
+mutating or destructive official tools remain blocked until a typed wrapper is
+audited. Keep the `mcp>=1.6.0,<2` upper bound because MCP 2.x moved FastMCP's
+Python import surface.

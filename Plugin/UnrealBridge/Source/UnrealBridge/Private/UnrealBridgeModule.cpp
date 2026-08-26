@@ -2,6 +2,7 @@
 #include "UnrealBridgeDiscovery.h"
 #include "UnrealBridgeHttpServer.h"
 #include "UnrealBridgeServer.h"
+#include "UnrealBridgeUE58Library.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Interfaces/IPluginManager.h"
 #include "Interfaces/IPv4/IPv4Address.h"
@@ -136,6 +137,7 @@ void FUnrealBridgeModule::StartupModule()
 {
 	BridgeDebugState::Register();
 	BridgePerfFrameHook::Register();
+	UnrealBridgeUE58Adapter::Startup();
 
 	// Map /Plugin/UnrealBridge/ -> this plugin's Shaders/ dir so UMaterialExpressionCustom
 	// nodes can #include "/Plugin/UnrealBridge/BridgeSnippets.ush" and friends.
@@ -330,6 +332,7 @@ void FUnrealBridgeModule::StartupModule()
 
 void FUnrealBridgeModule::ShutdownModule()
 {
+	UnrealBridgeUE58Adapter::Shutdown();
 	BridgePerfSampler::Shutdown();
 	BridgePerfFrameHook::Unregister();
 	BridgeDebugState::Unregister();

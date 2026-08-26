@@ -15,6 +15,8 @@
 #include "Framework/Application/SlateApplication.h"
 #include "UnrealBridgeCallLog.h"
 #include "UnrealBridgeRegistryLibrary.h"
+#include "UnrealBridgeUE58Library.h"
+#include "UnrealBridgeVersion.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -296,8 +298,8 @@ namespace
 
 	void AddVersionHandshake(const TSharedRef<FJsonObject>& Response)
 	{
-		Response->SetNumberField(TEXT("protocol_version"), 2);
-		Response->SetStringField(TEXT("plugin_version"), TEXT("2.0.0"));
+		Response->SetNumberField(TEXT("protocol_version"), UnrealBridgeVersion::Protocol);
+		Response->SetStringField(TEXT("plugin_version"), UnrealBridgeVersion::Plugin);
 		Response->SetStringField(TEXT("registry_hash"),
 			UUnrealBridgeRegistryLibrary::GetToolRegistryHash());
 		if (const TSharedPtr<FJsonObject> Metadata = LoadManifestMetadata())
@@ -663,6 +665,13 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 		Response->SetBoolField(TEXT("polling_jobs"), true);
 		Response->SetBoolField(TEXT("idempotency"), true);
 		Response->SetBoolField(TEXT("queue_deadlines"), true);
+		Response->SetBoolField(TEXT("ue58_toolset_registry_compiled"), UnrealBridgeUE58Adapter::IsCompiled());
+		Response->SetBoolField(TEXT("official_toolset_registry_available"), UnrealBridgeUE58Adapter::IsRegistryAvailable());
+		Response->SetStringField(TEXT("official_toolset_provider"), TEXT("EpicToolsetRegistry"));
+		Response->SetStringField(TEXT("official_toolset_execution"), TEXT("durable-polling-job"));
+		Response->SetStringField(TEXT("official_toolset_policy"), TEXT("schema-declared-read-only-only"));
+		Response->SetStringField(TEXT("official_toolset_save_behavior"), TEXT("never"));
+		Response->SetStringField(TEXT("official_toolset_cancel_mode"), TEXT("bridge-polling-only"));
 	}
 	else if (Command == TEXT("ping"))
 	{

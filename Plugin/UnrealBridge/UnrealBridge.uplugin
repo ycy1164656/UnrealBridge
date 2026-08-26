@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 2,
-	"VersionName": "2.0.0",
+	"Version": 3,
+	"VersionName": "3.0.0",
 	"FriendlyName": "UnrealBridge",
 	"Description": "TCP bridge server that allows external tools (like Claude Code) to execute Python scripts in the Unreal Editor's Python interpreter and receive results.",
 	"Category": "Editor",
@@ -65,6 +65,11 @@
 		{
 			"Name": "PCG",
 			"Enabled": true
+		},
+		{
+			"Name": "ToolsetRegistry",
+			"Enabled": true,
+			"Optional": true
 		}
 	]
 }

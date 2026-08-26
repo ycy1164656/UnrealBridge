@@ -1,11 +1,33 @@
 # UnrealBridge UE 5.8.1 升级后优化执行计划
 
-> 文档状态：待执行，阻塞于 ShooterRoyal 完成 UE 5.8.1 迁移
+> 文档状态：UnrealBridge 3.0 发布范围已执行完成（2026-08-26）
 > 创建日期：2026-08-25
 > UnrealBridge 工作仓库：`C:\dev\UnrealBridge`
-> 集成项目：`C:\dev\ShooterRoyal`
-> 当前基线：UnrealBridge `2.0.0`、Protocol `2`、UE `5.6.1`
+> 集成项目：`C:\dev\ShooterRoyal_5_8_DirectUpgrade`
+> 历史基线：UnrealBridge `2.0.0`、Protocol `2`、UE `5.6.1`
+> 发布结果：UnrealBridge `3.0.0`、Protocol `2`、UE `5.8.1`
 > 目标引擎：Unreal Engine `5.8.1`
+
+---
+
+## 执行结果（2026-08-26）
+
+- 双仓库可恢复快照、UE 5.8.1 clean `BuildPlugin`、ShooterRoyal
+  `LyraEditor Win64 Development`、5 个 UE Automation 测试、15 个 Python
+  测试、HTTP MCP 7 个协议测试和 60 秒 Job soak 均通过。
+- 运行中的 UE 5.8.1 实测导出 53 个 Toolset、832 个 Tool；完整 schema
+  与 `Reuse / Wrap / Extend / Reject` 决策见
+  [`../ue58-toolset-capability-matrix.md`](../ue58-toolset-capability-matrix.md)。
+- 官方 schema 未提供普遍可靠的副作用标注。因此 3.0 的通用 Toolset 执行面
+  只放行明确声明 `readOnlyHint=true` 的工具；官方修改工具不会绕过现有
+  ChangeSet、package ownership 和保存白名单。
+- Batch 5–8 所列领域能力继续由既有 typed UnrealBridge libraries 提供；官方
+  Toolset 中未标注副作用的 776 个工具保持 `Extend`，54 个潜在破坏性工具保持
+  `Reject`，不会为了形式上的“接入”而开放未审计写操作。
+- 当前机器的 UE 5.6.1 UBT 在编译插件前于
+  `ModuleRules.IsValidForTarget` 抛出内部 `ArgumentNullException`；同一错误可在未改动
+  的 2.0 快照复现，故本次不把 UE 5.6.1 记为 3.0 回归通过，也不归因于插件改动。
+- 发布说明见 [`../unrealbridge-3.0-release-notes.md`](../unrealbridge-3.0-release-notes.md)。
 
 ---
 
@@ -570,4 +592,3 @@ Epic 官方资料：
 - [UE 5.8.1 release and hotfix notes](https://forums.unrealengine.com/t/unreal-engine-5-8-released/2729274)
 - [Updating Projects to Newer Versions](https://dev.epicgames.com/documentation/unreal-engine/updating-projects-to-newer-versions-of-unreal-engine)
 - [Upgrading Lyra to the Latest Engine Release](https://dev.epicgames.com/documentation/unreal-engine/upgrading-the-lyra-starter-game-to-the-latest-engine-release-in-unreal-engine)
-

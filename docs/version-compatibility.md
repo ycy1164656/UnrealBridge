@@ -1,12 +1,32 @@
 # UnrealBridge — engine version compatibility
 
-The plugin claims **Unreal Engine 5.3+**. The build matrix in
-`tools/build_matrix.py` has verified clean BuildPlugin against 5.3 / 5.4 /
-5.5 / 5.6 / 5.7 / 5.8 with the gating below; 5.2 is configured but disabled
-(would need additional pre-5.3 shims). Some features are gated to **5.7+**
-because they depend on engine APIs that don't exist or behave differently
-on the older 5.x's. A handful of **5.8-only** shims handle API renames /
-parameter additions that landed in 5.8.
+The plugin claims **Unreal Engine 5.3+**. Historical build-matrix runs have
+verified clean BuildPlugin against 5.3 / 5.4 / 5.5 / 5.6 / 5.7 / 5.8, while
+the UnrealBridge 3.0 release run on 2026-08-26 clean-build verified UE 5.8.1.
+UE 5.2 is configured but disabled and unsupported. Some features are gated to
+**5.7+** because they depend on engine APIs that do not exist or behave
+differently on older 5.x releases. A handful of **5.8-only** shims handle API
+renames and parameter additions that landed in 5.8.
+
+## UnrealBridge 3.0 and UE 5.8 ToolsetRegistry
+
+UnrealBridge 3.0 keeps protocol version 2 and adds a UE-version-gated adapter
+for the official Experimental `ToolsetRegistry`:
+
+- On UE 5.8+, `UnrealBridge.Build.cs` adds the `ToolsetRegistry` module and
+  defines `UNREALBRIDGE_WITH_UE58_TOOLSET_REGISTRY=1`.
+- On UE 5.3–5.7, the module and its Experimental headers are not referenced;
+  the existing TCP, HTTP MCP, Job, ChangeSet, manifest, and wrapper paths stay
+  available.
+- Official tools are discovered from their live schema. Generic execution is
+  allowed only when `annotations.readOnlyHint=true` and the tool is not marked
+  destructive. Unannotated or mutating tools require a typed, audited wrapper.
+- Official calls run as durable polling Jobs. Their generic adapter never
+  saves packages and does not expose provider cancellation as if it were
+  guaranteed.
+
+The UE 5.8.1 live audit found 53 toolsets and 832 tools. The generated decision
+record is [`ue58-toolset-capability-matrix.md`](ue58-toolset-capability-matrix.md).
 
 This document lists what's gated. The build matrix in `tools/build_matrix.py`
 verifies the gates by compiling the plugin against each engine version.
@@ -80,13 +100,23 @@ python tools/build_matrix.py --only 5.4  # only 5.4
 python tools/build_matrix.py --only 5.7  # only 5.7
 ```
 
-Last verified versions:
+Historically verified versions:
 - UE 5.3 (point release: 5.3.2)
 - UE 5.4 (point release: 5.4.4)
 - UE 5.5 (point release: 5.5.4)
 - UE 5.6 (point release: 5.6.1)
 - UE 5.7 (point release: 5.7.1)
-- UE 5.8 (point release: 5.8.0, source build) — requires `UnrealBuildTool_BuildConfiguration__bAllowUBAExecutor=false` env var (configured per-engine via `tools/engines.local.json`'s `env` block) on engine snapshots that lack the `UbaDetours.dll` content fetched by Setup.bat. UAT detours-injects `UbaDetours.dll` into cl.exe; the env var disables UBA and falls back to the local ParallelExecutor
+- UE 5.8 (point releases: 5.8.0 and 5.8.1 source builds) — engine snapshots that lack the `UbaDetours.dll` content fetched by Setup.bat may require `UnrealBuildTool_BuildConfiguration__bAllowUBAExecutor=false` in `tools/engines.local.json`. UAT otherwise detours-injects `UbaDetours.dll` into `cl.exe`; the env var falls back to the local executor.
+
+Current 3.0 release evidence:
+
+- UE 5.8.1 clean `BuildPlugin`: pass.
+- ShooterRoyal UE 5.8.1 `LyraEditor Win64 Development`: pass.
+- UE 5.6.1 was attempted on the same machine, but the untouched 2.0 snapshot
+  and the 3.0 worktree both stop inside UBT with an internal
+  `ModuleRules.IsValidForTarget` `ArgumentNullException` before UnrealBridge
+  compilation starts. This is recorded as a local engine/UBT verification
+  blocker, not as a 3.0 compatibility pass or a plugin regression.
 
 ## Toolchain note: 5.3 / 5.4 vs. MSVC ≥ 14.44
 

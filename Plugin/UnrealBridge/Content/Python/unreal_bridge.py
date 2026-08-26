@@ -16,12 +16,12 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-08-25T14:44:37+00:00'
+_GENERATED_AT = '2026-08-26T10:16:05+00:00'
 _UE_VERSION = '5.8.1-0+UE5'
 _PROTOCOL_VERSION = 2
-_PLUGIN_VERSION = '2.0.0'
-_REGISTRY_HASH = '3a76021fd28fbfd4db79cdcacd014799'
-_MANIFEST_HASH = '877b4a1eb5f69473f422b166049d0109d55e8aacb1b87f0f1aa486d0dcc0036d'
+_PLUGIN_VERSION = '3.0.0'
+_REGISTRY_HASH = 'f5239640c6d79dc425a9797d75b28310'
+_MANIFEST_HASH = 'd875bc64f49145b4bfffa2ad2dff8c4a2e3cb6ae5a9ce816d8686593f83e0945'
 
 def verify_runtime_compatibility():
     """Fail fast when the generated wrapper no longer matches the loaded plugin."""
@@ -5949,6 +5949,40 @@ class Struct:
     def set_struct_variable_tooltip(*, struct_path, name, tooltip="── Metadata ───────────────────────────────────────────────"):
         """X.set_struct_variable_tooltip(struct_path, name, tooltip="── Metadata ───────────────────────────────────────────────") -> bool"""
         return unreal.UnrealBridgeStructLibrary.set_struct_variable_tooltip(struct_path, name, tooltip)
+
+
+class UE58:
+    """Wraps unreal.UnrealBridgeUE58Library (kwargs-only)."""
+
+    @staticmethod
+    def abandon_official_toolset_call(*, call_id):
+        """X.abandon_official_toolset_call(call_id) -> str"""
+        return unreal.UnrealBridgeUE58Library.abandon_official_toolset_call(call_id)
+
+    @staticmethod
+    def get_official_toolset_catalog_json():
+        """X.get_official_toolset_catalog_json() -> str"""
+        return unreal.UnrealBridgeUE58Library.get_official_toolset_catalog_json()
+
+    @staticmethod
+    def get_official_toolset_schema_json(*, toolset_name):
+        """X.get_official_toolset_schema_json(toolset_name) -> str"""
+        return unreal.UnrealBridgeUE58Library.get_official_toolset_schema_json(toolset_name)
+
+    @staticmethod
+    def is_official_toolset_registry_available():
+        """X.is_official_toolset_registry_available() -> bool"""
+        return unreal.UnrealBridgeUE58Library.is_official_toolset_registry_available()
+
+    @staticmethod
+    def poll_official_toolset_call(*, call_id):
+        """X.poll_official_toolset_call(call_id) -> str"""
+        return unreal.UnrealBridgeUE58Library.poll_official_toolset_call(call_id)
+
+    @staticmethod
+    def start_official_toolset_call(*, call_id, toolset_name, tool_name, json_input):
+        """X.start_official_toolset_call(call_id, toolset_name, tool_name, json_input) -> str"""
+        return unreal.UnrealBridgeUE58Library.start_official_toolset_call(call_id, toolset_name, tool_name, json_input)
 
 
 class UMG:

@@ -2,6 +2,8 @@
 
 #include "UnrealBridgeRegistryLibrary.h"
 #include "UnrealBridgeServer.h"
+#include "UnrealBridgeUE58Library.h"
+#include "UnrealBridgeVersion.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -14,6 +16,7 @@
 #include "IPAddress.h"
 #include "Misc/Base64.h"
 #include "Misc/Guid.h"
+#include "Misc/SecureHash.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -633,9 +636,9 @@ TSharedRef<FJsonObject> FUnrealBridgeHttpServer::BuildHealthObject() const
 	Health->SetStringField(TEXT("transport"), TEXT("http-mcp"));
 	Health->SetStringField(TEXT("bind"), TEXT("127.0.0.1"));
 	Health->SetNumberField(TEXT("port"), Port);
-	Health->SetNumberField(TEXT("protocol_version"), 2);
+	Health->SetNumberField(TEXT("protocol_version"), UnrealBridgeVersion::Protocol);
 	Health->SetStringField(TEXT("mcp_protocol_version"), BridgeHttp::McpProtocolVersion);
-	Health->SetStringField(TEXT("plugin_version"), TEXT("2.0.0"));
+	Health->SetStringField(TEXT("plugin_version"), UnrealBridgeVersion::Plugin);
 	Health->SetStringField(TEXT("registry_hash"), UUnrealBridgeRegistryLibrary::GetToolRegistryHash());
 	Health->SetNumberField(TEXT("queue_depth"), Metrics.QueueDepth);
 	Health->SetNumberField(TEXT("tracked_jobs"), Metrics.TrackedJobs);
@@ -656,8 +659,8 @@ TSharedRef<FJsonObject> FUnrealBridgeHttpServer::BuildCapabilitiesObject() const
 {
 	TSharedRef<FJsonObject> Capabilities = MakeShared<FJsonObject>();
 	Capabilities->SetStringField(TEXT("server"), TEXT("UnrealBridge"));
-	Capabilities->SetStringField(TEXT("plugin_version"), TEXT("2.0.0"));
-	Capabilities->SetNumberField(TEXT("protocol_version"), 2);
+	Capabilities->SetStringField(TEXT("plugin_version"), UnrealBridgeVersion::Plugin);
+	Capabilities->SetNumberField(TEXT("protocol_version"), UnrealBridgeVersion::Protocol);
 	Capabilities->SetStringField(TEXT("mcp_protocol_version"), BridgeHttp::McpProtocolVersion);
 	Capabilities->SetStringField(TEXT("registry_hash"), UUnrealBridgeRegistryLibrary::GetToolRegistryHash());
 	Capabilities->SetBoolField(TEXT("durable_jobs"), true);
@@ -667,6 +670,13 @@ TSharedRef<FJsonObject> FUnrealBridgeHttpServer::BuildCapabilitiesObject() const
 	Capabilities->SetBoolField(TEXT("streamable_http_json"), true);
 	Capabilities->SetBoolField(TEXT("sse"), false);
 	Capabilities->SetNumberField(TEXT("grouped_library_tools"), ToolGroups.Num());
+	Capabilities->SetBoolField(TEXT("ue58_toolset_registry_compiled"), UnrealBridgeUE58Adapter::IsCompiled());
+	Capabilities->SetBoolField(TEXT("official_toolset_registry_available"), UnrealBridgeUE58Adapter::IsRegistryAvailable());
+	Capabilities->SetStringField(TEXT("official_toolset_provider"), TEXT("EpicToolsetRegistry"));
+	Capabilities->SetStringField(TEXT("official_toolset_execution"), TEXT("durable-polling-job"));
+	Capabilities->SetStringField(TEXT("official_toolset_policy"), TEXT("schema-declared-read-only-only"));
+	Capabilities->SetStringField(TEXT("official_toolset_save_behavior"), TEXT("never"));
+	Capabilities->SetStringField(TEXT("official_toolset_cancel_mode"), TEXT("bridge-polling-only"));
 	return Capabilities;
 }
 
@@ -718,6 +728,31 @@ TArray<TSharedPtr<FJsonValue>> FUnrealBridgeHttpServer::BuildMcpTools() const
 		TEXT("Return editor readiness and durable Job queue health."), EmptyObjectSchema()));
 	Add(MakeTool(TEXT("bridge_capabilities"),
 		TEXT("Return protocol, registry, transport, and Job capabilities."), EmptyObjectSchema()));
+	Add(MakeTool(TEXT("bridge_list_official_toolsets"),
+		TEXT("Submit a read-only Job that returns the UE 5.8 ToolsetRegistry catalog."), EmptyObjectSchema()));
+	{
+		TSharedRef<FJsonObject> Properties = MakeShared<FJsonObject>();
+		Properties->SetObjectField(TEXT("toolset"), StringSchema(TEXT("Registered UE 5.8 toolset name.")));
+		Add(MakeTool(TEXT("bridge_describe_official_toolset"),
+			TEXT("Submit a read-only Job that returns one official toolset schema."),
+			MakeObjectSchema(Properties, {TEXT("toolset")})));
+	}
+	{
+		TSharedRef<FJsonObject> Properties = MakeShared<FJsonObject>();
+		Properties->SetObjectField(TEXT("toolset"), StringSchema());
+		Properties->SetObjectField(TEXT("tool"), StringSchema());
+		TSharedRef<FJsonObject> ArgumentsSchema = MakeShared<FJsonObject>();
+		ArgumentsSchema->SetStringField(TEXT("type"), TEXT("object"));
+		ArgumentsSchema->SetBoolField(TEXT("additionalProperties"), true);
+		Properties->SetObjectField(TEXT("arguments"), ArgumentsSchema);
+		Properties->SetObjectField(TEXT("idempotency_key"), StringSchema());
+		Properties->SetObjectField(TEXT("queue_timeout_seconds"), NumberSchema(0.1, 3600.0, 300.0));
+		Properties->SetObjectField(TEXT("poll_interval_seconds"), NumberSchema(0.01, 60.0, 0.25));
+		Properties->SetObjectField(TEXT("run_timeout_seconds"), NumberSchema(0.1, 86400.0, 300.0));
+		Add(MakeTool(TEXT("bridge_submit_official_toolset_job"),
+			TEXT("Run a schema-declared read-only UE 5.8 ToolsetRegistry tool through UnrealBridge queue deadlines and recoverable polling."),
+			MakeObjectSchema(Properties, {TEXT("toolset"), TEXT("tool")})));
+	}
 
 	{
 		TSharedRef<FJsonObject> Properties = MakeShared<FJsonObject>();
@@ -950,6 +985,43 @@ print(json.dumps({"ok": True, "result": _ub_jsonable(_result)}, ensure_ascii=Fal
 )PY"), *Encoded);
 }
 
+void FUnrealBridgeHttpServer::BuildOfficialToolsetScripts(
+	const FString& CallId,
+	const FString& ToolsetName,
+	const FString& ToolName,
+	const TSharedPtr<FJsonObject>& Arguments,
+	FString& OutStartScript,
+	FString& OutPollScript) const
+{
+	TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+	Payload->SetStringField(TEXT("call_id"), CallId);
+	Payload->SetStringField(TEXT("toolset"), ToolsetName);
+	Payload->SetStringField(TEXT("tool"), ToolName);
+	Payload->SetObjectField(TEXT("arguments"), Arguments.IsValid() ? Arguments.ToSharedRef() : MakeShared<FJsonObject>());
+	const FString PayloadJson = BridgeHttp::SerializeObject(Payload);
+	const FTCHARToUTF8 PayloadUtf8(*PayloadJson);
+	const FString Encoded = FBase64::Encode(
+		reinterpret_cast<const uint8*>(PayloadUtf8.Get()), static_cast<uint32>(PayloadUtf8.Length()));
+
+	OutStartScript = FString::Printf(TEXT(R"PY(import base64
+import json
+import unreal
+_p = json.loads(base64.b64decode("%s").decode("utf-8"))
+_started = json.loads(unreal.UnrealBridgeUE58Library.start_official_toolset_call(
+    _p["call_id"], _p["toolset"], _p["tool"],
+    json.dumps(_p["arguments"], ensure_ascii=False)))
+if not _started.get("success"):
+    raise RuntimeError(_started.get("error", "official ToolsetRegistry call failed to start"))
+print(json.dumps(_started, ensure_ascii=False))
+)PY"), *Encoded);
+
+	OutPollScript = FString::Printf(TEXT(R"PY(import json
+import unreal
+_poll = json.loads(unreal.UnrealBridgeUE58Library.poll_official_toolset_call("%s"))
+print(json.dumps(_poll, ensure_ascii=False))
+)PY"), *CallId);
+}
+
 TSharedRef<FJsonObject> FUnrealBridgeHttpServer::InvokeMcpTool(
 	const FString& ToolName,
 	const TSharedPtr<FJsonObject>& Arguments,
@@ -967,6 +1039,84 @@ TSharedRef<FJsonObject> FUnrealBridgeHttpServer::InvokeMcpTool(
 	if (ToolName == TEXT("bridge_capabilities"))
 	{
 		return BridgeHttp::MakeToolResult(BuildCapabilitiesObject(), false);
+	}
+	if (ToolName == TEXT("bridge_list_official_toolsets")
+		|| ToolName == TEXT("bridge_describe_official_toolset"))
+	{
+		FString Script;
+		if (ToolName == TEXT("bridge_list_official_toolsets"))
+		{
+			Script = TEXT("import unreal\nprint(unreal.UnrealBridgeUE58Library.get_official_toolset_catalog_json())");
+		}
+		else
+		{
+			FString ToolsetName;
+			SafeArguments->TryGetStringField(TEXT("toolset"), ToolsetName);
+			if (ToolsetName.IsEmpty())
+			{
+				return BridgeHttp::MakeToolError(TEXT("INVALID_ARGUMENT"), TEXT("toolset is required"));
+			}
+			const FTCHARToUTF8 Utf8(*ToolsetName);
+			const FString EncodedName = FBase64::Encode(
+				reinterpret_cast<const uint8*>(Utf8.Get()), static_cast<uint32>(Utf8.Length()));
+			Script = FString::Printf(TEXT("import base64, unreal\n_name=base64.b64decode('%s').decode('utf-8')\nprint(unreal.UnrealBridgeUE58Library.get_official_toolset_schema_json(_name))"), *EncodedName);
+		}
+		bool bSuccess = false;
+		FString Error;
+		TSharedRef<FJsonObject> Submitted = SubmitScript(
+			Script, FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower),
+			300.0, FString(), FString(), 0.25, 300.0, bSuccess, Error);
+		return bSuccess ? BridgeHttp::MakeToolResult(Submitted, false)
+			: BridgeHttp::MakeToolError(TEXT("JOB_SUBMIT_FAILED"), Error);
+	}
+	if (ToolName == TEXT("bridge_submit_official_toolset_job"))
+	{
+		FString ToolsetName;
+		FString OfficialToolName;
+		FString IdempotencyKey;
+		SafeArguments->TryGetStringField(TEXT("toolset"), ToolsetName);
+		SafeArguments->TryGetStringField(TEXT("tool"), OfficialToolName);
+		SafeArguments->TryGetStringField(TEXT("idempotency_key"), IdempotencyKey);
+		const TSharedPtr<FJsonObject>* OfficialArguments = nullptr;
+		SafeArguments->TryGetObjectField(TEXT("arguments"), OfficialArguments);
+		if (ToolsetName.IsEmpty() || OfficialToolName.IsEmpty())
+		{
+			return BridgeHttp::MakeToolError(TEXT("INVALID_ARGUMENT"), TEXT("toolset and tool are required"));
+		}
+		const FString StableSource = IdempotencyKey.IsEmpty()
+			? FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower)
+			: IdempotencyKey + TEXT("\n") + ToolsetName + TEXT("\n") + OfficialToolName
+				+ TEXT("\n") + BridgeHttp::SerializeObject(OfficialArguments && *OfficialArguments
+					? (*OfficialArguments).ToSharedRef() : MakeShared<FJsonObject>());
+		const FString CallId = TEXT("official-") + FMD5::HashAnsiString(*StableSource);
+		FString StartScript;
+		FString PollScript;
+		BuildOfficialToolsetScripts(CallId, ToolsetName, OfficialToolName,
+			OfficialArguments ? *OfficialArguments : nullptr,
+			StartScript, PollScript);
+		double QueueTimeout = 300.0;
+		double PollInterval = 0.25;
+		double RunTimeout = 300.0;
+		SafeArguments->TryGetNumberField(TEXT("queue_timeout_seconds"), QueueTimeout);
+		SafeArguments->TryGetNumberField(TEXT("poll_interval_seconds"), PollInterval);
+		SafeArguments->TryGetNumberField(TEXT("run_timeout_seconds"), RunTimeout);
+		bool bSuccess = false;
+		FString Error;
+		TSharedRef<FJsonObject> Submitted = SubmitScript(
+			StartScript, FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower),
+			QueueTimeout, IdempotencyKey, PollScript, PollInterval, RunTimeout,
+			bSuccess, Error);
+		if (bSuccess)
+		{
+			Submitted->SetStringField(TEXT("provider"), TEXT("EpicToolsetRegistry"));
+			Submitted->SetStringField(TEXT("toolset"), ToolsetName);
+			Submitted->SetStringField(TEXT("tool"), OfficialToolName);
+			Submitted->SetStringField(TEXT("risk"), TEXT("ReadOnly"));
+			Submitted->SetStringField(TEXT("execution"), TEXT("PollingJob"));
+			Submitted->SetStringField(TEXT("save_behavior"), TEXT("Never"));
+		}
+		return bSuccess ? BridgeHttp::MakeToolResult(Submitted, false)
+			: BridgeHttp::MakeToolError(TEXT("JOB_SUBMIT_FAILED"), Error);
 	}
 	if (ToolName == TEXT("bridge_submit_job"))
 	{
@@ -1339,13 +1489,13 @@ bool FUnrealBridgeHttpServer::HandleMcpPost(
 		Capabilities->SetObjectField(TEXT("experimental"), Experimental);
 		TSharedRef<FJsonObject> ServerInfo = MakeShared<FJsonObject>();
 		ServerInfo->SetStringField(TEXT("name"), TEXT("UnrealBridge"));
-		ServerInfo->SetStringField(TEXT("version"), TEXT("2.0.0"));
+		ServerInfo->SetStringField(TEXT("version"), UnrealBridgeVersion::Plugin);
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("protocolVersion"), NegotiatedVersion);
 		Result->SetObjectField(TEXT("capabilities"), Capabilities);
 		Result->SetObjectField(TEXT("serverInfo"), ServerInfo);
 		Result->SetStringField(TEXT("instructions"),
-			TEXT("Unreal operations are durable Jobs. Poll bridge_get_job until terminal."));
+			TEXT("Use grouped UnrealBridge operations for authenticated edits. Operations and UE 5.8 official Toolsets run as durable Jobs; poll bridge_get_job until terminal. Treat provider save behavior as explicit and never save unrelated dirty packages."));
 		OnComplete(BridgeHttp::JsonResponse(BridgeHttp::MakeJsonRpcResponse(Id, Result)));
 		return true;
 	}

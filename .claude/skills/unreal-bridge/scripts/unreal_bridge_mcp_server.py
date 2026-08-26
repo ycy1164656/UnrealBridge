@@ -11,6 +11,8 @@ need to load hundreds of individual UnrealBridge UFUNCTIONs as separate tools.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import sys
@@ -330,7 +332,18 @@ def _call_code(
     ).strip()
 
 
-mcp = FastMCP("unreal-bridge")
+mcp = FastMCP(
+    "unreal-bridge",
+    instructions=(
+        "Use grouped UnrealBridge operations for authenticated Unreal Editor edits. "
+        "Operations and UE 5.8 official Toolsets are durable Jobs; poll bridge_get_job "
+        "until terminal. Never save unrelated dirty packages."
+    ),
+)
+# FastMCP 1.x does not expose a public server-version constructor argument.
+# The adapter is intentionally pinned below MCP 2, so set the low-level field
+# once to keep initialize/serverInfo aligned with the UnrealBridge release.
+mcp._mcp_server.version = "3.0.0"
 
 
 @mcp.tool()
@@ -389,13 +402,16 @@ def bridge_submit_job(
     code: str,
     idempotency_key: Optional[str] = None,
     queue_timeout: float = 300.0,
+    poll_code: Optional[str] = None,
+    poll_interval: float = 0.25,
+    run_timeout: float = 300.0,
     endpoint: Optional[str] = None,
     project: Optional[str] = None,
     token: Optional[str] = None,
     timeout: float = 15.0,
     no_preflight: bool = False,
 ) -> Dict[str, Any]:
-    """Submit Python as a durable UE job and return immediately with job_id."""
+    """Submit Python as a durable one-shot or polling UE Job and return job_id."""
     if not no_preflight:
         errors, warnings = bridge_cli._preflight_or_skip(code)
         if errors:
@@ -407,8 +423,12 @@ def bridge_submit_job(
         "command": "submit_job",
         "script": bridge_cli._wrap_for_attr_enrichment(code),
         "queue_timeout": queue_timeout,
+        "poll_interval": poll_interval,
+        "run_timeout": run_timeout,
         **bridge_cli.client_handshake(),
     }
+    if poll_code:
+        payload["poll_script"] = bridge_cli._wrap_for_attr_enrichment(poll_code)
     if idempotency_key:
         payload["idempotency_key"] = idempotency_key
     result = _send_command(
@@ -417,6 +437,148 @@ def bridge_submit_job(
     if warnings:
         result = dict(result)
         result["warnings"] = warnings
+    return result
+
+
+def _official_toolset_scripts(
+    *,
+    call_id: str,
+    toolset: str,
+    tool: str,
+    arguments: Dict[str, Any],
+) -> tuple[str, str]:
+    payload = {
+        "call_id": call_id,
+        "toolset": toolset,
+        "tool": tool,
+        "arguments": arguments,
+    }
+    encoded = base64.b64encode(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).decode("ascii")
+    start = textwrap.dedent(
+        f"""
+        import base64
+        import json
+        import unreal
+        _p = json.loads(base64.b64decode({encoded!r}).decode("utf-8"))
+        _started = json.loads(unreal.UnrealBridgeUE58Library.start_official_toolset_call(
+            _p["call_id"], _p["toolset"], _p["tool"],
+            json.dumps(_p["arguments"], ensure_ascii=False)))
+        if not _started.get("success"):
+            raise RuntimeError(_started.get("error", "official ToolsetRegistry call failed to start"))
+        print(json.dumps(_started, ensure_ascii=False))
+        """
+    ).strip()
+    poll = textwrap.dedent(
+        f"""
+        import json
+        import unreal
+        _poll = json.loads(
+            unreal.UnrealBridgeUE58Library.poll_official_toolset_call({call_id!r}))
+        print(json.dumps(_poll, ensure_ascii=False))
+        """
+    ).strip()
+    return start, poll
+
+
+@mcp.tool()
+def bridge_list_official_toolsets(
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = 15.0,
+) -> Dict[str, Any]:
+    """Submit a read-only Job that returns the UE 5.8 ToolsetRegistry catalog."""
+    return bridge_submit_job(
+        "import unreal\nprint(unreal.UnrealBridgeUE58Library.get_official_toolset_catalog_json())",
+        endpoint=endpoint,
+        project=project,
+        token=token,
+        timeout=timeout,
+        no_preflight=True,
+    )
+
+
+@mcp.tool()
+def bridge_describe_official_toolset(
+    toolset: str,
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = 15.0,
+) -> Dict[str, Any]:
+    """Submit a read-only Job that returns one UE 5.8 official toolset schema."""
+    encoded = base64.b64encode(toolset.encode("utf-8")).decode("ascii")
+    code = (
+        "import base64, unreal\n"
+        f"_name=base64.b64decode({encoded!r}).decode('utf-8')\n"
+        "print(unreal.UnrealBridgeUE58Library.get_official_toolset_schema_json(_name))"
+    )
+    return bridge_submit_job(
+        code,
+        endpoint=endpoint,
+        project=project,
+        token=token,
+        timeout=timeout,
+        no_preflight=True,
+    )
+
+
+@mcp.tool()
+def bridge_submit_official_toolset_job(
+    toolset: str,
+    tool: str,
+    arguments: Optional[Dict[str, Any]] = None,
+    idempotency_key: Optional[str] = None,
+    queue_timeout: float = 300.0,
+    poll_interval: float = 0.25,
+    run_timeout: float = 300.0,
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = 15.0,
+) -> Dict[str, Any]:
+    """Run one schema-declared read-only UE 5.8 tool as a recoverable polling Job."""
+    stable_payload = json.dumps(
+        {"toolset": toolset, "tool": tool, "arguments": arguments or {}},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    call_seed = idempotency_key or str(uuid.uuid4())
+    call_id = "official-" + hashlib.sha256(
+        f"{call_seed}\n{stable_payload}".encode("utf-8")
+    ).hexdigest()[:32]
+    start, poll = _official_toolset_scripts(
+        call_id=call_id,
+        toolset=toolset,
+        tool=tool,
+        arguments=arguments or {},
+    )
+    result = bridge_submit_job(
+        start,
+        idempotency_key=idempotency_key,
+        queue_timeout=queue_timeout,
+        poll_code=poll,
+        poll_interval=poll_interval,
+        run_timeout=run_timeout,
+        endpoint=endpoint,
+        project=project,
+        token=token,
+        timeout=timeout,
+        no_preflight=True,
+    )
+    if result.get("success"):
+        result = dict(result)
+        result.update(
+            provider="EpicToolsetRegistry",
+            toolset=toolset,
+            tool=tool,
+            risk="ReadOnly",
+            execution="PollingJob",
+            save_behavior="Never",
+        )
     return result
 
 

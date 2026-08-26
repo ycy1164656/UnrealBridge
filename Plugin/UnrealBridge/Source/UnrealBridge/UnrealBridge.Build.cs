@@ -104,6 +104,18 @@ public class UnrealBridge : ModuleRules
 			"TraceServices",
 		});
 
+		// UE 5.8 introduced the Experimental ToolsetRegistry plugin. Keep the
+		// dependency completely out of 5.3-5.7 builds; the corresponding C++
+		// adapter is compiled to a no-op stub on those versions.
+		bool bWithUE58ToolsetRegistry = Target.Version.MajorVersion > 5
+			|| (Target.Version.MajorVersion == 5 && Target.Version.MinorVersion >= 8);
+		PublicDefinitions.Add("UNREALBRIDGE_WITH_UE58_TOOLSET_REGISTRY="
+			+ (bWithUE58ToolsetRegistry ? "1" : "0"));
+		if (bWithUE58ToolsetRegistry)
+		{
+			PrivateDependencyModuleNames.Add("ToolsetRegistry");
+		}
+
 		// Live Coding is a Windows-only editor module. Guard the dep so
 		// non-Windows builds of this editor plugin don't fail to link.
 		if (Target.Platform == UnrealTargetPlatform.Win64)

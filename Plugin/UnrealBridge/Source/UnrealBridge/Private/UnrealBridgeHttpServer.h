@@ -76,6 +76,13 @@ private:
 		const FString& Operation,
 		const TSharedPtr<FJsonObject>& Arguments,
 		const TSharedPtr<FJsonObject>& FunctionSchema) const;
+	void BuildOfficialToolsetScripts(
+		const FString& CallId,
+		const FString& ToolsetName,
+		const FString& ToolName,
+		const TSharedPtr<FJsonObject>& Arguments,
+		FString& OutStartScript,
+		FString& OutPollScript) const;
 
 	TSharedPtr<FUnrealBridgeServer> Server;
 	TSharedPtr<IHttpRouter> Router;

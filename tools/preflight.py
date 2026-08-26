@@ -113,10 +113,14 @@ def check_visual_studio() -> CheckResult:
                 [str(vswhere), "-latest", "-products", "*",
                  "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                  "-format", "json"],
-                capture_output=True, text=True, encoding="utf-8", timeout=15,
+                capture_output=True, timeout=15,
             )
-            if proc.returncode == 0 and proc.stdout.strip():
-                installs = json.loads(proc.stdout)
+            # vswhere may inherit a localized code page even though its JSON
+            # payload is normally UTF-8. Decode defensively so Python 3.14's
+            # stricter text reader cannot crash the preflight worker thread.
+            stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
+            if proc.returncode == 0 and stdout.strip():
+                installs = json.loads(stdout)
                 if installs:
                     inst = installs[0]
                     return CheckResult(
