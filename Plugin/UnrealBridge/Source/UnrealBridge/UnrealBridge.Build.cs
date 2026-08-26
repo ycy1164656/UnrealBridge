@@ -73,6 +73,7 @@ public class UnrealBridge : ModuleRules
 			"Chooser",
 			"ChooserEditor",
 			"StructUtils",
+			"PropertyBindingUtils",
 			"StateTreeModule",
 			"StateTreeEditorModule",
 			"IKRig",

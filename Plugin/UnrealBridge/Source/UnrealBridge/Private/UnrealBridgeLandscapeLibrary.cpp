@@ -320,10 +320,16 @@ TArray<FBridgeLandscapeLayerMapping> UUnrealBridgeLandscapeLibrary::GetLandscape
 		if (const ULandscapeLayerInfoObject* LayerInfo = Settings.LayerInfoObj)
 		{
 			Mapping.LayerInfoPath = LayerInfo->GetPathName();
+#if ENGINE_MAJOR_VERSION > 5 || ENGINE_MINOR_VERSION >= 7
+			Mapping.bNoWeightBlend =
+				LayerInfo->GetBlendMethod() == ELandscapeTargetLayerBlendMethod::None;
+#else
 			Mapping.bNoWeightBlend = LayerInfo->bNoWeightBlend;
-			if (LayerInfo->PhysMaterial)
+#endif
+			if (const UPhysicalMaterial* PhysicalMaterial =
+				LayerInfo->GetPhysicalMaterial())
 			{
-				Mapping.PhysicalMaterialPath = LayerInfo->PhysMaterial->GetPathName();
+				Mapping.PhysicalMaterialPath = PhysicalMaterial->GetPathName();
 			}
 			Mapping.bValid = true;
 		}

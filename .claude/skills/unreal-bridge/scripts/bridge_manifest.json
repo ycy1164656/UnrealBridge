@@ -43,7 +43,7 @@
       "TIMER"
     ]
   },
-  "generated_at": "2026-07-13T12:16:42+00:00",
+  "generated_at": "2026-08-25T14:44:37+00:00",
   "libraries": {
     "UnrealBridgeAILibrary": {
       "functions": {
@@ -72094,11 +72094,11 @@
       }
     }
   },
-  "manifest_hash": "9f6eea7df915bc5a1d95e0fd55364875a2fc804ab794b4ea3d07c7904859621f",
+  "manifest_hash": "877b4a1eb5f69473f422b166049d0109d55e8aacb1b87f0f1aa486d0dcc0036d",
   "plugin_version": "2.0.0",
-  "project_path": "C:/dev/ShooterRoyal/ShooterRoyal.uproject",
+  "project_path": "C:/dev/ShooterRoyal_5_8/LyraStarterGame.uproject",
   "protocol_version": 2,
-  "registry_hash": "1cc45afc978d8e07a41e2599ca3fc7a7",
+  "registry_hash": "3a76021fd28fbfd4db79cdcacd014799",
   "registry_version": 1,
   "structs": {
     "BridgeAbilityCooldownInfo": [
@@ -72107,7 +72107,8 @@
       "cooldown_tags",
       "found",
       "on_cooldown",
-      "time_remaining"
+      "time_remaining",
+      "to_dict"
     ],
     "BridgeAbilityTagRequirements": [
       "ability_class_name",
@@ -72119,9 +72120,11 @@
       "source_blocked_tags",
       "source_required_tags",
       "target_blocked_tags",
-      "target_required_tags"
+      "target_required_tags",
+      "to_dict"
     ],
     "BridgeAbilityTriggerInfo": [
+      "to_dict",
       "trigger_source",
       "trigger_tag"
     ],
@@ -72129,7 +72132,8 @@
       "ability_class_name",
       "active_count",
       "input_id",
-      "level"
+      "level",
+      "to_dict"
     ],
     "BridgeActiveEffectInfo": [
       "duration",
@@ -72137,7 +72141,8 @@
       "effect_class_name",
       "period_seconds",
       "stack_count",
-      "time_remaining"
+      "time_remaining",
+      "to_dict"
     ],
     "BridgeActorAbilitySystemInfo": [
       "active_effect_count",
@@ -72145,12 +72150,14 @@
       "attribute_set_classes",
       "found",
       "granted_abilities",
-      "owned_tags"
+      "owned_tags",
+      "to_dict"
     ],
     "BridgeActorBounds": [
       "box_extent",
       "origin",
-      "sphere_radius"
+      "sphere_radius",
+      "to_dict"
     ],
     "BridgeActorBrief": [
       "class_name",
@@ -72158,7 +72165,8 @@
       "label",
       "location",
       "name",
-      "tags"
+      "tags",
+      "to_dict"
     ],
     "BridgeActorInfo": [
       "attached_to",
@@ -72171,6 +72179,7 @@
       "label",
       "name",
       "tags",
+      "to_dict",
       "transform"
     ],
     "BridgeActorNetworkingInfo": [
@@ -72183,7 +72192,8 @@
       "net_priority",
       "net_update_frequency",
       "replicate_movement",
-      "replicates"
+      "replicates",
+      "to_dict"
     ],
     "BridgeActorQueryResult": [
       "actors",
@@ -72191,12 +72201,14 @@
       "has_more",
       "next_offset",
       "offset",
+      "to_dict",
       "total_matched"
     ],
     "BridgeActorRadiusHit": [
       "class_name",
       "distance",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeActorRenderCost": [
       "actor_path",
@@ -72204,16 +72216,19 @@
       "estimated_triangle_count",
       "material_slot_count",
       "materials",
-      "primitive_component_count"
+      "primitive_component_count",
+      "to_dict"
     ],
     "BridgeAddExpressionResult": [
       "error",
       "guid",
       "resolved_class",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeAllMaterialsAnalysis": [
       "rows",
+      "to_dict",
       "total_material_instances",
       "total_materials"
     ],
@@ -72226,11 +72241,13 @@
       "num_state_machines",
       "parent_class",
       "preview_skeletal_mesh",
-      "target_skeleton"
+      "target_skeleton",
+      "to_dict"
     ],
     "BridgeAnimCurveInfo": [
       "curve_name",
-      "num_keys"
+      "num_keys",
+      "to_dict"
     ],
     "BridgeAnimGraphNodeInfo": [
       "connections",
@@ -72238,18 +72255,21 @@
       "node_guid",
       "node_index",
       "node_title",
-      "node_type"
+      "node_type",
+      "to_dict"
     ],
     "BridgeAnimGraphSummary": [
       "kind",
       "name",
       "num_nodes",
-      "parent_graph_name"
+      "parent_graph_name",
+      "to_dict"
     ],
     "BridgeAnimLayerInfo": [
       "implementing_class",
       "interface_name",
-      "layer_name"
+      "layer_name",
+      "to_dict"
     ],
     "BridgeAnimLayoutResult": [
       "bounds_height",
@@ -72257,17 +72277,20 @@
       "layer_count",
       "nodes_positioned",
       "succeeded",
+      "to_dict",
       "warnings"
     ],
     "BridgeAnimNodeConnection": [
       "source_pin",
       "target_node_index",
-      "target_pin"
+      "target_pin",
+      "to_dict"
     ],
     "BridgeAnimNotifyInfo": [
       "duration",
       "notify_name",
       "notify_type",
+      "to_dict",
       "trigger_time"
     ],
     "BridgeAnimSequenceInfo": [
@@ -72279,21 +72302,25 @@
       "num_frames",
       "play_length",
       "rate_scale",
-      "skeleton_name"
+      "skeleton_name",
+      "to_dict"
     ],
     "BridgeAnimSlotInfo": [
       "graph_name",
       "node_title",
-      "slot_name"
+      "slot_name",
+      "to_dict"
     ],
     "BridgeAnimState": [
       "is_conduit",
       "is_default",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeAnimSyncMarker": [
       "marker_name",
       "time",
+      "to_dict",
       "track_index"
     ],
     "BridgeAnimTransition": [
@@ -72301,32 +72328,38 @@
       "crossfade_duration",
       "from_state",
       "priority_order",
+      "to_dict",
       "to_state"
     ],
     "BridgeAssetCycleReport": [
       "cycles",
       "package_path",
       "scanned_package_count",
+      "to_dict",
       "truncated"
     ],
     "BridgeAssetDependencyCycle": [
-      "packages"
+      "packages",
+      "to_dict"
     ],
     "BridgeAssetDependencyEdge": [
       "from_package",
       "hard",
+      "to_dict",
       "to_package"
     ],
     "BridgeAssetDependencyNode": [
       "class_path",
       "depth",
       "exists",
-      "package_name"
+      "package_name",
+      "to_dict"
     ],
     "BridgeAssetDependencyTree": [
       "edges",
       "nodes",
       "root_package",
+      "to_dict",
       "truncated"
     ],
     "BridgeAssetInfo": [
@@ -72336,27 +72369,32 @@
       "found",
       "is_redirector",
       "package_name",
-      "tags"
+      "tags",
+      "to_dict"
     ],
     "BridgeAssetTag": [
       "key",
+      "to_dict",
       "value"
     ],
     "BridgeAttributeInfo": [
       "base_value",
       "name",
+      "to_dict",
       "type"
     ],
     "BridgeAttributeSetInfo": [
       "attributes",
       "name",
-      "parent_class_name"
+      "parent_class_name",
+      "to_dict"
     ],
     "BridgeAttributeValue": [
       "attribute_name",
       "base_value",
       "current_value",
-      "found"
+      "found",
+      "to_dict"
     ],
     "BridgeAutoHitchEntry": [
       "draw_calls",
@@ -72368,6 +72406,7 @@
       "render_thread_ms",
       "timestamp_seconds",
       "timestamp_utc",
+      "to_dict",
       "total_ms",
       "used_physical_mb"
     ],
@@ -72376,43 +72415,51 @@
       "entries_buffered",
       "max_entries",
       "started_at_utc",
-      "threshold_ms"
+      "threshold_ms",
+      "to_dict"
     ],
     "BridgeBehaviorTreeInfo": [
       "blackboard_path",
       "path",
-      "root_node_name"
+      "root_node_name",
+      "to_dict"
     ],
     "BridgeBlackboardKeyInfo": [
       "key_type",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeBlendProfileEntry": [
       "blend_scale",
-      "bone_name"
+      "bone_name",
+      "to_dict"
     ],
     "BridgeBlendProfileInfo": [
       "mode",
       "name",
-      "num_entries"
+      "num_entries",
+      "to_dict"
     ],
     "BridgeBlendSpaceAxis": [
       "grid_divisions",
       "max",
       "min",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeBlendSpaceInfo": [
       "axes",
       "name",
       "num_axes",
       "samples",
-      "skeleton_name"
+      "skeleton_name",
+      "to_dict"
     ],
     "BridgeBlendSpaceSample": [
       "animation_name",
       "rate_scale",
-      "sample_value"
+      "sample_value",
+      "to_dict"
     ],
     "BridgeBlueprintOverview": [
       "blueprint_name",
@@ -72423,6 +72470,7 @@
       "graph_names",
       "interfaces",
       "parent_class",
+      "to_dict",
       "variables"
     ],
     "BridgeBlueprintSummary": [
@@ -72443,6 +72491,7 @@
       "public_functions",
       "replicated_variable_count",
       "timeline_count",
+      "to_dict",
       "total_node_count",
       "variable_categories",
       "variable_count"
@@ -72451,7 +72500,8 @@
       "bone_index",
       "bone_name",
       "parent_index",
-      "parent_name"
+      "parent_name",
+      "to_dict"
     ],
     "BridgeBreakpointHit": [
       "blueprint_path",
@@ -72462,12 +72512,14 @@
       "node_guid",
       "node_title",
       "self_path",
+      "to_dict",
       "values"
     ],
     "BridgeBreakpointHitValue": [
       "kind",
       "name",
       "owner_class",
+      "to_dict",
       "type",
       "value"
     ],
@@ -72475,20 +72527,23 @@
       "enabled",
       "graph_name",
       "node_guid",
-      "node_title"
+      "node_title",
+      "to_dict"
     ],
     "BridgeCHTColumn": [
       "binding_path",
       "disabled",
       "display_name",
       "is_output",
-      "kind"
+      "kind",
+      "to_dict"
     ],
     "BridgeCHTEvaluation": [
       "matched_row",
       "result_kind",
       "result_path",
       "succeeded",
+      "to_dict",
       "used_fallback"
     ],
     "BridgeCHTInfo": [
@@ -72498,20 +72553,24 @@
       "nested_chooser_count",
       "output_class_path",
       "result_type",
-      "row_count"
+      "row_count",
+      "to_dict"
     ],
     "BridgeCHTRow": [
       "disabled",
-      "result"
+      "result",
+      "to_dict"
     ],
     "BridgeCHTRowResult": [
       "kind",
-      "result_path"
+      "result_path",
+      "to_dict"
     ],
     "BridgeCallEdge": [
       "target_class",
       "target_kind",
-      "target_name"
+      "target_name",
+      "to_dict"
     ],
     "BridgeCallLogEntry": [
       "command",
@@ -72523,6 +72582,7 @@
       "request_id",
       "script_preview",
       "success",
+      "to_dict",
       "total_duration_ms",
       "unix_seconds_utc"
     ],
@@ -72534,6 +72594,7 @@
       "min_duration_ms",
       "p95_duration_ms",
       "success_count",
+      "to_dict",
       "total_calls",
       "total_dropped"
     ],
@@ -72541,6 +72602,7 @@
       "blueprint_path",
       "child_value",
       "parent_value",
+      "to_dict",
       "variable_name"
     ],
     "BridgeChangeSetInfo": [
@@ -72555,6 +72617,7 @@
       "status",
       "success",
       "target_packages",
+      "to_dict",
       "unexpected_dirty_packages"
     ],
     "BridgeChannelCaptureResult": [
@@ -72567,39 +72630,46 @@
       "format",
       "height",
       "success",
+      "to_dict",
       "width"
     ],
     "BridgeClassInfo": [
       "class_name",
       "class_path",
-      "is_native"
+      "is_native",
+      "to_dict"
     ],
     "BridgeCompileMessage": [
       "message",
       "node_guid",
-      "severity"
+      "severity",
+      "to_dict"
     ],
     "BridgeCompileResult": [
       "error_message",
       "path",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeComponentInfo": [
       "component_class",
       "is_inherited",
       "is_root",
       "name",
-      "parent_name"
+      "parent_name",
+      "to_dict"
     ],
     "BridgeComponentSummary": [
       "component_class",
       "name",
-      "parent_name"
+      "parent_name",
+      "to_dict"
     ],
     "BridgeCreateAssetResult": [
       "error",
       "path",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeCurveInfo": [
       "channel_names",
@@ -72607,35 +72677,41 @@
       "name",
       "num_keys_per_channel",
       "post_infinity_extrap",
-      "pre_infinity_extrap"
+      "pre_infinity_extrap",
+      "to_dict"
     ],
     "BridgeCurveTableInfo": [
       "curve_table_mode",
       "name",
       "num_keys_per_row",
-      "row_names"
+      "row_names",
+      "to_dict"
     ],
     "BridgeDataTableColumn": [
       "inner_type_name",
       "name",
+      "to_dict",
       "type_name"
     ],
     "BridgeDataTableImportResult": [
       "asset_path",
       "errors",
       "rows_imported",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeDataTableInfo": [
       "column_names",
       "name",
       "num_rows",
       "row_struct_name",
-      "rows"
+      "rows",
+      "to_dict"
     ],
     "BridgeDataTableRow": [
       "fields",
-      "row_name"
+      "row_name",
+      "to_dict"
     ],
     "BridgeDebugPrintSite": [
       "blueprint_path",
@@ -72645,14 +72721,16 @@
       "has_connected_input",
       "node_guid",
       "node_title",
-      "string_literal"
+      "string_literal",
+      "to_dict"
     ],
     "BridgeEditorFocusState": [
       "blueprint_path",
       "focused_graph_name",
       "focused_graph_type",
       "open_blueprint_paths",
-      "selected_nodes"
+      "selected_nodes",
+      "to_dict"
     ],
     "BridgeEditorState": [
       "current_level_path",
@@ -72662,37 +72740,44 @@
       "num_content_browser_selection",
       "num_opened_assets",
       "num_selected_actors",
-      "project_name"
+      "project_name",
+      "to_dict"
     ],
     "BridgeEventDispatcherInfo": [
       "name",
-      "params"
+      "params",
+      "to_dict"
     ],
     "BridgeExecConnection": [
       "pin_name",
-      "target_step_index"
+      "target_step_index",
+      "to_dict"
     ],
     "BridgeExecStep": [
       "detail",
       "exec_outputs",
       "node_title",
       "node_type",
-      "step_index"
+      "step_index",
+      "to_dict"
     ],
     "BridgeExpressionPropSet": [
       "name",
+      "to_dict",
       "value"
     ],
     "BridgeFoliageInstanceStats": [
       "foliage_type_path",
       "instance_count",
-      "source_path"
+      "source_path",
+      "to_dict"
     ],
     "BridgeFoliageTypeInfo": [
       "class_name",
       "name",
       "path",
-      "source_path"
+      "source_path",
+      "to_dict"
     ],
     "BridgeFrameTiming": [
       "delta_seconds",
@@ -72703,7 +72788,8 @@
       "gpu_ms",
       "render_thread_ms",
       "rhi_ms",
-      "smoothed"
+      "smoothed",
+      "to_dict"
     ],
     "BridgeFunctionInfo": [
       "access",
@@ -72713,7 +72799,8 @@
       "is_static",
       "kind",
       "name",
-      "params"
+      "params",
+      "to_dict"
     ],
     "BridgeFunctionParam": [
       "default_value",
@@ -72721,6 +72808,7 @@
       "is_output",
       "is_reference",
       "name",
+      "to_dict",
       "type"
     ],
     "BridgeFunctionSemantics": [
@@ -72740,6 +72828,7 @@
       "params",
       "reads_variables",
       "spawns_classes",
+      "to_dict",
       "writes_variables"
     ],
     "BridgeFunctionSignature": [
@@ -72756,22 +72845,26 @@
       "owning_class",
       "owning_class_path",
       "parameters",
+      "to_dict",
       "tooltip"
     ],
     "BridgeFunctionSummary": [
       "kind",
       "name",
-      "signature"
+      "signature",
+      "to_dict"
     ],
     "BridgeGEComponentInfo": [
       "class_name",
-      "tags"
+      "tags",
+      "to_dict"
     ],
     "BridgeGEModifierInfo": [
       "attribute",
       "magnitude",
       "magnitude_source",
-      "mod_op"
+      "mod_op",
+      "to_dict"
     ],
     "BridgeGameplayAbilityInfo": [
       "ability_tags",
@@ -72780,7 +72873,8 @@
       "instancing_policy",
       "name",
       "net_execution_policy",
-      "parent_class_name"
+      "parent_class_name",
+      "to_dict"
     ],
     "BridgeGameplayEffectInfo": [
       "components",
@@ -72791,7 +72885,8 @@
       "parent_class_name",
       "period_seconds",
       "stack_limit_count",
-      "stacking_type"
+      "stacking_type",
+      "to_dict"
     ],
     "BridgeGlobalReference": [
       "blueprint_path",
@@ -72799,55 +72894,64 @@
       "graph_type",
       "kind",
       "node_guid",
-      "node_title"
+      "node_title",
+      "to_dict"
     ],
     "BridgeGpuPassTiming": [
       "average_ms",
       "gpu_index",
       "max_ms",
       "min_ms",
-      "pass_name"
+      "pass_name",
+      "to_dict"
     ],
     "BridgeGpuPassTimings": [
       "available",
       "diagnostic",
       "pass_count",
       "passes",
-      "sum_average_ms"
+      "sum_average_ms",
+      "to_dict"
     ],
     "BridgeGrantedAbilityInfo": [
       "ability_class_name",
       "input_id",
       "is_active",
-      "level"
+      "level",
+      "to_dict"
     ],
     "BridgeGraphDiff": [
       "added_nodes",
       "added_wires",
       "removed_nodes",
-      "removed_wires"
+      "removed_wires",
+      "to_dict"
     ],
     "BridgeGraphDiffNode": [
       "node_class",
       "node_guid",
-      "title"
+      "title",
+      "to_dict"
     ],
     "BridgeGraphDiffWire": [
       "dst_node_guid",
       "dst_pin_name",
       "src_node_guid",
-      "src_pin_name"
+      "src_pin_name",
+      "to_dict"
     ],
     "BridgeGraphInfo": [
       "graph_type",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeGraphOpResult": [
       "index",
       "message",
       "new_node_guid",
       "op",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeHandlerDetail": [
       "created_at",
@@ -72855,7 +72959,8 @@
       "remaining_calls",
       "script",
       "summary",
-      "throttle_ms"
+      "throttle_ms",
+      "to_dict"
     ],
     "BridgeHandlerStats": [
       "calls",
@@ -72863,6 +72968,7 @@
       "last_error",
       "last_fire_time_seconds",
       "max_microseconds",
+      "to_dict",
       "total_microseconds"
     ],
     "BridgeHandlerSummary": [
@@ -72876,12 +72982,14 @@
       "subject_path",
       "tags",
       "task_name",
+      "to_dict",
       "trigger_summary"
     ],
     "BridgeHistogramBucket": [
       "count",
       "lower_ms",
       "percent",
+      "to_dict",
       "upper_ms"
     ],
     "BridgeHitchEntry": [
@@ -72890,6 +72998,7 @@
       "gpu_ms",
       "render_thread_ms",
       "timestamp_seconds",
+      "to_dict",
       "total_ms"
     ],
     "BridgeIKAssetInfo": [
@@ -72897,28 +73006,33 @@
       "name",
       "path",
       "property_values",
+      "to_dict",
       "top_level_properties"
     ],
     "BridgeIKEditResult": [
       "error",
       "index",
       "name",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeIKGoalInfo": [
       "bone_name",
       "connected_solver_indices",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeIKRetargetChainInfo": [
       "end_bone",
       "goal_name",
       "name",
-      "start_bone"
+      "start_bone",
+      "to_dict"
     ],
     "BridgeIKRetargetMappingInfo": [
       "source_chain",
-      "target_chain"
+      "target_chain",
+      "to_dict"
     ],
     "BridgeIKRetargeterStructure": [
       "asset_path",
@@ -72926,7 +73040,8 @@
       "mapping_op_name",
       "mappings",
       "source_ik_rig_path",
-      "target_ik_rig_path"
+      "target_ik_rig_path",
+      "to_dict"
     ],
     "BridgeIKRigStructure": [
       "asset_path",
@@ -72935,7 +73050,8 @@
       "goals",
       "retarget_root",
       "skeletal_mesh_path",
-      "solvers"
+      "solvers",
+      "to_dict"
     ],
     "BridgeIKSolverInfo": [
       "display_name",
@@ -72943,12 +73059,14 @@
       "end_bone",
       "index",
       "start_bone",
-      "struct_path"
+      "struct_path",
+      "to_dict"
     ],
     "BridgeIKValidationResult": [
       "error_count",
       "messages",
       "success",
+      "to_dict",
       "warning_count"
     ],
     "BridgeIMCMapping": [
@@ -72956,49 +73074,57 @@
       "action_path",
       "key_name",
       "modifier_classes",
+      "to_dict",
       "trigger_classes"
     ],
     "BridgeInputActionState": [
       "elapsed_processed_time",
       "elapsed_triggered_time",
       "has_state",
+      "to_dict",
       "trigger_event",
       "value"
     ],
     "BridgeInputBindingIssue": [
       "asset_path",
       "detail",
-      "kind"
+      "kind",
+      "to_dict"
     ],
     "BridgeInputComponentInstance": [
       "class_name",
       "class_path",
-      "params_json"
+      "params_json",
+      "to_dict"
     ],
     "BridgeInputReference": [
       "asset_path",
       "detail",
       "graph_name",
       "kind",
-      "node_guid"
+      "node_guid",
+      "to_dict"
     ],
     "BridgeInsightsLaunchResult": [
       "error",
       "insights_exe_path",
       "process_id",
       "success",
+      "to_dict",
       "trace_path"
     ],
     "BridgeInterfaceInfo": [
       "functions",
       "interface_name",
       "interface_path",
-      "is_blueprint_implemented"
+      "is_blueprint_implemented",
+      "to_dict"
     ],
     "BridgeKeyConflict": [
       "action_paths",
       "key_name",
-      "mapping_context_path"
+      "mapping_context_path",
+      "to_dict"
     ],
     "BridgeLandscapeImportResult": [
       "error",
@@ -73006,6 +73132,7 @@
       "imported_layers",
       "modified_package",
       "success",
+      "to_dict",
       "warning",
       "width"
     ],
@@ -73017,13 +73144,15 @@
       "label",
       "material_path",
       "name",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeLandscapeLayerMapping": [
       "layer_info_path",
       "layer_name",
       "no_weight_blend",
       "physical_material_path",
+      "to_dict",
       "valid"
     ],
     "BridgeLandscapeLayerSample": [
@@ -73031,6 +73160,7 @@
       "height_valid",
       "inside_extent",
       "layer_weights",
+      "to_dict",
       "world_location"
     ],
     "BridgeLayoutResult": [
@@ -73039,6 +73169,7 @@
       "layer_count",
       "nodes_positioned",
       "succeeded",
+      "to_dict",
       "warnings"
     ],
     "BridgeLegacyActionMapping": [
@@ -73047,24 +73178,28 @@
       "ctrl",
       "key_name",
       "mapping_name",
-      "shift"
+      "shift",
+      "to_dict"
     ],
     "BridgeLegacyAxisMapping": [
       "key_name",
       "mapping_name",
-      "scale"
+      "scale",
+      "to_dict"
     ],
     "BridgeLevelComponentInfo": [
       "attach_parent",
       "class_name",
       "name",
-      "relative_transform"
+      "relative_transform",
+      "to_dict"
     ],
     "BridgeLevelSummary": [
       "level_name",
       "level_path",
       "num_actors",
       "num_streaming_levels",
+      "to_dict",
       "world_partition",
       "world_type"
     ],
@@ -73075,12 +73210,14 @@
       "message",
       "node_guid",
       "severity",
+      "to_dict",
       "variable_name"
     ],
     "BridgeLiveCodingResult": [
       "completed",
       "error",
       "status",
+      "to_dict",
       "triggered"
     ],
     "BridgeLongTaskPollResult": [
@@ -73088,7 +73225,8 @@
       "error",
       "remaining",
       "status",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeLumenDiagnostics": [
       "active_visualization_mode",
@@ -73096,31 +73234,37 @@
       "engine_version",
       "lumen_gi_enabled",
       "lumen_reflections_enabled",
+      "to_dict",
       "visualization_modes"
     ],
     "BridgeMIParamResult": [
       "applied",
       "skipped",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeMIParamSet": [
       "name",
+      "to_dict",
       "type",
       "value"
     ],
     "BridgeMPCScalarParam": [
       "default_value",
       "id",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeMPCVectorParam": [
       "default_value",
       "id",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeMappingContextEntry": [
       "mapping_context_path",
-      "priority"
+      "priority",
+      "to_dict"
     ],
     "BridgeMaterialAnalysis": [
       "compile_errors",
@@ -73134,7 +73278,8 @@
       "sampler_budget",
       "sampler_count",
       "shader_stats_ready",
-      "shading_models"
+      "shading_models",
+      "to_dict"
     ],
     "BridgeMaterialAutoFixResult": [
       "findings_fixed",
@@ -73143,7 +73288,8 @@
       "nodes_removed",
       "properties_changed",
       "skipped_fixes",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeMaterialFinding": [
       "detail",
@@ -73151,7 +73297,8 @@
       "expression_guid",
       "message",
       "rule_id",
-      "severity"
+      "severity",
+      "to_dict"
     ],
     "BridgeMaterialFunctionInfo": [
       "description",
@@ -73162,7 +73309,8 @@
       "name",
       "num_expressions",
       "outputs",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeMaterialFunctionPort": [
       "default_value",
@@ -73170,6 +73318,7 @@
       "name",
       "port_type",
       "sort_priority",
+      "to_dict",
       "use_preview_value_as_default"
     ],
     "BridgeMaterialFunctionSummary": [
@@ -73177,7 +73326,8 @@
       "expose_to_library",
       "library_category",
       "name",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeMaterialGraph": [
       "connections",
@@ -73185,7 +73335,8 @@
       "is_material_function",
       "nodes",
       "output_connections",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeMaterialGraphConnection": [
       "dst_guid",
@@ -73194,7 +73345,8 @@
       "dst_property_name",
       "src_guid",
       "src_output_index",
-      "src_output_name"
+      "src_output_name",
+      "to_dict"
     ],
     "BridgeMaterialGraphNode": [
       "caption",
@@ -73204,6 +73356,7 @@
       "input_names",
       "key_properties",
       "output_names",
+      "to_dict",
       "x",
       "y"
     ],
@@ -73218,6 +73371,7 @@
       "src_output",
       "src_ref",
       "text",
+      "to_dict",
       "value",
       "width",
       "x",
@@ -73228,7 +73382,8 @@
       "failed_at_index",
       "guids",
       "ops_applied",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeMaterialInfo": [
       "base_path",
@@ -73246,6 +73401,7 @@
       "static_switch_parameters",
       "subsurface_profile_path",
       "texture_parameters",
+      "to_dict",
       "two_sided",
       "usage_flags",
       "use_material_attributes",
@@ -73254,29 +73410,34 @@
     "BridgeMaterialInstanceChain": [
       "found",
       "layers",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeMaterialInstanceInfo": [
       "name",
       "parameters",
       "parent_name",
-      "parent_path"
+      "parent_path",
+      "to_dict"
     ],
     "BridgeMaterialInstanceLayer": [
       "is_base_material",
       "name",
       "override_parameters",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeMaterialParam": [
       "name",
       "param_type",
+      "to_dict",
       "value"
     ],
     "BridgeMaterialParamDefault": [
       "guid",
       "name",
       "param_type",
+      "to_dict",
       "value"
     ],
     "BridgeMaterialParameterCollectionInfo": [
@@ -73284,6 +73445,7 @@
       "name",
       "path",
       "scalar_parameters",
+      "to_dict",
       "vector_parameters"
     ],
     "BridgeMaterialPerfRow": [
@@ -73298,6 +73460,7 @@
       "static_switch_count",
       "texture_parameter_count",
       "texture_sample_count",
+      "to_dict",
       "two_sided",
       "used_with_skeletal_mesh",
       "used_with_static_lighting",
@@ -73307,13 +73470,15 @@
       "material_path",
       "primitive_count",
       "sample_actor_paths",
+      "to_dict",
       "total_triangles"
     ],
     "BridgeMaterialShaderStat": [
       "extra_statistics",
       "instruction_count",
       "shader_description",
-      "shader_type"
+      "shader_type",
+      "to_dict"
     ],
     "BridgeMaterialStats": [
       "compile_errors",
@@ -73323,6 +73488,7 @@
       "quality_level",
       "shader_map_ready",
       "shaders",
+      "to_dict",
       "virtual_texture_stack_count"
     ],
     "BridgeMemoryStats": [
@@ -73330,6 +73496,7 @@
       "available_virtual_mb",
       "peak_used_physical_mb",
       "peak_used_virtual_mb",
+      "to_dict",
       "total_physical_mb",
       "used_physical_mb",
       "used_virtual_mb"
@@ -73340,11 +73507,13 @@
       "has_vertex_colors",
       "num_triangles",
       "num_uv_layers",
-      "num_vertices"
+      "num_vertices",
+      "to_dict"
     ],
     "BridgeMeshLODStats": [
       "lod_index",
       "material_indices",
+      "to_dict",
       "triangle_count",
       "vertex_count"
     ],
@@ -73357,12 +73526,14 @@
       "play_length",
       "sections",
       "skeleton_name",
-      "slot_name"
+      "slot_name",
+      "to_dict"
     ],
     "BridgeMontageSectionInfo": [
       "next_section_name",
       "section_name",
-      "start_time"
+      "start_time",
+      "to_dict"
     ],
     "BridgeMontageSlotSegment": [
       "anim_end_time",
@@ -73371,7 +73542,8 @@
       "anim_start_time",
       "looping_count",
       "slot_name",
-      "start_pos"
+      "start_pos",
+      "to_dict"
     ],
     "BridgeNaniteStats": [
       "available",
@@ -73379,7 +73551,8 @@
       "is_safe_for_rendering",
       "max_hierarchy_levels",
       "max_streaming_pages",
-      "nanite_static_mesh_components"
+      "nanite_static_mesh_components",
+      "to_dict"
     ],
     "BridgeNiagaraCompileStatus": [
       "complete",
@@ -73387,7 +73560,8 @@
       "message",
       "needs_compile",
       "ready_to_run",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeNiagaraComponentInfo": [
       "active",
@@ -73395,7 +73569,8 @@
       "name",
       "owner_label",
       "path",
-      "system_path"
+      "system_path",
+      "to_dict"
     ],
     "BridgeNiagaraEditResult": [
       "changed",
@@ -73405,7 +73580,8 @@
       "node_guid",
       "saved",
       "success",
-      "system_path"
+      "system_path",
+      "to_dict"
     ],
     "BridgeNiagaraEmitterInfo": [
       "enabled",
@@ -73413,6 +73589,7 @@
       "mode",
       "name",
       "source_emitter_path",
+      "to_dict",
       "valid"
     ],
     "BridgeNiagaraModuleInfo": [
@@ -73420,13 +73597,15 @@
       "function_name",
       "node_guid",
       "script_path",
-      "stack_index"
+      "stack_index",
+      "to_dict"
     ],
     "BridgeNiagaraStackInfo": [
       "emitter_handle_id",
       "emitter_name",
       "graph_path",
       "modules",
+      "to_dict",
       "traversal_node_count",
       "usage",
       "usage_id"
@@ -73434,7 +73613,8 @@
     "BridgeNiagaraSystemInfo": [
       "class_name",
       "name",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeNiagaraSystemStructure": [
       "emitters",
@@ -73444,18 +73624,21 @@
       "ready_to_run",
       "stacks",
       "system_path",
+      "to_dict",
       "total_module_count"
     ],
     "BridgeNiagaraUserParameterInfo": [
       "is_data_interface",
       "is_u_object",
       "name",
+      "to_dict",
       "type_name"
     ],
     "BridgeNiagaraValidationResult": [
       "error_count",
       "messages",
       "success",
+      "to_dict",
       "warning_count"
     ],
     "BridgeNodeCoverageEntry": [
@@ -73463,7 +73646,8 @@
       "hit_count",
       "last_hit_time",
       "node_guid",
-      "node_title"
+      "node_title",
+      "to_dict"
     ],
     "BridgeNodeDescription": [
       "comment",
@@ -73485,6 +73669,7 @@
       "target_class",
       "target_name",
       "title",
+      "to_dict",
       "variable_name",
       "variable_scope",
       "variable_type",
@@ -73496,6 +73681,7 @@
       "node_type",
       "target_class",
       "title",
+      "to_dict",
       "variable_name"
     ],
     "BridgeNodeLayout": [
@@ -73512,6 +73698,7 @@
       "size_is_authoritative",
       "stored_height",
       "stored_width",
+      "to_dict",
       "top_left",
       "top_right"
     ],
@@ -73520,7 +73707,8 @@
       "graph_name",
       "graph_type",
       "node_title",
-      "node_type"
+      "node_type",
+      "to_dict"
     ],
     "BridgeNodeSizeEstimate": [
       "height",
@@ -73529,24 +73717,28 @@
       "notes",
       "output_pin_count",
       "resolved",
+      "to_dict",
       "width"
     ],
     "BridgeOpenedAsset": [
       "class_name",
       "is_dirty",
-      "path"
+      "path",
+      "to_dict"
     ],
     "BridgeOrphanAssetCandidate": [
       "asset_path",
       "class_path",
       "disk_size",
       "package_name",
-      "reason"
+      "reason",
+      "to_dict"
     ],
     "BridgeOrphanAssetReport": [
       "candidates",
       "package_path",
       "scanned_asset_count",
+      "to_dict",
       "truncated"
     ],
     "BridgePCGComponentEntry": [
@@ -73554,7 +73746,8 @@
       "component_name",
       "generated",
       "generating",
-      "graph_path"
+      "graph_path",
+      "to_dict"
     ],
     "BridgePCGComponentState": [
       "dirty",
@@ -73562,11 +73755,13 @@
       "generated_bounds",
       "generating",
       "graph_path",
-      "last_generation_iso"
+      "last_generation_iso",
+      "to_dict"
     ],
     "BridgePCGEdgeInfo": [
       "from_node_id",
       "from_pin",
+      "to_dict",
       "to_node_id",
       "to_pin"
     ],
@@ -73575,23 +73770,27 @@
       "error",
       "generated",
       "status",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgePCGGraphEditResult": [
       "error",
       "node_id",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgePCGGraphInfo": [
       "asset_path",
       "edges",
       "found",
-      "nodes"
+      "nodes",
+      "to_dict"
     ],
     "BridgePCGGraphValidationResult": [
       "error_count",
       "messages",
       "success",
+      "to_dict",
       "warning_count"
     ],
     "BridgePCGNodeInfo": [
@@ -73603,10 +73802,12 @@
       "position_x",
       "position_y",
       "settings_class_path",
-      "title"
+      "title",
+      "to_dict"
     ],
     "BridgePCGOverrideEntry": [
       "name",
+      "to_dict",
       "type_str",
       "value_str"
     ],
@@ -73615,16 +73816,19 @@
       "connection_count",
       "label",
       "output",
-      "required"
+      "required",
+      "to_dict"
     ],
     "BridgePCGWaitResult": [
       "elapsed_ms",
       "note",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgePSDAddResult": [
       "error",
-      "index"
+      "index",
+      "to_dict"
     ],
     "BridgePSDAnimEntry": [
       "asset_path",
@@ -73639,7 +73843,8 @@
       "kind",
       "mirror_option",
       "sampling_range_max",
-      "sampling_range_min"
+      "sampling_range_min",
+      "to_dict"
     ],
     "BridgePSDInfo": [
       "base_cost_bias",
@@ -73654,13 +73859,15 @@
       "number_of_principal_components",
       "pose_search_mode",
       "schema_path",
-      "tags"
+      "tags",
+      "to_dict"
     ],
     "BridgePSSChannel": [
       "bone_name",
       "kind",
       "sample_time_offset",
       "sub_channel_count",
+      "to_dict",
       "weight"
     ],
     "BridgePSSInfo": [
@@ -73675,17 +73882,20 @@
       "sample_rate",
       "schema_cardinality",
       "skeletons",
+      "to_dict",
       "total_channel_weight"
     ],
     "BridgePSSSkeleton": [
       "mirror_data_table_path",
       "role",
-      "skeleton_path"
+      "skeleton_path",
+      "to_dict"
     ],
     "BridgePerThreadHotScopes": [
       "group_name",
       "thread_id",
       "thread_name",
+      "to_dict",
       "top_scopes",
       "total_cpu_ms"
     ],
@@ -73698,6 +73908,7 @@
       "peak_total_allocated_bytes",
       "success",
       "tags",
+      "to_dict",
       "total_alloc_events",
       "total_free_events",
       "trace_path"
@@ -73706,13 +73917,15 @@
       "full_path",
       "id",
       "name",
-      "parent_id"
+      "parent_id",
+      "to_dict"
     ],
     "BridgePerfBreakdownRow": [
       "count",
       "key",
       "level_name",
       "sample_paths",
+      "to_dict",
       "total_bytes"
     ],
     "BridgePerfCookRow": [
@@ -73722,6 +73935,7 @@
       "load_time_ms",
       "package_name",
       "save_time_ms",
+      "to_dict",
       "total_cook_time_ms"
     ],
     "BridgePerfCookSummary": [
@@ -73731,6 +73945,7 @@
       "package_count",
       "packages",
       "success",
+      "to_dict",
       "total_cook_time_seconds",
       "trace_path"
     ],
@@ -73745,11 +73960,13 @@
       "name",
       "reset_every_frame",
       "sample_count",
-      "sum_value"
+      "sum_value",
+      "to_dict"
     ],
     "BridgePerfHotScope": [
       "call_count",
       "name",
+      "to_dict",
       "total_ms"
     ],
     "BridgePerfLoadTimeRow": [
@@ -73760,6 +73977,7 @@
       "main_thread_ms",
       "package_name",
       "serialized_size_bytes",
+      "to_dict",
       "total_loading_ms"
     ],
     "BridgePerfNetConnection": [
@@ -73769,14 +73987,16 @@
       "incoming_packet_count",
       "name",
       "outgoing_bytes",
-      "outgoing_packet_count"
+      "outgoing_packet_count",
+      "to_dict"
     ],
     "BridgePerfNetGameInstance": [
       "connections",
       "instance_name",
       "is_server",
       "is_using_iris_replication",
-      "object_count"
+      "object_count",
+      "to_dict"
     ],
     "BridgePerfNetSummary": [
       "error",
@@ -73785,6 +74005,7 @@
       "has_events",
       "net_trace_version",
       "success",
+      "to_dict",
       "trace_path"
     ],
     "BridgePerfSamplingState": [
@@ -73793,7 +74014,8 @@
       "max_samples",
       "period_ms",
       "samples_collected",
-      "started_at_utc"
+      "started_at_utc",
+      "to_dict"
     ],
     "BridgePerfSnapshot": [
       "capture_time_utc",
@@ -73801,6 +74023,7 @@
       "memory",
       "render",
       "timing",
+      "to_dict",
       "u_objects",
       "was_in_pie"
     ],
@@ -73821,7 +74044,8 @@
       "delta_used_physical_mb",
       "delta_used_virtual_mb",
       "regressions",
-      "significant_regression"
+      "significant_regression",
+      "to_dict"
     ],
     "BridgePerfTraceSummary": [
       "app_name",
@@ -73841,6 +74065,7 @@
       "platform",
       "project_name",
       "success",
+      "to_dict",
       "total_duration_seconds",
       "trace_path"
     ],
@@ -73849,7 +74074,8 @@
       "source_node_index",
       "source_pin_name",
       "target_node_index",
-      "target_pin_name"
+      "target_pin_name",
+      "to_dict"
     ],
     "BridgePinInfo": [
       "category",
@@ -73876,6 +74102,7 @@
       "name",
       "sub_category",
       "sub_category_object_path",
+      "to_dict",
       "type"
     ],
     "BridgePinLayout": [
@@ -73886,22 +74113,26 @@
       "is_hidden",
       "local_offset",
       "name",
-      "position"
+      "position",
+      "to_dict"
     ],
     "BridgePlacementCandidate": [
       "location",
       "on_nav_mesh",
       "score",
-      "surface_normal"
+      "surface_normal",
+      "to_dict"
     ],
     "BridgePoseSearchIndexPollResult": [
       "complete",
       "error",
       "status",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgePostProcessBlendable": [
       "material_path",
+      "to_dict",
       "weight"
     ],
     "BridgePostProcessVolumeInfo": [
@@ -73911,6 +74142,7 @@
       "blendables",
       "enabled",
       "priority",
+      "to_dict",
       "unbound"
     ],
     "BridgePropertyInfo": [
@@ -73919,12 +74151,14 @@
       "is_component",
       "name",
       "read_only",
+      "to_dict",
       "transient",
       "type_name"
     ],
     "BridgePropertyValue": [
       "category",
       "name",
+      "to_dict",
       "type",
       "value"
     ],
@@ -73933,24 +74167,28 @@
       "graph_type",
       "kind",
       "node_guid",
-      "node_title"
+      "node_title",
+      "to_dict"
     ],
     "BridgeRenameReport": [
       "message",
       "success",
+      "to_dict",
       "updated_blueprints",
       "updated_node_count"
     ],
     "BridgeRenderCounters": [
       "draw_calls",
       "num_gpus",
-      "primitives_drawn"
+      "primitives_drawn",
+      "to_dict"
     ],
     "BridgeRenderTargetEntry": [
       "bytes",
       "depth",
       "height",
       "path",
+      "to_dict",
       "type_name",
       "width"
     ],
@@ -73961,6 +74199,7 @@
       "render_target_count",
       "render_target_cube_bytes",
       "render_target_volume_bytes",
+      "to_dict",
       "total_bytes"
     ],
     "BridgeRenderedNode": [
@@ -73969,7 +74208,8 @@
       "node_guid",
       "pins",
       "size",
-      "title"
+      "title",
+      "to_dict"
     ],
     "BridgeRenderedPin": [
       "direction",
@@ -73978,14 +74218,16 @@
       "is_exec",
       "is_hidden",
       "name",
-      "node_offset"
+      "node_offset",
+      "to_dict"
     ],
     "BridgeReplaceNodeReport": [
       "dropped_pins",
       "message",
       "new_node_guid",
       "reconnected_pins",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeRichCurveKey": [
       "arrive_tangent",
@@ -73996,6 +74238,7 @@
       "tangent_mode",
       "tangent_weight_mode",
       "time",
+      "to_dict",
       "value"
     ],
     "BridgeScreenshotResult": [
@@ -74005,20 +74248,24 @@
       "height",
       "source",
       "success",
+      "to_dict",
       "width"
     ],
     "BridgeSearchableNameRef": [
       "struct_type",
+      "to_dict",
       "value_name"
     ],
     "BridgeSelectedNode": [
       "node_class",
       "node_guid",
-      "title"
+      "title",
+      "to_dict"
     ],
     "BridgeSequencerBindingInfo": [
       "binding_id",
-      "binding_name"
+      "binding_name",
+      "to_dict"
     ],
     "BridgeSequencerSectionInfo": [
       "binding_id",
@@ -74031,12 +74278,14 @@
       "section_class",
       "section_index",
       "start_seconds",
+      "to_dict",
       "track_class",
       "track_name"
     ],
     "BridgeSequencerTrackInfo": [
       "binding_id",
       "binding_name",
+      "to_dict",
       "track_class",
       "track_name"
     ],
@@ -74044,6 +74293,7 @@
       "error_count",
       "messages",
       "success",
+      "to_dict",
       "warning_count"
     ],
     "BridgeShaderCompileStatus": [
@@ -74052,7 +74302,8 @@
       "found",
       "pending_assets_global",
       "quality_level",
-      "shader_map_ready"
+      "shader_map_ready",
+      "to_dict"
     ],
     "BridgeShaderSnippet": [
       "description",
@@ -74060,7 +74311,8 @@
       "min_feature_level",
       "name",
       "signature",
-      "source"
+      "source",
+      "to_dict"
     ],
     "BridgeSkeletalMeshInfo": [
       "asset_path",
@@ -74077,14 +74329,16 @@
       "num_sockets",
       "physics_asset_path",
       "skeleton_path",
-      "socket_names"
+      "socket_names",
+      "to_dict"
     ],
     "BridgeSocketInfo": [
       "parent_bone_name",
       "relative_location",
       "relative_rotation",
       "relative_scale",
-      "socket_name"
+      "socket_name",
+      "to_dict"
     ],
     "BridgeSoundInfo": [
       "asset_path",
@@ -74094,7 +74348,8 @@
       "looping",
       "num_channels",
       "sample_rate",
-      "sound_kind"
+      "sound_kind",
+      "to_dict"
     ],
     "BridgeSpawnableAction": [
       "category",
@@ -74104,6 +74359,7 @@
       "owning_class",
       "owning_class_path",
       "title",
+      "to_dict",
       "tooltip"
     ],
     "BridgeSplineInfo": [
@@ -74112,7 +74368,8 @@
       "closed_loop",
       "component_name",
       "length",
-      "point_count"
+      "point_count",
+      "to_dict"
     ],
     "BridgeSplinePointInfo": [
       "index",
@@ -74120,11 +74377,13 @@
       "point_type",
       "rotation",
       "scale",
-      "tangent"
+      "tangent",
+      "to_dict"
     ],
     "BridgeStateMachineInfo": [
       "name",
       "states",
+      "to_dict",
       "transitions"
     ],
     "BridgeStateTreeAssetInfo": [
@@ -74132,12 +74391,14 @@
       "name",
       "path",
       "property_values",
+      "to_dict",
       "top_level_properties"
     ],
     "BridgeStateTreeEditResult": [
       "created_id",
       "error",
       "success",
+      "to_dict",
       "validation"
     ],
     "BridgeStateTreeStateInfo": [
@@ -74150,19 +74411,22 @@
       "selection_behavior",
       "state_type",
       "tasks",
+      "to_dict",
       "transitions"
     ],
     "BridgeStateTreeStructure": [
       "asset_path",
       "found",
       "schema_class_path",
-      "states"
+      "states",
+      "to_dict"
     ],
     "BridgeStateTreeTaskInfo": [
       "id",
       "instance_type",
       "name",
-      "struct_path"
+      "struct_path",
+      "to_dict"
     ],
     "BridgeStateTreeTransitionInfo": [
       "enabled",
@@ -74170,6 +74434,7 @@
       "required_event_tag",
       "target_state_id",
       "target_state_name",
+      "to_dict",
       "transition_type",
       "trigger"
     ],
@@ -74178,6 +74443,7 @@
       "error_count",
       "messages",
       "success",
+      "to_dict",
       "warning_count"
     ],
     "BridgeStaticMeshInfo": [
@@ -74194,21 +74460,25 @@
       "num_lo_ds",
       "num_sockets",
       "num_uv_channels",
-      "socket_names"
+      "socket_names",
+      "to_dict"
     ],
     "BridgeStreamingLevel": [
       "loaded",
       "package_name",
+      "to_dict",
       "visible"
     ],
     "BridgeStructCreateResult": [
       "error",
       "path",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeStructInfo": [
       "path",
       "status",
+      "to_dict",
       "tooltip",
       "variable_count"
     ],
@@ -74217,20 +74487,23 @@
       "edit_on_instance",
       "guid",
       "name",
+      "to_dict",
       "tooltip",
       "type_string"
     ],
     "BridgeTagRedirectEntry": [
       "new_tag",
       "old_tag",
-      "source_name"
+      "source_name",
+      "to_dict"
     ],
     "BridgeTagReference": [
       "asset_class",
       "asset_path",
       "context",
       "location",
-      "matched_tag"
+      "matched_tag",
+      "to_dict"
     ],
     "BridgeTagReferenceReport": [
       "assets_matched",
@@ -74240,6 +74513,7 @@
       "references",
       "scan_duration_ms",
       "tag_query",
+      "to_dict",
       "truncated"
     ],
     "BridgeTagSourceInfo": [
@@ -74249,13 +74523,15 @@
       "is_restricted",
       "source_location",
       "source_type",
-      "tag_string"
+      "tag_string",
+      "to_dict"
     ],
     "BridgeTagSourceListing": [
       "config_file_path",
       "is_writable",
       "source_name",
-      "source_type"
+      "source_type",
+      "to_dict"
     ],
     "BridgeTextureInfo": [
       "asset_path",
@@ -74268,6 +74544,7 @@
       "pixel_format",
       "resource_size_bytes",
       "srgb",
+      "to_dict",
       "width"
     ],
     "BridgeTextureStreamingRow": [
@@ -74277,6 +74554,7 @@
       "resident_bytes",
       "resident_mip_count",
       "texture_path",
+      "to_dict",
       "wanted_bytes",
       "wanted_mip_count"
     ],
@@ -74287,7 +74565,8 @@
       "num_streaming_textures",
       "pool_size_bytes",
       "required_pool_bytes",
-      "rows"
+      "rows",
+      "to_dict"
     ],
     "BridgeTimelineInfo": [
       "auto_play",
@@ -74295,46 +74574,55 @@
       "loop",
       "name",
       "replicated",
+      "to_dict",
       "tracks"
     ],
     "BridgeTimelineTrack": [
+      "to_dict",
       "track_name",
       "track_type"
     ],
     "BridgeTraceChannelInfo": [
       "description",
       "enabled",
-      "name"
+      "name",
+      "to_dict"
     ],
     "BridgeTraceStartResult": [
       "channels",
       "error",
       "path",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeTraceState": [
       "active",
       "channels",
       "current_size_bytes",
       "path",
-      "started_at_utc"
+      "started_at_utc",
+      "to_dict"
     ],
     "BridgeTraceStopResult": [
       "duration_seconds",
       "path",
       "size_bytes",
-      "success"
+      "success",
+      "to_dict"
     ],
     "BridgeTransform": [
       "location",
       "rotation",
-      "scale"
+      "scale",
+      "to_dict"
     ],
     "BridgeUObjectClassCount": [
       "class_name",
-      "count"
+      "count",
+      "to_dict"
     ],
     "BridgeUObjectStats": [
+      "to_dict",
       "top_classes",
       "total_objects",
       "unique_classes"
@@ -74347,6 +74635,7 @@
       "is_struct_value",
       "metadata",
       "name",
+      "to_dict",
       "type_name"
     ],
     "BridgeVariableInfo": [
@@ -74357,36 +74646,43 @@
       "instance_editable",
       "name",
       "replication_condition",
+      "to_dict",
       "type"
     ],
     "BridgeVariableSummary": [
       "name",
+      "to_dict",
       "type"
     ],
     "BridgeViewportCamera": [
       "fov",
       "location",
-      "rotation"
+      "rotation",
+      "to_dict"
     ],
     "BridgeVirtualBoneInfo": [
       "source_bone_name",
       "target_bone_name",
+      "to_dict",
       "virtual_bone_name"
     ],
     "BridgeWidgetAnimTrack": [
       "display_name",
+      "to_dict",
       "track_type",
       "widget_name"
     ],
     "BridgeWidgetAnimationInfo": [
       "duration",
       "name",
+      "to_dict",
       "tracks"
     ],
     "BridgeWidgetBindingInfo": [
       "function_name",
       "kind",
       "property_name",
+      "to_dict",
       "widget_name"
     ],
     "BridgeWidgetCompileResult": [
@@ -74394,11 +74690,13 @@
       "compiled",
       "saved",
       "status",
+      "to_dict",
       "validation_issues"
     ],
     "BridgeWidgetEventInfo": [
       "event_name",
       "handler_name",
+      "to_dict",
       "widget_name"
     ],
     "BridgeWidgetInfo": [
@@ -74406,6 +74704,7 @@
       "name",
       "parent_name",
       "slot_type",
+      "to_dict",
       "visibility",
       "widget_class"
     ],
@@ -74415,23 +74714,27 @@
       "height",
       "output_path",
       "success",
+      "to_dict",
       "width"
     ],
     "BridgeWidgetPropertyValue": [
       "name",
+      "to_dict",
       "type",
       "value"
     ],
     "BridgeWidgetValidationIssue": [
       "message",
-      "severity"
+      "severity",
+      "to_dict"
     ],
     "BridgeWireIAResult": [
       "call_node_guid",
       "event_node_guid",
       "failure_reason",
+      "to_dict",
       "wired"
     ]
   },
-  "ue_version": "5.6.1-44394996+++UE5+Release-5.6"
+  "ue_version": "5.8.1-0+UE5"
 }

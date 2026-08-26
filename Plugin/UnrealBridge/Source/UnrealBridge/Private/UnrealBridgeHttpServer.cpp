@@ -774,7 +774,15 @@ TArray<TSharedPtr<FJsonValue>> FUnrealBridgeHttpServer::BuildMcpTools() const
 			continue;
 		}
 		TArray<FString> Operations;
-		(*Functions)->Values.GetKeys(Operations);
+		Operations.Reserve((*Functions)->Values.Num());
+		for (const auto& FunctionEntry : (*Functions)->Values)
+		{
+#if ENGINE_MAJOR_VERSION > 5 || ENGINE_MINOR_VERSION >= 8
+			Operations.Emplace(FunctionEntry.Key.ToView());
+#else
+			Operations.Add(FunctionEntry.Key);
+#endif
+		}
 		Operations.Sort();
 		TArray<TSharedPtr<FJsonValue>> OperationValues;
 		for (const FString& Operation : Operations)
