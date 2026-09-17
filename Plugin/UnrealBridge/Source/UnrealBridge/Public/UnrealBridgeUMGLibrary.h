@@ -187,6 +187,38 @@ struct FBridgeWidgetPreviewResult
 	FString Error;
 };
 
+/** Live UMG/Slate state for one widget instance in PIE or a game world. */
+USTRUCT(BlueprintType)
+struct FBridgeRuntimeWidgetInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") bool bFound = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString WidgetObjectPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString SemanticPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString Name;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString WidgetClass;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString OwnerUserWidgetPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString OwnerUserWidgetClass;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString ParentObjectPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString WorldPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString WorldType;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString Text;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString Visibility;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString SlateType;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString SlateAddress;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") int32 Depth = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") bool bEnabled = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") bool bInViewport = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") bool bHasKeyboardFocus = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") bool bHasUserFocus = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") bool bHovered = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FVector2D AbsolutePosition = FVector2D::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FVector2D AbsoluteSize = FVector2D::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FVector2D LocalSize = FVector2D::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|UMG|Runtime") FString Error;
+};
+
 /**
  * UMG / Widget Blueprint introspection via UnrealBridge.
  */
@@ -203,6 +235,18 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")
 	static TArray<FBridgeWidgetInfo> GetWidgetTree(const FString& WidgetBlueprintPath);
+
+	/** Enumerate live UUserWidget instances and their runtime widget trees. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG|Runtime", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static TArray<FBridgeRuntimeWidgetInfo> GetRuntimeWidgetTree(
+		const FString& UserWidgetClassFilter = TEXT(""),
+		const FString& InstanceNameFilter = TEXT(""));
+
+	/** Read one live widget by the exact WidgetObjectPath returned above. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG|Runtime", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FBridgeRuntimeWidgetInfo GetRuntimeWidgetState(const FString& WidgetObjectPath);
 
 	/** Create a Widget Blueprint and optionally create a root widget. */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UMG")

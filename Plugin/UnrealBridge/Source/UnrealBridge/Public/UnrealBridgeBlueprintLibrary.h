@@ -160,6 +160,55 @@ struct FBridgeComponentInfo
 	/** Whether this component is inherited from a parent class */
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint")
 	bool bIsInherited = false;
+
+	/** local_scs, local_cdo, inherited_scs, ich_override, or parent_fallback. */
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint")
+	FString Source;
+
+	/** Blueprint that originally declared the SCS component, when applicable. */
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint")
+	FString DeclaringBlueprintPath;
+
+	/** Exact component template/CDO subobject selected by the resolver. */
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint")
+	FString TemplatePath;
+
+	/** Whether the target Blueprint owns an ICH override for this inherited component. */
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint")
+	bool bHasLocalOverride = false;
+};
+
+/** Exact resolution of a component template across SCS, CDO, and ICH inheritance. */
+USTRUCT(BlueprintType)
+struct FBridgeComponentResolution
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") bool bFound = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") bool bWritable = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") bool bIsInherited = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") bool bHasLocalOverride = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString Name;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString ComponentClass;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString Source;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString DeclaringBlueprintPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString TemplatePath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString ArchetypePath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString Error;
+};
+
+/** Structured readback from an inherited-safe component property write. */
+USTRUCT(BlueprintType)
+struct FBridgeComponentPropertyWriteResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") bool bSuccess = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString PropertyName;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString PreviousValue;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString CurrentValue;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FString Error;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Blueprint") FBridgeComponentResolution Resolution;
 };
 
 /** Describes an interface implemented by a Blueprint. */
@@ -1463,6 +1512,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint")
 	static TArray<FBridgeComponentInfo> GetBlueprintComponents(const FString& BlueprintPath);
 
+	/** Resolve one component through local SCS/CDO, inherited SCS, ICH override, or parent fallback. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint", meta = (
+		ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FBridgeComponentResolution ResolveBlueprintComponent(
+		const FString& BlueprintPath, const FString& ComponentName);
+
 	// ── Interfaces ──
 
 	/** Get all interfaces implemented by a Blueprint. */
@@ -1594,6 +1649,15 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint")
 	static bool SetComponentProperty(const FString& BlueprintPath, const FString& ComponentName, const FString& PropertyName, const FString& Value);
+
+	/** Set and read back a component property, creating an ICH override when required. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint", meta = (
+		ToolRisk = "Mutating", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FBridgeComponentPropertyWriteResult SetResolvedComponentProperty(
+		const FString& BlueprintPath,
+		const FString& ComponentName,
+		const FString& PropertyName,
+		const FString& Value);
 
 	/** Set the StaticMesh asset on a Blueprint-owned StaticMeshComponent template. Does not compile or save. */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Blueprint", meta = (

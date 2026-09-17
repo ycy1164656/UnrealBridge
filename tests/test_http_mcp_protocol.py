@@ -31,6 +31,24 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
         if not token:
             raise unittest.SkipTest("HTTP MCP token is not available")
         cls.token = token
+        # A token file may outlive the Editor process.  Treat a stopped
+        # endpoint as an unavailable live-test fixture instead of turning an
+        # otherwise offline test run into seven connection-refused errors.
+        health_request = urllib.request.Request(
+            cls.base_url + "/unrealbridge/health",
+            headers={"Authorization": f"Bearer {cls.token}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(health_request, timeout=2) as response:
+                if response.status != 200:
+                    raise unittest.SkipTest(
+                        f"HTTP MCP endpoint is not healthy: HTTP {response.status}"
+                    )
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise unittest.SkipTest(
+                f"HTTP MCP endpoint is not running at {cls.base_url}: {error}"
+            ) from error
 
     @classmethod
     def request(
@@ -112,7 +130,7 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(response["result"]["protocolVersion"], "2025-11-25")
         self.assertEqual(response["result"]["serverInfo"]["name"], "UnrealBridge")
-        self.assertEqual(response["result"]["serverInfo"]["version"], "3.0.0")
+        self.assertEqual(response["result"]["serverInfo"]["version"], "3.1.0")
 
         notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         self.assertEqual(
@@ -128,7 +146,7 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
         self.assertIn("bridge_describe_official_toolset", names)
         self.assertIn("bridge_submit_official_toolset_job", names)
 
-    def test_official_read_only_job_and_unannotated_rejection(self) -> None:
+    def test_official_read_only_job_and_audited_rejection(self) -> None:
         submitted = self.mcp(
             200,
             "tools/call",
@@ -163,9 +181,9 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
             {
                 "name": "bridge_submit_official_toolset_job",
                 "arguments": {
-                    "toolset": "EditorToolset.LogsToolset",
-                    "tool": "GetVerbosity",
-                    "arguments": {"Category": "LogTemp"},
+                    "toolset": "DataflowAgent.DataflowAgentToolset",
+                    "tool": "RemoveNode",
+                    "arguments": {},
                 },
             },
         )
@@ -184,7 +202,7 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
         self.assertIsNotNone(rejected_terminal)
         self.assertEqual(rejected_terminal["job_state"], "failed")
         self.assertIn(
-            "no side-effect annotations",
+            "policy 'rejected'",
             str(rejected_terminal["job_result"]["error"]).lower(),
         )
 

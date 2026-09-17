@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-    <a href="https://www.unrealengine.com/"><img src="https://img.shields.io/badge/Unreal%20Engine-5.3%2B-313131?logo=unrealengine" alt="UE5.3+"></a>
+    <a href="https://www.unrealengine.com/"><img src="https://img.shields.io/badge/Unreal%20Engine-5.8.1-313131?logo=unrealengine" alt="UE 5.8.1"></a>
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/-Python-3776AB?logo=python&logoColor=white" alt="Python"></a>
     <img src="https://img.shields.io/badge/-C%2B%2B-00599C?logo=cplusplus&logoColor=white" alt="C++">
     <img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows" alt="Windows">
@@ -15,21 +15,22 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/zh/01-hook.png" alt="UNREAL ENGINE 5.4+ 全部能力，交给你的 AI Agent">
+  <img src="docs/images/zh/01-hook.png" alt="UNREAL ENGINE 5.8.1 全部能力，交给你的 AI Agent">
 </p>
 
 ---
 
 UnrealBridge 是一个面向 AI Agent 的 Unreal Engine 编辑器桥接层，围绕动画资产内省、Reactive 事件订阅、资产搜索与引用分析、蓝图图谱自动布局等核心场景，提供一套类型化的操作接口。Agent 在本地正在运行的编辑器实例中发起查询与修改，所有变更实时生效，并受事务系统约束、可被撤销。
 
-> **当前版本：3.0.0。** UE 5.8.1 是当前主要验证目标；Protocol v2 保持线协议兼容，UE 5.8 官方 `ToolsetRegistry` 联邦通过条件编译适配层接入。详见 [3.0 发布说明](docs/unrealbridge-3.0-release-notes.md)。
+> **当前开发版本：3.1.0。** 新增有明确作用域的图编辑、运行会话和坐标输入，Protocol v2 保持兼容。3.0 基线在 UE 5.8.1 验证，本轮限定范围的 3.1 升级使用 UE 5.8.2；依赖前台的交互验收仍待完成，不宣称所有工具和引擎补丁均已验证。详见 [3.1 升级说明](docs/unrealbridge-3.1-release-notes.md)及历史 [3.0 发布说明](docs/unrealbridge-3.0-release-notes.md)。
 
 ## 亮点
 
 - **可恢复的 durable Job。** 协议 v2 将客户端等待时间与 Job 生命周期解耦，提供 queue deadline、取消、幂等键、结构化错误、结果存储、health 指标，以及会在 Editor Tick 之间主动让出的多帧 polling Job。仅监听 `127.0.0.1:11438` 的 HTTP MCP/REST endpoint 使用 bearer token，并以 grouped typed tools 暴露能力。
-- **默认拒绝的 UE 5.8 Toolset 联邦。** 在 UE 5.8+ 上可发现官方 `ToolsetRegistry`、导出真实 schema，并且只执行 schema 明确声明 `readOnlyHint=true` 的工具。官方修改、破坏性以及没有副作用标注的工具，在具备由 UnrealBridge 管理事务与保存策略的 typed wrapper 前一律阻止。UE 5.3–5.7 构建不会引用 Experimental Toolset header 或 module。
+- **默认拒绝、逐工具审计的 UE 5.8 Toolset 联邦。** 在受支持的 UE 5.8.1 目标上发现官方 `ToolsetRegistry`、导出真实 schema，并以精确 `toolset|tool` 与 input-schema hash 绑定执行策略。审计目录开放 387 个只读、49 个显式 opt-in 的运行态交互、326 个非破坏性事务修改；70 个删除、保存、外部路径、Source Control 或任意脚本操作保持拒绝。三个允许执行面全部不保存，事务调用还要求显式目标与 ChangeSet 回滚。
+- **统一发现、Artifact 与可恢复工作流。** `bridge_list_domains`、`bridge_search_tools`、`bridge_describe_tools` 用一个有界接口检索原生 library、高层领域和官方 Toolset。`_fields`、`_omit`、`max_items` 与绑定查询 hash 的 cursor 负责裁剪；大结果、截图、日志、trace 和 golden diff 进入可分块读取的 content-addressed Artifact。持久化 Scenario 提供逐步断言、安全重试、取消、rollback hook 与断线恢复，Automation 则生成 durable 结果和报告 Artifact。
 - **由事务拥有的资产修改。** ChangeSet 支持预览、显式提交/回滚、dirty package 归属、任务开始前已有 dirty package 保护，以及仅保存本 Job 资产；Bridge mutator 失败时不会保存或回退无关的编辑器工作。
-- **基于 AST 的防幻觉契约层。** 用户脚本到达 UE 之前，`bridge_preflight.py` 先用 Python AST 解析，对照自动生成的清单（35 个库 × 1185 UFUNCTION）逐一校验每个 `unreal.UnrealBridge*Library.fn(...)` 调用——**不回到编辑器** 就能拦下不存在的库 / 函数名（带 did-you-mean）、错误的位置参数数量、未知关键字、不存在的桥接枚举成员。第二层把 `AssetRegistry` / `GameplayStatics` 的裸调用模式重定向到桥接等价物，并追踪每个返回值的实际类型，在对 `str` / `SoftObjectPath` 这类绑定类型做属性访问时给出警告；UE 对象抛出真正的 `AttributeError` 时则回查 UE Python，列出该类实际反射的 `UPROPERTY` 并给出可粘贴的修正代码（自动处理 `snake_case` ↔ `PascalCase` 的差异）。第三层 ship 一份纯关键字参数的 Python wrapper 模块，让"位置参数顺序写错"在语法层面就不可能发生。三层叠加把新会话 agent 的桥接调用失败率从 **24% 降到 16%**（A/B 验证）——这是先前仅靠 `SKILL.md` 的"调用前先查文档"提示规则一直没能稳定做到的。
+- **基于 AST 的防幻觉契约层。** 用户脚本到达 UE 之前，`bridge_preflight.py` 先用 Python AST 解析，对照自动生成的清单（39 个库 × 1218 UFUNCTION）逐一校验每个 `unreal.UnrealBridge*Library.fn(...)` 调用——**不回到编辑器** 就能拦下不存在的库 / 函数名（带 did-you-mean）、错误的位置参数数量、未知关键字、不存在的桥接枚举成员。第二层把 `AssetRegistry` / `GameplayStatics` 的裸调用模式重定向到桥接等价物，并追踪每个返回值的实际类型，在对 `str` / `SoftObjectPath` 这类绑定类型做属性访问时给出警告；UE 对象抛出真正的 `AttributeError` 时则回查 UE Python，列出该类实际反射的 `UPROPERTY` 并给出可粘贴的修正代码（自动处理 `snake_case` ↔ `PascalCase` 的差异）。第三层 ship 一份纯关键字参数的 Python wrapper 模块，让"位置参数顺序写错"在语法层面就不可能发生。三层叠加把新会话 agent 的桥接调用失败率从 **24% 降到 16%**（A/B 验证）——这是先前仅靠 `SKILL.md` 的"调用前先查文档"提示规则一直没能稳定做到的。
 
   <p align="center">
     <img src="docs/images/zh/02-preflight.png" alt="本地 AST 预检 · 不让幻觉抵达编辑器">
@@ -39,7 +40,7 @@ UnrealBridge 是一个面向 AI Agent 的 Unreal Engine 编辑器桥接层，围
 - **基于 Reactive 系统的事件订阅。** Agent 可订阅 GAS 事件、属性变化、Actor 生命周期、AnimNotify、输入、定时器，以及编辑器端的资产变更事件。在指定事件触发时由桥接层主动回调，无需 Agent 轮询——这是纯请求 / 响应式协议无法覆盖的场景。
 - **PIE 运行时的 Agent 控制接口。** `UnrealBridgeGameplayLibrary` 提供聚合式世界观测、导航寻路，以及移动 / 视角 / 跳跃等操作输入，适用于 AI 行为验证、自动化测试、游戏内 NPC 原型等运行时工作流。
 - **蓝图工具链。** 不仅仅是自动布局：`auto_layout_graph` 的 `pin_aligned` 策略读取 Slate 实时几何对齐 exec 轨道、`straighten_exec_chain` 把主干拉直、`collapse_nodes_to_function` 提取子图、`lint_blueprint` 按固定规则扫 orphan / 未命名节点 / 过大函数 / 无注释大图，`add_comment_box` + 预设配色（Section / Validation / Danger / Network / UI / Debug / Setup）让图谱分区可读；AnimGraph 与状态机还有专用的 `auto_layout_anim_graph` / `auto_layout_state_machine`（后者递归进入每个状态内部 + 规则图）。
-- **Python 原生执行。** 35 个 `UnrealBridge*Library` 累计 1185 个 `UFUNCTION`，覆盖常见子系统；未封装的能力可直接通过 `unreal.*` 原生 API 调用。相较于固定工具列表的 MCP 方案与仅暴露单一 `call` 命令的反射协议，该设计在灵活性与结构性之间取得了折衷。所有关卡写操作均包裹于 `FScopedTransaction` 内，支持标准 Undo / Redo。
+- **Python 原生执行。** 39 个 `UnrealBridge*Library` 累计 1218 个 `UFUNCTION`，覆盖常见子系统；未封装的能力可直接通过 `unreal.*` 原生 API 调用。相较于固定工具列表的 MCP 方案与仅暴露单一 `call` 命令的反射协议，该设计在灵活性与结构性之间取得了折衷。所有关卡写操作均包裹于 `FScopedTransaction` 内，支持标准 Undo / Redo。
 
 ## 架构
 
@@ -50,18 +51,18 @@ flowchart LR
     subgraph Host["Agent 主机"]
       CLI["bridge.py"]
       Pre["AST preflight<br/>（本地 — 调用前拦截，<br/>不发起 TCP）"]
-      Mani[("bridge_manifest.json<br/>35 个库 · 1185 UFUNCTION")]
+      Mani[("bridge_manifest.json<br/>39 个库 · 1218 UFUNCTION")]
     end
 
     Gen["tools/gen_manifest.py<br/>扫 C++ 头文件"]
 
-    subgraph UE["Unreal Editor 5.3+"]
+    subgraph UE["Unreal Editor 5.8.1"]
       Disc["FUnrealBridgeDiscovery<br/>UDP 应答"]
       Server["FUnrealBridgeServer<br/>TCP · 长度前缀 JSON"]
       Reactive["UnrealBridgeReactiveSubsystem<br/>+ 10 个事件适配器"]
       Exec["IPythonScriptPlugin::<br/>ExecPythonCommandEx<br/>（GameThread）"]
       Wrap["unreal_bridge<br/>kwargs-only 包装<br/>（可选的更安全入口）"]
-      Libs["35× UnrealBridge*Library"]
+      Libs["39× UnrealBridge*Library"]
       Engine["UEditor · UWorld · Assets"]
     end
 
@@ -173,7 +174,7 @@ pip install -r requirements-mcp.txt
 python .claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
 ```
 
-该 adapter 暴露的是 grouped tools，例如 `bridge_call`、`asset_op`、`level_op`、`blueprint_op`、`umg_op`、`asset_factory_op`、`ai_op`、`niagara_op`、`sequencer_op`，避免一次性暴露数百个 `UFUNCTION`。3.0 另外提供 `bridge_list_official_toolsets`、`bridge_describe_official_toolset` 和 `bridge_submit_official_toolset_job`；最后一项仅允许执行 schema 明确声明为只读的工具，并始终走 durable polling Job。
+该 adapter 暴露 grouped tools，避免一次性常驻数百个 `UFUNCTION` schema。3.0 还提供统一 domain/search/describe、Artifact、Scenario、Automation、typed domain workflow 与官方 Toolset adapter。官方调用依据精确 schema-hash 策略执行：只读任务走 durable Job，运行态交互要求显式 opt-in，事务修改要求显式目标与 ChangeSet rollback，三个执行面均不保存。
 
 该 adapter 依赖 FastMCP 1.x，请固定为 `mcp>=1.6.0,<2`。Codex Desktop、CLI 与 IDE extension 共用 `~/.codex/config.toml`，Windows 示例：
 
@@ -293,7 +294,7 @@ Ping:  {"id","command":"ping"}  →  pong
 
 ```
 UnrealBridge/
-├── Plugin/UnrealBridge/         # UE 5.3+ 编辑器插件(C++)
+├── Plugin/UnrealBridge/         # UE 5.8.1 编辑器插件(C++)
 │   ├── Source/UnrealBridge/     #   TCP 服务器 + 桥接库
 │   └── Content/Python/          #   UE Python 环境自动载入的辅助脚本
 ├── .claude/skills/unreal-bridge/
@@ -306,13 +307,10 @@ UnrealBridge/
 
 ## 系统要求
 
-- **Unreal Engine 5.3+**，需启用 `PythonScriptPlugin` 与 `GameplayAbilities`（均为引擎自带）。历史矩阵已对 5.3.2 / 5.4.4 / 5.5.4 / 5.6.1 / 5.7.1 / 5.8.0 验证 clean BuildPlugin；3.0 本次对 5.8.1 完成 clean BuildPlugin。部分库（Chooser / PoseSearch / Material / Navigation 及少量独立 UFUNCTION）需要 5.7+；官方 Toolset 适配层只在 5.8+ 编译，旧引擎保持原路径。详见 [docs/version-compatibility.md](docs/version-compatibility.md)。UE 5.2 及更早版本不支持。
+- **Unreal Engine 5.8.1**，需启用 `PythonScriptPlugin` 与 `GameplayAbilities`（均为引擎自带）。UnrealBridge 3.0 不支持 UE 5.6 或其他 pre-5.8.1 引擎；旧条件分支仅作为遗留源码兼容保留，不纳入发布 Gate，也不提供支持承诺。详见 [docs/version-compatibility.md](docs/version-compatibility.md)。
 - **Windows 10/11** —— 插件本身可移植,但辅助脚本里的路径按 Windows 风格写死
 - **Python 3.9+**,已加入 PATH
-- **Visual Studio 2022** + UE 工作负载 —— 用于编译插件。**Toolchain 注意事项:**
-  - **5.5 / 5.6 / 5.7 / 5.8** 在当前 MSVC 下能编(已在 **14.44.35207** / VS 17.14 上验证)。
-  - **5.3 / 5.4** 需要 `_MSC_VER ≤ 1939` 的 MSVC(已在 **14.38.33130** / VS 17.8 上验证)。新 MSVC 在引擎自身的 `ConcurrentLinearAllocator.h` 触发 `C4668: '__has_feature' 未定义`,被 5.3 / 5.4 的 UBT 用 `/we4668` 升成硬错误;5.5+ 把 macro 用 `defined()` 包了一层并去掉了 `/we4668`。如果机器上两套工具链都装了,想验 5.3 / 5.4:在 `%APPDATA%\Unreal Engine\UnrealBuildTool\BuildConfiguration.xml` 把 `<CompilerVersion>` 临时改成 `14.38.33130`,跑完再改回去。
-  - **5.8 源码自编引擎**(不是 Launcher 装的)如果缺 `Setup.bat` 通常下发的 `UbaDetours.dll`,需要关 UBA。在 `engines.local.json` 对应引擎条目里加 `"env": { "UnrealBuildTool_BuildConfiguration__bAllowUBAExecutor": "false" }`,UBT 会回落到本地 ParallelExecutor。
+- **Visual Studio 2022** + UE 工作负载 —— 用于编译插件。**UE 5.8 源码自编引擎**（不是 Launcher 安装）如果缺少 `Setup.bat` 通常下发的 `UbaDetours.dll`，需要关闭 UBA。在 `engines.local.json` 对应引擎条目中加入 `"env": { "UnrealBuildTool_BuildConfiguration__bAllowUBAExecutor": "false" }`，UBT 会回落到本地 ParallelExecutor。
 - **Claude Code CLI** —— 可选,只有使用自带 skill 时才需要
 
 ## 安全

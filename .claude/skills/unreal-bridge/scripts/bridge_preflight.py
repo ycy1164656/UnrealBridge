@@ -33,6 +33,7 @@ import ast
 import difflib
 import json
 import os
+import threading
 from typing import List, Optional, Set
 
 _DEFAULT_MANIFEST_PATH = os.path.join(
@@ -46,26 +47,34 @@ _DEFAULT_RETURN_TYPES_PATH = os.path.join(
 )
 
 _MANIFEST_CACHE: Optional[dict] = None
+_MANIFEST_STAMP = None
+_MANIFEST_LOCK = threading.Lock()
 _REDIRECTS_CACHE: Optional[dict] = None
 _RETURN_TYPES_CACHE: Optional[dict] = None
 
 
 def load_manifest(path: Optional[str] = None) -> Optional[dict]:
     """Read bridge_manifest.json (cached). Returns None if not present."""
-    global _MANIFEST_CACHE
-    if _MANIFEST_CACHE is not None and path is None:
-        return _MANIFEST_CACHE
+    global _MANIFEST_CACHE, _MANIFEST_STAMP
     p = path or _DEFAULT_MANIFEST_PATH
-    if not os.path.isfile(p):
-        return None
-    try:
-        with open(p, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if path is None:
-        _MANIFEST_CACHE = data
-    return data
+    with _MANIFEST_LOCK:
+        try:
+            stat = os.stat(p)
+            stamp = (os.path.abspath(p), stat.st_mtime_ns, stat.st_size)
+            if path is None and _MANIFEST_CACHE is not None and _MANIFEST_STAMP == stamp:
+                return _MANIFEST_CACHE
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            after = os.stat(p)
+            if (after.st_mtime_ns, after.st_size) != stamp[1:]:
+                raise ValueError("manifest changed during preflight read")
+        except (OSError, ValueError):
+            if path is None:
+                _MANIFEST_CACHE, _MANIFEST_STAMP = None, None
+            return None
+        if path is None:
+            _MANIFEST_CACHE, _MANIFEST_STAMP = data, stamp
+        return data
 
 
 def load_redirects(path: Optional[str] = None) -> Optional[dict]:

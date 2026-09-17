@@ -36,6 +36,50 @@ struct FBridgeStateTreeTaskInfo
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString InstanceType;
 };
 
+/** Generic editable StateTree node (evaluator, task, or condition). */
+USTRUCT(BlueprintType)
+struct FBridgeStateTreeNodeInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString Id;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString Kind;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString StateId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString TransitionId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString Name;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString StructPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString InstanceType;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString ExpressionOperand;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") int32 ExpressionIndent = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeStateTreeParameterInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString StructId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString StateId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString StatePath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString Name;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString ValueType;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString ContainerTypes;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString ValueTypeObject;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString Value;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeStateTreeBindingInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString SourceStructId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString SourcePath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString TargetStructId;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString TargetPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString Description;
+};
+
 USTRUCT(BlueprintType)
 struct FBridgeStateTreeTransitionInfo
 {
@@ -48,6 +92,7 @@ struct FBridgeStateTreeTransitionInfo
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString TargetStateName;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString RequiredEventTag;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") bool bEnabled = true;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeNodeInfo> Conditions;
 };
 
 USTRUCT(BlueprintType)
@@ -64,6 +109,7 @@ struct FBridgeStateTreeStateInfo
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") bool bEnabled = true;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") int32 ChildCount = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeTaskInfo> Tasks;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeNodeInfo> EnterConditions;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeTransitionInfo> Transitions;
 };
 
@@ -75,6 +121,10 @@ struct FBridgeStateTreeStructure
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") bool bFound = false;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString AssetPath;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString SchemaClassPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeNodeInfo> Evaluators;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeNodeInfo> GlobalTasks;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeParameterInfo> Parameters;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeBindingInfo> Bindings;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") TArray<FBridgeStateTreeStateInfo> States;
 };
 
@@ -99,6 +149,22 @@ struct FBridgeStateTreeEditResult
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString CreatedId;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FString Error;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree") FBridgeStateTreeValidationResult Validation;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeStateTreeRuntimeInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") FString World;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") FString ComponentPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") FString OwnerPath;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") FString StateTreeReference;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") FString RunStatus;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") bool bRunning = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") bool bPaused = false;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") TArray<FString> ActiveStates;
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|StateTree|Runtime") FString DebugInfo;
 };
 
 UCLASS()
@@ -172,6 +238,78 @@ public:
 		bool bCompile = true,
 		bool bSave = false);
 
+	/** Add a native evaluator struct to the global evaluator list. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgeStateTreeEditResult AddStateTreeEvaluator(
+		const FString& StateTreePath,
+		const FString& EvaluatorStructPath,
+		const FString& InstanceDataExportText = TEXT(""),
+		bool bCompile = true,
+		bool bSave = false);
+
+	/** Add a native task struct to the global task list. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgeStateTreeEditResult AddStateTreeGlobalTask(
+		const FString& StateTreePath,
+		const FString& TaskStructPath,
+		const FString& InstanceDataExportText = TEXT(""),
+		bool bCompile = true,
+		bool bSave = false);
+
+	/** Add a native enter-condition struct to one state. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgeStateTreeEditResult AddStateTreeEnterCondition(
+		const FString& StateTreePath,
+		const FString& StateId,
+		const FString& ConditionStructPath,
+		const FString& InstanceDataExportText = TEXT(""),
+		const FString& ExpressionOperand = TEXT("And"),
+		int32 ExpressionIndent = 0,
+		bool bCompile = true,
+		bool bSave = false);
+
+	/** Add a native condition struct to an existing transition. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgeStateTreeEditResult AddStateTreeTransitionCondition(
+		const FString& StateTreePath,
+		const FString& TransitionId,
+		const FString& ConditionStructPath,
+		const FString& InstanceDataExportText = TEXT(""),
+		const FString& ExpressionOperand = TEXT("And"),
+		int32 ExpressionIndent = 0,
+		bool bCompile = true,
+		bool bSave = false);
+
+	/** Add a typed public/root parameter, or a state parameter when StateId is provided. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgeStateTreeEditResult AddStateTreeParameter(
+		const FString& StateTreePath,
+		const FString& StateId,
+		const FString& Name,
+		const FString& ValueType,
+		const FString& ValueTypeObjectPath = TEXT(""),
+		const FString& DefaultValueExportText = TEXT(""),
+		bool bCompile = true,
+		bool bSave = false);
+
+	/** Add or replace an exact property binding between two existing bindable structs. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgeStateTreeEditResult AddStateTreeBinding(
+		const FString& StateTreePath,
+		const FString& SourceStructId,
+		const FString& SourcePath,
+		const FString& TargetStructId,
+		const FString& TargetPath,
+		bool bReplaceExisting = false,
+		bool bCompile = true,
+		bool bSave = false);
+
 	/** Add a transition. TargetStateId is required only for GotoState. */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
 		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
@@ -204,6 +342,17 @@ public:
 		bool bCompile = true,
 		bool bSave = false);
 
+	/** Set an instance-data property on any evaluator/task/condition by exact node GUID. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
+	static FBridgeStateTreeEditResult SetStateTreeNodeInstanceProperty(
+		const FString& StateTreePath,
+		const FString& NodeId,
+		const FString& PropertyName,
+		const FString& ValueExportText,
+		bool bCompile = true,
+		bool bSave = false);
+
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree", meta = (
 		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Explicit"))
 	static FBridgeStateTreeEditResult SetStateTreeTransitionEnabled(
@@ -212,4 +361,9 @@ public:
 		bool bEnabled,
 		bool bCompile = true,
 		bool bSave = false);
+
+	/** Read-only bounded snapshot of live GameplayStateTree components. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|StateTree|Runtime", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static TArray<FBridgeStateTreeRuntimeInfo> GetRuntimeStateTrees(int32 MaxComponents = 256);
 };

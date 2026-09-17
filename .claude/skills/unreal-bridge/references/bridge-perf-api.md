@@ -1,5 +1,13 @@
 # bridge-perf-api
 
+> Current Bridge 3.1 workflow: the four legacy synchronous Trace-summary
+> signatures below are retained for result-field reference but now return a
+> migration error. Use `start_trace_analysis` and status/result/cancel, described
+> in [the background Trace contract](bridge-reliability-workflows.md#后台-trace).
+> Analysis and provider traversal run on background workers, never synchronously
+> inside the Editor bridge slice. Raw JSON summary bool fields retain the `b`
+> prefix; legacy wrapper structs used snake_case attributes.
+
 `unreal.UnrealBridgePerfLibrary` — AAA-grade performance instrumentation. Returns structured UPROPERTY data instead of parsing `stat unit` text output. Eight dimensions:
 
 | Dimension | Functions |
@@ -9,7 +17,7 @@
 | Time series | `start_perf_sampling` / `stop_perf_sampling` / `get_perf_sampling_state` · `get_frame_time_histogram` · `get_hitch_log` · `reset_frame_time_histogram` · `clear_hitch_log` · `export_perf_samples_to_csv` · **`get_frame_time_percentiles`** (M5-4) |
 | Render breakdown | `get_visible_primitives_by_material` · `get_actor_render_cost` · `get_lod_distribution` · `get_lumen_diagnostics` · `get_nanite_stats` · `get_shadow_caster_breakdown` · **`get_texture_streaming_residency`** (M7-1) · **`get_render_target_memory`** (M7-2) · **`get_per_pass_gpu_timings`** (M7-3) · **`analyze_all_materials`** (M7-4) |
 | Live trace control | `start_trace_capture` · `stop_trace_capture` · `get_trace_state` · `list_trace_channels` |
-| Trace summary parsers (5.7+) | **`parse_trace_to_summary`** (M4-5 + M5-1/M5-2/M5-3/M5-5 fields) · **`parse_alloc_trace_to_summary`** (M6-1) · **`parse_net_trace_to_summary`** (M6-2) · **`parse_cook_trace_to_summary`** (M6-3) |
+| Background Trace summaries | `start_trace_analysis` / `get_trace_analysis_status` / `get_trace_analysis_result` / `cancel_trace_analysis`; kinds `performance`, `alloc`, `net`, `cook` |
 | Regression workflow | **`compare_perf_snapshots`** (M8-2) |
 | Auto-hitch + Insights handoff | **`begin_auto_hitch_capture`** / **`end_auto_hitch_capture`** / **`get_auto_hitch_state`** (M8-1) · **`begin_insights_for_trace`** (M8-3) |
 
@@ -18,11 +26,11 @@
 - `GNumDrawCallsRHI` / `GNumPrimitivesDrawnRHI` (RHI, summed across `MAX_NUM_GPUS`) → `get_render_counters`
 - `FPlatformMemory::GetStats()` + `FPlatformMemory::GetConstants()` → `get_memory_stats`
 - `TObjectIterator<UObject>` aggregated by `UClass` → `get_u_object_stats`
-- `TraceServices::IAnalysisService::Analyze` (synchronous, blocks the bridge exec) → all `parse_*_trace_to_summary` parsers
+- `TraceServices::IAnalysisService::StartAnalysis` plus background worker ownership → all four asynchronous summary kinds; old synchronous entrypoints are disabled.
 - `IRenderAssetStreamingManager` → `get_texture_streaming_residency`
 - `FRealtimeGPUProfiler::FetchPerfByDescription` (legacy GPU profiler path; UE 5.7's new RHI profiler is empty here — fall back to Insights) → `get_per_pass_gpu_timings`
 
-Most functions are cheap (microseconds). The slow paths: `get_u_object_stats` (50-300 ms — TObjectIterator), `parse_*_trace_to_summary` (1-30 s — Analyze() is synchronous), `analyze_all_materials` (seconds for thousands of materials — loads each from AssetRegistry).
+Snapshot calls are generally small, while object iteration and material analysis can be costly. Trace parsing runs on background workers; its duration depends on trace size/channels and must be observed through the analysis status. Legacy synchronous parser timings are not a current latency guarantee.
 
 ---
 
@@ -177,6 +185,8 @@ for row in s.u_objects.top_classes[:5]:
 
 ## parse_cook_trace_to_summary(utrace_path, top_n=50) -> FBridgePerfCookSummary
 
+> Retired callable; the fields below describe the legacy result schema. Use `start_trace_analysis(summary_kind="cook")` with the verified trace path, then query status/result. Raw JSON field names may differ from the legacy wrapper attributes.
+
 **(M6-3)** Parse a cook trace's `ICookProfilerProvider` data. Trace must contain the `cook` channel — typically captured during a cook commandlet:
 
 ```
@@ -209,6 +219,8 @@ UnrealEditor-Cmd.exe MyGame.uproject -run=Cook -targetplatform=Windows -trace=co
 ---
 
 ## parse_net_trace_to_summary(utrace_path) -> FBridgePerfNetSummary
+
+> Retired callable; use `start_trace_analysis(summary_kind="net")` with the verified trace path, then query status/result. The following fields document the legacy schema, not a callable migration example.
 
 **(M6-2)** Parse a `.utrace` file's network profiler data. Trace must contain the `net` channel; without it `net_trace_version` is 0 and `has_events` is False.
 
@@ -245,6 +257,8 @@ UnrealEditor-Cmd.exe MyGame.uproject -run=Cook -targetplatform=Windows -trace=co
 ---
 
 ## parse_alloc_trace_to_summary(utrace_path) -> FBridgePerfAllocSummary
+
+> Retired callable; use `start_trace_analysis(summary_kind="alloc")` with the verified trace path, then query status/result. The required capture channels below still apply; legacy wrapper fields are not the current JSON API contract.
 
 **(M6-1)** Parse a `.utrace` file's allocation provider into a structured summary. Trace **must** contain the `memalloc` channel **AND** be captured from engine startup (`-trace=memalloc,frame,cpu` on the editor command line) — `Trace.Start memalloc=on` at runtime cannot retroactively install the malloc hooks needed to record events.
 
@@ -319,7 +333,7 @@ UnrealEditor-Cmd.exe MyGame.uproject -run=Cook -targetplatform=Windows -trace=co
 
 **UE 5.7 reality check** — UE 5.7 ships with `RHI_NEW_GPU_PROFILER=1` enabled by default and the legacy `FRealtimeGPUProfiler` table is empty. The new profiler stores per-pass data via `UE::RHI::GPUProfiler::FGPUStat::FStatInstance` (keyed by queue × Busy/Wait/Idle), but exposing it requires hooking the standard STATS system or the `gpu` trace channel — out of scope for a single-call live query.
 
-**Workaround for live per-pass GPU on 5.7**: capture a trace with `cpu`, `gpu`, `frame` channels, then call `parse_trace_to_summary` — its `gpu_hot_scopes` field carries the same data resolved offline. This op is best when 5.8+ stabilises the new-profiler query API.
+**Offline per-pass GPU data**: capture a trace with `cpu`, `gpu`, `frame` channels, then use `start_trace_analysis(summary_kind="performance")`. Its summary contains GPU hot scopes when those events are present.
 
 ---
 
@@ -426,7 +440,7 @@ for h in worst:
 
 ## begin_insights_for_trace(utrace_path) -> FBridgeInsightsLaunchResult
 
-**(M8-3)** Launch UnrealInsights.exe on a `.utrace` file. Detached — the call returns as soon as the process is created; Insights runs in its own window. Use when `parse_*_trace_to_summary` isn't enough and a human needs to take over with the visual timeline.
+**(M8-3)** Launch UnrealInsights.exe on a `.utrace` file when the user requests an interactive visual timeline beyond the background summary. It creates a separate desktop window; do not invoke it during background work without that interaction scope.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -503,7 +517,7 @@ print(f"p50={ps[0]:.1f} ms  p90={ps[1]:.1f} ms  p95={ps[2]:.1f} ms  p99={ps[3]:.
 
 ## parse_trace_to_summary(utrace_path, top_n=20, top_n_per_thread=10, top_n_counters=100) -> FBridgePerfTraceSummary
 
-Parse a `.utrace` file (output of `start_trace_capture` / `stop_trace_capture` or `Trace.Start File=…` console command) into a structured summary. Wraps `TraceServices::IAnalysisService::Analyze` synchronously, then walks the diagnostics + frame + timing-profiler + thread providers.
+Legacy result schema reference. The callable synchronous entrypoint now returns a migration error. Use `start_trace_analysis(summary_kind="performance")` to analyze a completed `.utrace` in the background and query its status/result separately.
 
 ### Top-level fields
 
@@ -576,7 +590,7 @@ Parse a `.utrace` file (output of `start_trace_capture` / `stop_trace_capture` o
 
 ### Cost
 
-Dominated by `Analyze()` — typically 1-10s per 100 MB of trace. Synchronous, blocks the bridge exec; for large traces, expect tens of seconds (see `feedback_bridge_exec_holds_gamethread`).
+Legacy synchronous timings do not apply to the current interface. The background worker owns analysis and provider traversal; poll its status and inspect warnings/results. Current sample limits are recorded in the reliability reference, not inferred from trace size alone.
 
 ### Channel requirements
 
@@ -590,21 +604,14 @@ Dominated by `Analyze()` — typically 1-10s per 100 MB of trace. Synchronous, b
 ### Example
 
 ```python
-import unreal
-s = unreal.UnrealBridgePerfLibrary.parse_trace_to_summary(
-    r"D:\Captures\my_session.utrace", top_n=20, top_n_per_thread=10)
-
-print(f"frames={s.game_frame_count}  avg={s.frame_avg_ms:.2f}ms  worst={s.frame_max_ms:.0f}ms")
-
-print("== top GPU hot scopes ==")
-for r in s.gpu_hot_scopes:
-    print(f"  {r.name:50s} {r.total_ms:8.1f} ms ({r.call_count})")
-
-print("== thread breakdown ==")
-for t in s.per_thread_hot_scopes[:5]:
-    print(f"{t.thread_name} ({t.group_name})  total={t.total_cpu_ms:.0f} ms")
-    for r in t.top_scopes[:3]:
-        print(f"   - {r.name:48s} {r.total_ms:7.1f} ms")
+import json
+from unreal_bridge import Perf
+started = json.loads(Perf.start_trace_analysis(
+    utrace_path=r"D:\Captures\my_session.utrace",
+    summary_kind="performance", top_n=20, top_n_per_thread=10))
+print(json.dumps(started))
+# In subsequent host-driven calls, use the returned analysis ID to query
+# get_trace_analysis_status / get_trace_analysis_result. Do not sleep in UE.
 ```
 
 ### Pitfalls

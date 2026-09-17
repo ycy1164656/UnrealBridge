@@ -10,6 +10,7 @@
 #include "UObject/FieldIterator.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/UnrealType.h"
+#include "UObject/TextProperty.h"
 
 namespace BridgeRegistry
 {

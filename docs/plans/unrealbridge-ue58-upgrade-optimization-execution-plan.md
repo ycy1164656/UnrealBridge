@@ -1,33 +1,56 @@
 # UnrealBridge UE 5.8.1 升级后优化执行计划
 
-> 文档状态：UnrealBridge 3.0 发布范围已执行完成（2026-08-26）
+> 文档状态：UnrealBridge 3.0 完整范围已执行完成（2026-08-27）
 > 创建日期：2026-08-25
 > UnrealBridge 工作仓库：`C:\dev\UnrealBridge`
 > 集成项目：`C:\dev\ShooterRoyal_5_8_DirectUpgrade`
 > 历史基线：UnrealBridge `2.0.0`、Protocol `2`、UE `5.6.1`
 > 发布结果：UnrealBridge `3.0.0`、Protocol `2`、UE `5.8.1`
 > 目标引擎：Unreal Engine `5.8.1`
+> 3.0 支持范围：仅 Unreal Engine `5.8.1`；UE `5.6` 仅是 2.0 历史基线
 
 ---
 
-## 执行结果（2026-08-26）
+## 执行结果（2026-08-27）
 
 - 双仓库可恢复快照、UE 5.8.1 clean `BuildPlugin`、ShooterRoyal
-  `LyraEditor Win64 Development`、5 个 UE Automation 测试、15 个 Python
-  测试、HTTP MCP 7 个协议测试和 60 秒 Job soak 均通过。
-- 运行中的 UE 5.8.1 实测导出 53 个 Toolset、832 个 Tool；完整 schema
-  与 `Reuse / Wrap / Extend / Reject` 决策见
+  `LyraEditor Win64 Development`、5 个 UE Automation 测试、完整 Python suite、
+  HTTP/stdio MCP、60 秒 Job soak 和主要领域 live smoke 均已执行。
+- 运行中的 UE 5.8.1 实测导出 53 个 Toolset、832 个 Tool。3.0 已对每个
+  `toolset|tool` 做精确 source/schema 审计并绑定 input-schema hash：`ReadOnly=387`、
+  `RuntimeInteraction=49`、`TransactionalSync=326`、`Rejected=70`。不存在旧版
+  “只放行 2 个、其余 776 个等待 wrapper”的裁剪状态。
+- 三个允许执行面都固定不保存；Runtime 操作必须显式 opt-in，Transactional 操作
+  必须声明精确目标、立即完成并由 ChangeSet 管理 rollback。删除、任意脚本、外部
+  文件/路径、Source Control 和显式保存操作保持拒绝。
+- 统一发现/search/describe、字段裁剪/分页、Artifact、Scenario、Automation、
+  Blueprint 继承组件/SCS/ICH、运行时 UMG/Slate、GameFeature/DataRegistry、
+  AI/EQS/Perception/SmartObject、Niagara、Material、MetaSound、StateTree、Sequencer、
+  Control Rig、PCG、PhysicsAsset、Dataflow、Mesh、World Partition 和网络运行态诊断
+  均已落为 native API、typed workflow 或 durable Scenario，并有对应测试。
+- UE 5.8.1 manifest 为 39 个 library、1218 个 function、5 个 enum；manifest hash
+  `10e82a452f798587c221c0654beb32dcaa6e187e9acf0acdeb447be55946ba47`，registry hash
+  `5a238582b56869a45c7c4ecd97027b39`。
+- UE 5.6.1 只作为迁移前的 2.0 历史基线保留；它不属于 3.0 的支持、构建、回归或
+  发布 Gate，本机 5.6 UBT 状态不再构成 3.0 阻塞。
+- 发布说明见 [`../unrealbridge-3.0-release-notes.md`](../unrealbridge-3.0-release-notes.md)，
+  完整逐工具策略见
   [`../ue58-toolset-capability-matrix.md`](../ue58-toolset-capability-matrix.md)。
-- 官方 schema 未提供普遍可靠的副作用标注。因此 3.0 的通用 Toolset 执行面
-  只放行明确声明 `readOnlyHint=true` 的工具；官方修改工具不会绕过现有
-  ChangeSet、package ownership 和保存白名单。
-- Batch 5–8 所列领域能力继续由既有 typed UnrealBridge libraries 提供；官方
-  Toolset 中未标注副作用的 776 个工具保持 `Extend`，54 个潜在破坏性工具保持
-  `Reject`，不会为了形式上的“接入”而开放未审计写操作。
-- 当前机器的 UE 5.6.1 UBT 在编译插件前于
-  `ModuleRules.IsValidForTarget` 抛出内部 `ArgumentNullException`；同一错误可在未改动
-  的 2.0 快照复现，故本次不把 UE 5.6.1 记为 3.0 回归通过，也不归因于插件改动。
-- 发布说明见 [`../unrealbridge-3.0-release-notes.md`](../unrealbridge-3.0-release-notes.md)。
+
+### 分批完成与证据
+
+| Batch | 状态 | 实际证据 |
+|---|---|---|
+| 0 快照与基线 | 完成 | 双仓库快照、独立 5.8 项目、目标项目可构建/启动 |
+| 1 兼容与构建 | 完成 | 5.8.1 clean BuildPlugin、LyraEditor、严格 manifest/registry hash；UnrealBridge C4996 warning 清零 |
+| 2 官方清单 | 完成 | 53 Toolset / 832 Tool 的真实 schema、逐工具矩阵、AST 显式保存审计 |
+| 3 架构与安全 | 完成 | version-gated adapter、loopback/token、schema-hash 默认拒绝、三执行面不保存 |
+| 4 Job 可靠性 | 完成 | durable polling、deadline/cancel/idempotency/recovery；60 秒 100/100 health soak |
+| 5 Slate/UMG/Automation | 完成 | 3226 runtime widgets、语义操作、快照/截图/golden、Automation 5/5、Dirty 恢复 |
+| 6 Gameplay/Data/AI | 完成 | GameFeature transition/restore、DataRegistry、BT/EQS/Perception/SmartObject、StateTree、多人网络审计 |
+| 7 Niagara/Material | 完成 | typed Niagara deep smoke、Material/MetaSound graph intent、compile/validate/rollback |
+| 8 Animation/World/Physics/Audio | 完成 | Control Rig、Sequencer、PCG、Physics/Mesh/Dataflow、World Partition、Audio typed workflow |
+| 9 发布与同步 | 完成 | 3.0.0、目标插件逐字节同步、Codex installer、release notes、5.8.1 最终构建；pre-5.8.1 不在 3.0 支持范围 |
 
 ---
 
@@ -41,7 +64,7 @@
 2. 接入 UE 5.8 官方 `ModelContextProtocol`、`ToolsetRegistry` 和可用 Toolsets，但不以官方 Experimental MCP 替换 UnrealBridge 的可靠 Job、ChangeSet、鉴权和恢复层。
 3. 不只补 Niagara，系统性吸收 Slate、Automation、Blueprint、Material、GameFeature、GAS、AI、PCG、Animation、Sequencer、Physics、Audio、Networking 等可复用能力。
 4. 对官方 Toolset 已覆盖的能力优先复用或薄封装；只在官方能力缺少深度、安全语义或 ShooterRoyal 所需高层意图时新增 UnrealBridge 原生实现。
-5. 继续维护 UE 5.3 至 UE 5.7 的现有路径，不因 UE 5.8 集成移除 TCP/UDP discovery、HTTP Job endpoint 或旧版本兼容层。
+5. 可保留 UE 5.3 至 UE 5.7 的遗留条件分支以便追溯，但 3.0 只维护和支持 UE 5.8.1；不得把遗留源码路径或历史构建记录表述为 3.0 兼容承诺。
 
 发生冲突时，本文档取代 [`eda-integration-roadmap.md`](./eda-integration-roadmap.md) 中关于 UE 5.8 的执行顺序和架构假设。旧文档仍作为历史调研保留。已经完成的可靠性底座以 [`unrealbridge-optimization-execution-plan.md`](./unrealbridge-optimization-execution-plan.md) 为准。
 
@@ -339,7 +362,7 @@ UE 5.8.1 安装后，不依据预览版或旧路线图硬编码 Toolset 数量�
 内容：
 
 1. 完成第 4 节 ShooterRoyal 和 UnrealBridge 双仓库快照。
-2. 记录 UE 5.6.1 最终 build、PIE、Dirty Package、manifest/hash 基线。
+2. 记录 UE 5.6.1 上 UnrealBridge 2.0 的最终 build、PIE、Dirty Package、manifest/hash 历史基线；该记录不进入 3.0 验收。
 3. 确认 UE 5.8.1 迁移副本与 5.6.1 原项目物理路径不同。
 4. 确认 5.8.1 Lyra 基线对照完成。
 
@@ -352,7 +375,7 @@ UE 5.8.1 安装后，不依据预览版或旧路线图硬编码 Toolset 数量�
 1. 使用 UE 5.8.1 Launcher Build 执行 clean `BuildPlugin`。
 2. 构建 ShooterRoyal 的 `LyraEditor Win64 Development`，先修第一个真实错误。
 3. 审计 5.8.0 到 5.8.1 API drift，重点检查 Anim、GAS、PoseSearch、Chooser、PCG、Geometry、Material 和 JSON converter。
-4. 只在必要位置增加 `UE_VERSION_OLDER_THAN` shim，保留 UE 5.3 至 UE 5.7 编译路径。
+4. 只在必要位置增加 `UE_VERSION_OLDER_THAN` shim；可保留 UE 5.3 至 UE 5.7 遗留源码路径，但不为其建立 3.0 支持 Gate。
 5. 修正文档中错误的 5.4/5.7 gate 描述，并把 matrix 精确更新到 5.8.1。
 6. 同步插件到 ShooterRoyal，启动 Editor，执行 ping、health、capabilities。
 7. 重新生成 UE 5.8.1 manifest/wrapper 并验证严格 hash 握手。
@@ -363,7 +386,7 @@ UE 5.8.1 安装后，不依据预览版或旧路线图硬编码 Toolset 数量�
 - ShooterRoyal Editor Target 成功。
 - Bridge `ready=true`。
 - 一个只读调用、一个不保存修改、一个 polling Job 均通过。
-- UE 5.6.1 至少重新跑一次主体回归；完整旧版本 matrix 在发布批执行。
+- 3.0 构建和回归只要求 UE 5.8.1；旧版本 matrix 若运行，仅作非阻塞历史诊断。
 
 ### Batch 2：官方 Unreal MCP 与 ToolsetRegistry 清单审计
 
@@ -392,9 +415,9 @@ UE 5.8.1 安装后，不依据预览版或旧路线图硬编码 Toolset 数量�
 2. 将官方 tool schema 映射为 UnrealBridge manifest provider entry。
 3. 暴露少量高层 Toolset：capability、Job、ChangeSet、grouped operation。
 4. 避免 1179 个函数 eager 注册；依赖 Tool Search 按需发现。
-5. 5.7 以下构建不引用任何 UE 5.8 Experimental header/module。
+5. 遗留的 5.7 以下条件分支不引用任何 UE 5.8 Experimental header/module；这不代表 3.0 支持这些引擎。
 
-退出标准：官方和 UnrealBridge 能力可在一个 capability 查询中区分来源、版本、风险、保存行为；5.6.1 编译不受影响。
+退出标准：官方和 UnrealBridge 能力可在一个 capability 查询中区分来源、版本、风险、保存行为；UE 5.8.1 构建和运行通过。
 
 ### Batch 4：官方 Toolset 的可靠 Job 适配
 
@@ -472,7 +495,7 @@ Material 必做：
 
 内容：
 
-1. 跑 UE 5.3 至 UE 5.8.1 BuildPlugin matrix。
+1. 跑 UE 5.8.1 clean `BuildPlugin`；pre-5.8.1 matrix 仅可作为非阻塞历史诊断，不进入 3.0 发布判定。
 2. 跑 Python tests、UE Automation、MCP protocol、Job soak、ChangeSet 和 capability snapshot tests。
 3. 更新 README、SKILL、API references、version compatibility 和 changelog。
 4. 重新生成并比对 manifest/wrapper。
@@ -489,7 +512,7 @@ Material 必做：
 |---|---|---|
 | Build | UE 5.8.1 BuildPlugin | clean pass |
 | Project | `LyraEditor Win64 Development` | exit code 0，无 UHT error |
-| Compatibility | UE 5.3 至 5.8.1 matrix | 全部受支持列 pass |
+| Compatibility | UE 5.8.1 | clean pass；3.0 不声明支持 pre-5.8.1 |
 | Handshake | plugin/registry/manifest/wrapper hash | 完全一致，否则拒绝执行 |
 | Official MCP | initialize/list/describe/call/refresh | MCP Inspector 与 Codex 均通过 |
 | Hotfix regression | BP no-SCS component、tools/call framing | 不崩溃、不丢结果 |
@@ -549,23 +572,24 @@ Material 必做：
 
 ---
 
-## 12. 升级完成后的启动指针
+## 12. 3.0 发布后的维护指针
 
-用户完成 UE 5.8.1 升级后，下一次任务从以下只读检查开始：
+本计划的开发批次已执行结束。后续任务不再从 Batch 0 重跑，而从以下最小维护检查开始：
 
-1. 获取 UE 5.8.1 安装路径和迁移后的 ShooterRoyal 项目路径。
-2. 读取两个仓库的 branch、HEAD、status、remote 和 LFS fsck。
-3. 通过 UnrealBridge 读取 Editor version、project、level、PIE、Dirty Package 和 health。
-4. 读取 UE 5.8.1 首次启动/编译日志中的第一个真实 error。
-5. 检查 `ModelContextProtocol`、`ToolsetRegistry`、`AllToolsets` 是否存在，但不自动启用。
-6. 核对 G0 至 G6。
-7. 只有 Gate 全部通过后开始 Batch 1。
+1. `bridge.py --project ShooterRoyal ping/health/capabilities` 必须返回 `ready=true`、
+   plugin `3.0.0`、Protocol `2`，并与 manifest/registry hash 严格一致。
+2. 修改任何 `UFUNCTION` 后重新构建、运行 `tools/gen_manifest.py`，再同步目标插件和
+   Codex skill；不得绕过 hash mismatch。
+3. 官方 Toolset schema 变化时重新导出 audit、运行
+   `build_ue58_access_policy.py` 的 Engine 源码保存调用审计、审查 diff，再生成能力矩阵。
+4. 新领域能力先进入统一 domain registry，并至少具备 schema、read/validate、错误输入、
+   无保存事务或明确 runtime side-effect、rollback 和 Artifact 证据。
+5. 每次目标项目更新后至少运行 Python suite、HTTP MCP protocol、一个 live read、一个
+   rollback smoke；涉及网络时运行 Listen Server + 2 clients smoke。
+6. 最终交付继续报告 PIE、Dirty Package、保存白名单、构建 warning，以及 UE 5.8.1 支持目标内尚未完成的验证。
 
-建议用户在升级完成后提供一句明确指令：
-
-```text
-UE 5.8.1 和对应 Lyra 已安装，ShooterRoyal 迁移副本可以打开。按 unrealbridge-ue58-upgrade-optimization-execution-plan.md 从 Batch 0 Gate 审计开始执行。
-```
+UE 5.6.1 不安排 UnrealBridge 3.0 的修复、重装或回归工作。若未来要重新扩大支持范围，
+必须作为独立版本目标重新立项，并单独完成构建矩阵、运行回归和发布验收。
 
 ---
 

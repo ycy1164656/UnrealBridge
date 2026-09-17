@@ -355,6 +355,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor")
 	static bool StartPIE();
 
+	/**
+	 * Start an in-editor listen-server session with a bounded number of client
+	 * worlds. ClientCount follows ULevelEditorPlaySettings semantics: the
+	 * listen-server player is the first client, so 3 means server + 2 clients.
+	 * A transient settings duplicate is used; user Editor config is not saved.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor")
+	static bool StartNetworkPIE(int32 ClientCount = 3, bool bRunUnderOneProcess = true);
+
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Editor")
 	static bool StopPIE();
 

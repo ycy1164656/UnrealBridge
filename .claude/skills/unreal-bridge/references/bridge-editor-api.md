@@ -913,7 +913,31 @@ unreal.UnrealBridgeEditorLibrary.create_new_level(True)
 
 ### start_pie() -> bool
 
+Start the standard single-player PIE session using current Editor play
+settings.
+
+### start_network_pie(client_count=3, run_under_one_process=True) -> bool
+
+Start a transient Listen Server network PIE session. `client_count` follows
+`ULevelEditorPlaySettings`: the listen-server player counts as the first
+client, so `3` creates one Listen Server world plus two Client worlds. The
+method duplicates the play-settings object into the transient package and does
+not modify or save the user's Editor preferences.
+
+Fails when a play session is already running or when `client_count < 1`.
+For automated acceptance, prefer `bridge_runtime_run` with an `owned_pie`
+recipe and poll `bridge_runtime_status` through verified cleanup; see the
+[owned-session contract](bridge-reliability-workflows.md#运行配方参考).
+Preserve an existing PIE rather than stopping it to make this call succeed.
+If using this low-level API, retain the started session's identity and only
+stop it while that exact identity is still owned by this task. Do not use an
+unconditional global stop in a long-running script's `finally` block.
+
 ### stop_pie() -> bool
+
+Low-level global session control: call only for a session this task is
+authorized to end and whose identity still matches the inspected target.
+Prefer owned-run cleanup for automation; never end a user's replacement PIE.
 
 ### pause_pie(paused) -> bool
 
@@ -922,12 +946,14 @@ unreal.UnrealBridgeEditorLibrary.create_new_level(True)
 Start "Simulate in Editor" — spins up the play world but skips player
 controller spawn / pawn possession. Useful for observing AI, Sequencer,
 or physics without stealing input focus. Fails (returns False) if a
-play session is already running; stop it first.
+play session is already running. Observe it or obtain authorization to end
+that exact session; do not stop it merely to make simulation available.
 
 ```python
 unreal.UnrealBridgeEditorLibrary.start_simulate()
 # ... observe ...
-unreal.UnrealBridgeEditorLibrary.stop_pie()   # same StopPIE works
+# Cleanup only after matching the task-owned session identity.
+# Prefer the owned runtime workflow for automated cleanup.
 ```
 
 ### is_simulating() -> bool

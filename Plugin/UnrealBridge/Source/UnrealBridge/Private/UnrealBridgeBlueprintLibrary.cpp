@@ -4,9 +4,11 @@
 #include "UnrealBridgeTypeParse.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/InheritableComponentHandler.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/MeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -111,20 +113,235 @@ static UBlueprint* LoadBP(const FString& Path)
 	return LoadObject<UBlueprint>(nullptr, *Path);
 }
 
-static UActorComponent* FindOwnedComponentTemplate(UBlueprint* Blueprint, const FString& ComponentName)
+namespace BridgeBlueprintComponentResolver
 {
-	if (!Blueprint || !Blueprint->SimpleConstructionScript || ComponentName.IsEmpty())
+	struct FResolved
 	{
+		UActorComponent* Template = nullptr;
+		UObject* Archetype = nullptr;
+		USCS_Node* DeclaringNode = nullptr;
+		UBlueprint* DeclaringBlueprint = nullptr;
+		FString Source;
+		FString Error;
+		bool bInherited = false;
+		bool bWritable = false;
+		bool bHasLocalOverride = false;
+	};
+
+	UBlueprint* BlueprintForClass(const UClass* Class)
+	{
+		const UBlueprintGeneratedClass* GeneratedClass = Cast<UBlueprintGeneratedClass>(Class);
+		return GeneratedClass ? Cast<UBlueprint>(GeneratedClass->ClassGeneratedBy) : nullptr;
+	}
+
+	USCS_Node* FindNode(UBlueprint* Blueprint, const FName ComponentName)
+	{
+		if (!Blueprint || !Blueprint->SimpleConstructionScript || ComponentName.IsNone())
+		{
+			return nullptr;
+		}
+		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node && Node->GetVariableName() == ComponentName)
+			{
+				return Node;
+			}
+		}
 		return nullptr;
 	}
-	for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+
+	UActorComponent* FindActorComponent(const AActor* Actor, const FName ComponentName)
 	{
-		if (Node && Node->GetVariableName().ToString() == ComponentName)
+		if (!Actor || ComponentName.IsNone())
 		{
-			return Node->ComponentTemplate;
+			return nullptr;
+		}
+		TArray<UActorComponent*> Components;
+		Actor->GetComponents(Components);
+		for (UActorComponent* Component : Components)
+		{
+			if (Component && Component->GetFName() == ComponentName)
+			{
+				return Component;
+			}
+		}
+		return nullptr;
+	}
+
+	void SetArchetype(FResolved& Result)
+	{
+		if (Result.Template)
+		{
+			Result.Archetype = Result.Template->GetArchetype();
+			if (!Result.Archetype || Result.Archetype == Result.Template
+				|| Result.Archetype->GetClass() != Result.Template->GetClass())
+			{
+				Result.Archetype = Result.Template->GetClass()->GetDefaultObject();
+			}
 		}
 	}
-	return nullptr;
+
+	FResolved Resolve(UBlueprint* Blueprint, const FString& ComponentName, bool bCreateLocalOverride)
+	{
+		FResolved Result;
+		if (!Blueprint || ComponentName.IsEmpty())
+		{
+			Result.Error = TEXT("Blueprint and component name are required");
+			return Result;
+		}
+		const FName ComponentFName(*ComponentName);
+
+		if (USCS_Node* LocalNode = FindNode(Blueprint, ComponentFName))
+		{
+			Result.Template = LocalNode->ComponentTemplate;
+			Result.DeclaringNode = LocalNode;
+			Result.DeclaringBlueprint = Blueprint;
+			Result.Source = TEXT("local_scs");
+			Result.bWritable = Result.Template != nullptr;
+			SetArchetype(Result);
+			return Result;
+		}
+
+		UBlueprint* DeclaringBlueprint = nullptr;
+		USCS_Node* DeclaringNode = nullptr;
+		for (UClass* Class = Blueprint->ParentClass; Class; Class = Class->GetSuperClass())
+		{
+			UBlueprint* CandidateBlueprint = BlueprintForClass(Class);
+			if (!CandidateBlueprint || CandidateBlueprint == DeclaringBlueprint)
+			{
+				continue;
+			}
+			if (USCS_Node* Node = FindNode(CandidateBlueprint, ComponentFName))
+			{
+				DeclaringBlueprint = CandidateBlueprint;
+				DeclaringNode = Node;
+				break;
+			}
+		}
+
+		if (DeclaringNode)
+		{
+			const FComponentKey Key(DeclaringNode);
+			if (!Key.IsValid())
+			{
+				Result.Error = TEXT("Inherited SCS component has an invalid component key");
+				return Result;
+			}
+			Result.DeclaringNode = DeclaringNode;
+			Result.DeclaringBlueprint = DeclaringBlueprint;
+			Result.bInherited = true;
+
+			for (UBlueprint* Owner = Blueprint; Owner && Owner != DeclaringBlueprint; )
+			{
+				if (UInheritableComponentHandler* Handler = Owner->GetInheritableComponentHandler(false))
+				{
+					if (UActorComponent* Override = Handler->GetOverridenComponentTemplate(Key))
+					{
+						Result.Template = Override;
+						Result.Source = Owner == Blueprint ? TEXT("ich_override") : TEXT("parent_fallback");
+						Result.bHasLocalOverride = Owner == Blueprint;
+						Result.bWritable = Owner == Blueprint;
+						SetArchetype(Result);
+						return Result;
+					}
+				}
+				UClass* ParentClass = Owner->ParentClass;
+				Owner = BlueprintForClass(ParentClass);
+			}
+
+			if (bCreateLocalOverride)
+			{
+				Blueprint->Modify();
+				UInheritableComponentHandler* Handler =
+					Blueprint->GetInheritableComponentHandler(true);
+				if (!Handler)
+				{
+					Result.Error = TEXT("Could not create an inheritable component handler");
+					return Result;
+				}
+				Handler->Modify();
+				Result.Template = Handler->CreateOverridenComponentTemplate(Key);
+				if (!Result.Template)
+				{
+					Result.Error = TEXT("Could not create an inherited component override template");
+					return Result;
+				}
+				Result.Template->Modify();
+				Result.Source = TEXT("ich_override");
+				Result.bHasLocalOverride = true;
+				Result.bWritable = true;
+				SetArchetype(Result);
+				return Result;
+			}
+
+			Result.Template = DeclaringNode->ComponentTemplate;
+			Result.Source = TEXT("inherited_scs");
+			Result.bWritable = false;
+			SetArchetype(Result);
+			return Result;
+		}
+
+		const AActor* TargetCDO = Blueprint->GeneratedClass
+			? Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject())
+			: nullptr;
+		if (UActorComponent* Component = FindActorComponent(TargetCDO, ComponentFName))
+		{
+			Result.Template = Component;
+			Result.Source = TEXT("local_cdo");
+			Result.bWritable = true;
+			Result.DeclaringBlueprint = Blueprint;
+			const AActor* ParentCDO = Blueprint->ParentClass
+				? Cast<AActor>(Blueprint->ParentClass->GetDefaultObject())
+				: nullptr;
+			Result.bInherited = FindActorComponent(ParentCDO, ComponentFName) != nullptr;
+			SetArchetype(Result);
+			return Result;
+		}
+
+		for (UClass* Class = Blueprint->ParentClass; Class; Class = Class->GetSuperClass())
+		{
+			const AActor* ParentCDO = Cast<AActor>(Class->GetDefaultObject());
+			if (UActorComponent* Component = FindActorComponent(ParentCDO, ComponentFName))
+			{
+				Result.Template = Component;
+				Result.Source = TEXT("parent_fallback");
+				Result.bInherited = true;
+				Result.bWritable = false;
+				Result.DeclaringBlueprint = BlueprintForClass(Class);
+				SetArchetype(Result);
+				return Result;
+			}
+		}
+
+		Result.Error = FString::Printf(TEXT("Component '%s' was not found"), *ComponentName);
+		return Result;
+	}
+
+	FBridgeComponentResolution ToPublic(const FString& Name, const FResolved& Resolved)
+	{
+		FBridgeComponentResolution Result;
+		Result.Name = Name;
+		Result.bFound = Resolved.Template != nullptr;
+		Result.bWritable = Resolved.bWritable;
+		Result.bIsInherited = Resolved.bInherited;
+		Result.bHasLocalOverride = Resolved.bHasLocalOverride;
+		Result.Source = Resolved.Source;
+		Result.Error = Resolved.Error;
+		if (Resolved.Template)
+		{
+			Result.ComponentClass = Resolved.Template->GetClass()->GetName();
+			Result.TemplatePath = Resolved.Template->GetPathName();
+		}
+		if (Resolved.Archetype)
+		{
+			Result.ArchetypePath = Resolved.Archetype->GetPathName();
+		}
+		if (Resolved.DeclaringBlueprint)
+		{
+			Result.DeclaringBlueprintPath = Resolved.DeclaringBlueprint->GetPathName();
+		}
+		return Result;
+	}
 }
 
 template <typename T>
@@ -487,62 +704,123 @@ TArray<FBridgeComponentInfo> UUnrealBridgeBlueprintLibrary::GetBlueprintComponen
 	UBlueprint* BP = LoadBP(BlueprintPath);
 	if (!BP) return Result;
 
-	// Components from SimpleConstructionScript (this BP's own components)
-	USimpleConstructionScript* SCS = BP->SimpleConstructionScript;
-	if (SCS)
+	TSet<FName> AddedNames;
+	auto AddResolvedNode = [&](USCS_Node* Node)
 	{
-		const TArray<USCS_Node*>& AllNodes = SCS->GetAllNodes();
-		for (const USCS_Node* Node : AllNodes)
+		if (!Node || Node->GetVariableName().IsNone()
+			|| AddedNames.Contains(Node->GetVariableName()))
 		{
-			if (!Node || !Node->ComponentClass) continue;
+			return;
+		}
+		const FString Name = Node->GetVariableName().ToString();
+		const BridgeBlueprintComponentResolver::FResolved Resolved =
+			BridgeBlueprintComponentResolver::Resolve(BP, Name, false);
+		if (!Resolved.Template)
+		{
+			return;
+		}
+		FBridgeComponentInfo Info;
+		Info.Name = Name;
+		Info.ComponentClass = Resolved.Template->GetClass()->GetName();
+		Info.bIsInherited = Resolved.bInherited;
+		Info.Source = Resolved.Source;
+		Info.DeclaringBlueprintPath = Resolved.DeclaringBlueprint
+			? Resolved.DeclaringBlueprint->GetPathName() : FString();
+		Info.TemplatePath = Resolved.Template->GetPathName();
+		Info.bHasLocalOverride = Resolved.bHasLocalOverride;
+		if (!Node->ParentComponentOrVariableName.IsNone())
+		{
+			Info.ParentName = Node->ParentComponentOrVariableName.ToString();
+		}
+		if (Resolved.DeclaringBlueprint && Resolved.DeclaringBlueprint->SimpleConstructionScript)
+		{
+			Info.bIsRoot = Resolved.DeclaringBlueprint->SimpleConstructionScript
+				->GetRootNodes().Contains(Node);
+		}
+		AddedNames.Add(Node->GetVariableName());
+		Result.Add(MoveTemp(Info));
+	};
 
-			FBridgeComponentInfo Info;
-			Info.Name = Node->GetVariableName().ToString();
-			Info.ComponentClass = Node->ComponentClass->GetName();
-			Info.bIsInherited = false;
-
-			// Find parent
-			if (Node->ParentComponentOrVariableName != NAME_None)
-			{
-				Info.ParentName = Node->ParentComponentOrVariableName.ToString();
-			}
-			else
-			{
-				// Check if it's a root node
-				const TArray<USCS_Node*>& RootNodes = SCS->GetRootNodes();
-				Info.bIsRoot = RootNodes.Contains(Node);
-			}
-
-			Result.Add(Info);
+	if (BP->SimpleConstructionScript)
+	{
+		for (USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
+		{
+			AddResolvedNode(Node);
+		}
+	}
+	for (UClass* Class = BP->ParentClass; Class; Class = Class->GetSuperClass())
+	{
+		UBlueprint* ParentBlueprint = BridgeBlueprintComponentResolver::BlueprintForClass(Class);
+		if (!ParentBlueprint || !ParentBlueprint->SimpleConstructionScript)
+		{
+			continue;
+		}
+		for (USCS_Node* Node : ParentBlueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			AddResolvedNode(Node);
 		}
 	}
 
-	// Inherited components from parent CDO
-	const UClass* SuperClass = BP->ParentClass;
-	if (SuperClass)
+	const AActor* ActorCDO = BP->GeneratedClass
+		? Cast<AActor>(BP->GeneratedClass->GetDefaultObject())
+		: (BP->ParentClass ? Cast<AActor>(BP->ParentClass->GetDefaultObject()) : nullptr);
+	if (ActorCDO)
 	{
-		const UObject* SuperCDO = SuperClass->GetDefaultObject();
-		if (SuperCDO)
+		TArray<UActorComponent*> Components;
+		ActorCDO->GetComponents(Components);
+		for (UActorComponent* Component : Components)
 		{
-			TArray<UActorComponent*> InheritedComponents;
-			// Get components from the parent CDO
-			if (const AActor* ActorCDO = Cast<AActor>(SuperCDO))
+			if (!Component || AddedNames.Contains(Component->GetFName()))
 			{
-				ActorCDO->GetComponents(InheritedComponents);
-				for (const UActorComponent* Comp : InheritedComponents)
+				continue;
+			}
+			const FString Name = Component->GetName();
+			const BridgeBlueprintComponentResolver::FResolved Resolved =
+				BridgeBlueprintComponentResolver::Resolve(BP, Name, false);
+			if (!Resolved.Template)
+			{
+				continue;
+			}
+			FBridgeComponentInfo Info;
+			Info.Name = Name;
+			Info.ComponentClass = Resolved.Template->GetClass()->GetName();
+			Info.bIsInherited = Resolved.bInherited;
+			Info.Source = Resolved.Source;
+			Info.DeclaringBlueprintPath = Resolved.DeclaringBlueprint
+				? Resolved.DeclaringBlueprint->GetPathName() : FString();
+			Info.TemplatePath = Resolved.Template->GetPathName();
+			Info.bHasLocalOverride = Resolved.bHasLocalOverride;
+			if (const USceneComponent* SceneComponent = Cast<USceneComponent>(Resolved.Template))
+			{
+				if (const USceneComponent* Parent = SceneComponent->GetAttachParent())
 				{
-					FBridgeComponentInfo Info;
-					Info.Name = Comp->GetName();
-					Info.ComponentClass = Comp->GetClass()->GetName();
-					Info.bIsInherited = true;
-					Info.bIsRoot = (Comp == ActorCDO->GetRootComponent());
-					Result.Add(Info);
+					Info.ParentName = Parent->GetName();
 				}
 			}
+			Info.bIsRoot = Component == ActorCDO->GetRootComponent();
+			AddedNames.Add(Component->GetFName());
+			Result.Add(MoveTemp(Info));
 		}
 	}
 
 	return Result;
+}
+
+FBridgeComponentResolution UUnrealBridgeBlueprintLibrary::ResolveBlueprintComponent(
+	const FString& BlueprintPath,
+	const FString& ComponentName)
+{
+	UBlueprint* BP = LoadBP(BlueprintPath);
+	if (!BP)
+	{
+		FBridgeComponentResolution Result;
+		Result.Name = ComponentName;
+		Result.Error = FString::Printf(TEXT("Blueprint '%s' could not be loaded"), *BlueprintPath);
+		return Result;
+	}
+	return BridgeBlueprintComponentResolver::ToPublic(
+		ComponentName,
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, false));
 }
 
 // ─── Interfaces ──────────────────────────────────────────────
@@ -1202,43 +1480,11 @@ TArray<FBridgePropertyValue> UUnrealBridgeBlueprintLibrary::GetComponentProperty
 	UBlueprint* BP = LoadBP(BlueprintPath);
 	if (!BP) return Result;
 
-	UActorComponent* Template = nullptr;
-
-	// Search SCS components
-	if (BP->SimpleConstructionScript)
-	{
-		for (USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
-		{
-			if (Node && Node->GetVariableName().ToString() == ComponentName)
-			{
-				Template = Node->ComponentTemplate;
-				break;
-			}
-		}
-	}
-
-	// Search inherited components on CDO
-	if (!Template && BP->GeneratedClass)
-	{
-		if (AActor* ActorCDO = Cast<AActor>(BP->GeneratedClass->GetDefaultObject()))
-		{
-			TArray<UActorComponent*> Components;
-			ActorCDO->GetComponents(Components);
-			for (UActorComponent* Comp : Components)
-			{
-				if (Comp && Comp->GetName() == ComponentName)
-				{
-					Template = Comp;
-					break;
-				}
-			}
-		}
-	}
-
-	if (!Template) return Result;
-
-	// Compare against component class CDO
-	const UObject* CompCDO = Template->GetClass()->GetDefaultObject();
+	const BridgeBlueprintComponentResolver::FResolved Resolved =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, false);
+	UActorComponent* Template = Resolved.Template;
+	const UObject* Archetype = Resolved.Archetype;
+	if (!Template || !Archetype) return Result;
 
 	for (TFieldIterator<FProperty> It(Template->GetClass()); It; ++It)
 	{
@@ -1247,14 +1493,14 @@ TArray<FBridgePropertyValue> UUnrealBridgeBlueprintLibrary::GetComponentProperty
 		if (Prop->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient)) continue;
 
 		const void* TemplateVal = Prop->ContainerPtrToValuePtr<void>(Template);
-		const void* CDOVal = Prop->ContainerPtrToValuePtr<void>(CompCDO);
+		const void* ArchetypeVal = Prop->ContainerPtrToValuePtr<void>(Archetype);
 
-		if (!Prop->Identical(TemplateVal, CDOVal))
+		if (!Prop->Identical(TemplateVal, ArchetypeVal))
 		{
 			FBridgePropertyValue PV;
 			PV.Name = Prop->GetName();
 			PV.Type = PropertyTypeToString(Prop);
-			Prop->ExportTextItem_Direct(PV.Value, TemplateVal, nullptr, nullptr, PPF_None);
+			Prop->ExportTextItem_Direct(PV.Value, TemplateVal, ArchetypeVal, Template, PPF_None);
 
 			if (const FString* Cat = Prop->FindMetaData(TEXT("Category")))
 				PV.Category = *Cat;
@@ -1441,21 +1687,96 @@ bool UUnrealBridgeBlueprintLibrary::SetComponentProperty(
 	const FString& BlueprintPath, const FString& ComponentName,
 	const FString& PropertyName, const FString& Value)
 {
+	return SetResolvedComponentProperty(
+		BlueprintPath, ComponentName, PropertyName, Value).bSuccess;
+}
+
+FBridgeComponentPropertyWriteResult UUnrealBridgeBlueprintLibrary::SetResolvedComponentProperty(
+	const FString& BlueprintPath,
+	const FString& ComponentName,
+	const FString& PropertyName,
+	const FString& Value)
+{
+	FBridgeComponentPropertyWriteResult Result;
+	Result.PropertyName = PropertyName;
 	UBlueprint* BP = LoadBP(BlueprintPath);
-	if (!BP) return false;
+	if (!BP)
+	{
+		Result.Error = FString::Printf(TEXT("Blueprint '%s' could not be loaded"), *BlueprintPath);
+		return Result;
+	}
 
-	UActorComponent* Template = FindOwnedComponentTemplate(BP, ComponentName);
-	if (!Template) return false;
+	const BridgeBlueprintComponentResolver::FResolved ReadResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, false);
+	Result.Resolution = BridgeBlueprintComponentResolver::ToPublic(ComponentName, ReadResolution);
+	if (!ReadResolution.Template)
+	{
+		Result.Error = ReadResolution.Error;
+		return Result;
+	}
 
-	FProperty* Prop = Template->GetClass()->FindPropertyByName(FName(*PropertyName));
-	if (!Prop) return false;
+	FProperty* ReadProperty = ReadResolution.Template->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (!ReadProperty)
+	{
+		Result.Error = FString::Printf(TEXT("Property '%s' was not found on component class '%s'"),
+			*PropertyName, *ReadResolution.Template->GetClass()->GetName());
+		return Result;
+	}
+	if (ReadProperty->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient))
+	{
+		Result.Error = FString::Printf(TEXT("Property '%s' is transient and cannot be written"), *PropertyName);
+		return Result;
+	}
 
-	void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Template);
-	if (!Prop->ImportText_Direct(*Value, ValuePtr, Template, PPF_None))
-		return false;
+	void* ValidationValue = FMemory::Malloc(ReadProperty->GetSize(), ReadProperty->GetMinAlignment());
+	ReadProperty->InitializeValue(ValidationValue);
+	ReadProperty->CopyCompleteValue(
+		ValidationValue,
+		ReadProperty->ContainerPtrToValuePtr<void>(ReadResolution.Template));
+	const bool bValueIsValid =
+		ReadProperty->ImportText_Direct(*Value, ValidationValue, ReadResolution.Template, PPF_None) != nullptr;
+	ReadProperty->DestroyValue(ValidationValue);
+	FMemory::Free(ValidationValue);
+	if (!bValueIsValid)
+	{
+		Result.Error = FString::Printf(TEXT("Value '%s' is invalid for property '%s'"), *Value, *PropertyName);
+		return Result;
+	}
 
+	const FScopedTransaction Transaction(
+		NSLOCTEXT("UnrealBridge", "SetResolvedComponentProperty", "Set Blueprint Component Property"));
+	const BridgeBlueprintComponentResolver::FResolved WriteResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, true);
+	Result.Resolution = BridgeBlueprintComponentResolver::ToPublic(ComponentName, WriteResolution);
+	if (!WriteResolution.Template || !WriteResolution.bWritable)
+	{
+		Result.Error = WriteResolution.Error.IsEmpty()
+			? TEXT("The resolved component template is not writable")
+			: WriteResolution.Error;
+		return Result;
+	}
+
+	FProperty* WriteProperty = WriteResolution.Template->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (!WriteProperty)
+	{
+		Result.Error = TEXT("The property disappeared while creating the component override");
+		return Result;
+	}
+	BP->Modify();
+	WriteResolution.Template->Modify();
+	void* ValuePtr = WriteProperty->ContainerPtrToValuePtr<void>(WriteResolution.Template);
+	WriteProperty->ExportTextItem_Direct(Result.PreviousValue, ValuePtr, nullptr,
+		WriteResolution.Template, PPF_None);
+	if (!WriteProperty->ImportText_Direct(*Value, ValuePtr, WriteResolution.Template, PPF_None))
+	{
+		Result.Error = TEXT("The validated value could not be applied to the writable component template");
+		return Result;
+	}
+	WriteProperty->ExportTextItem_Direct(Result.CurrentValue, ValuePtr, nullptr,
+		WriteResolution.Template, PPF_None);
 	FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
-	return true;
+	Result.bSuccess = true;
+	return Result;
 }
 
 bool UUnrealBridgeBlueprintLibrary::SetBlueprintStaticMeshComponentAsset(
@@ -1464,14 +1785,22 @@ bool UUnrealBridgeBlueprintLibrary::SetBlueprintStaticMeshComponentAsset(
 	const FString& StaticMeshPath)
 {
 	UBlueprint* BP = LoadBP(BlueprintPath);
-	UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(FindOwnedComponentTemplate(BP, ComponentName));
 	UStaticMesh* Mesh = LoadBridgeAsset<UStaticMesh>(StaticMeshPath);
-	if (!BP || !Component || !Mesh)
+	const BridgeBlueprintComponentResolver::FResolved ReadResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, false);
+	if (!BP || !Mesh || !Cast<UStaticMeshComponent>(ReadResolution.Template))
 	{
 		return false;
 	}
 
 	const FScopedTransaction Transaction(NSLOCTEXT("UnrealBridge", "SetBlueprintStaticMesh", "Set Blueprint Static Mesh"));
+	const BridgeBlueprintComponentResolver::FResolved WriteResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, true);
+	UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(WriteResolution.Template);
+	if (!Component || !WriteResolution.bWritable)
+	{
+		return false;
+	}
 	BP->Modify();
 	Component->Modify();
 	Component->SetStaticMesh(Mesh);
@@ -1486,14 +1815,22 @@ bool UUnrealBridgeBlueprintLibrary::SetBlueprintMeshComponentMaterial(
 	const FString& MaterialPath)
 {
 	UBlueprint* BP = LoadBP(BlueprintPath);
-	UMeshComponent* Component = Cast<UMeshComponent>(FindOwnedComponentTemplate(BP, ComponentName));
 	UMaterialInterface* Material = LoadBridgeAsset<UMaterialInterface>(MaterialPath);
-	if (!BP || !Component || !Material || MaterialIndex < 0)
+	const BridgeBlueprintComponentResolver::FResolved ReadResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, false);
+	if (!BP || !Material || MaterialIndex < 0 || !Cast<UMeshComponent>(ReadResolution.Template))
 	{
 		return false;
 	}
 
 	const FScopedTransaction Transaction(NSLOCTEXT("UnrealBridge", "SetBlueprintMaterial", "Set Blueprint Component Material"));
+	const BridgeBlueprintComponentResolver::FResolved WriteResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, true);
+	UMeshComponent* Component = Cast<UMeshComponent>(WriteResolution.Template);
+	if (!Component || !WriteResolution.bWritable)
+	{
+		return false;
+	}
 	BP->Modify();
 	Component->Modify();
 	Component->SetMaterial(MaterialIndex, Material);
@@ -1509,13 +1846,21 @@ bool UUnrealBridgeBlueprintLibrary::SetBlueprintPrimitiveComponentPhysics(
 	const FString& CollisionProfileName)
 {
 	UBlueprint* BP = LoadBP(BlueprintPath);
-	UPrimitiveComponent* Component = Cast<UPrimitiveComponent>(FindOwnedComponentTemplate(BP, ComponentName));
-	if (!BP || !Component)
+	const BridgeBlueprintComponentResolver::FResolved ReadResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, false);
+	if (!BP || !Cast<UPrimitiveComponent>(ReadResolution.Template))
 	{
 		return false;
 	}
 
 	const FScopedTransaction Transaction(NSLOCTEXT("UnrealBridge", "SetBlueprintPhysics", "Set Blueprint Component Physics"));
+	const BridgeBlueprintComponentResolver::FResolved WriteResolution =
+		BridgeBlueprintComponentResolver::Resolve(BP, ComponentName, true);
+	UPrimitiveComponent* Component = Cast<UPrimitiveComponent>(WriteResolution.Template);
+	if (!Component || !WriteResolution.bWritable)
+	{
+		return false;
+	}
 	BP->Modify();
 	Component->Modify();
 	if (!CollisionProfileName.IsEmpty())
@@ -10512,6 +10857,16 @@ namespace BridgeBPSnapshotImpl
 	static FString BuildSnapshotJson(UEdGraph* Graph)
 	{
 		if (!Graph) return FString();
+		// Refuse oversized snapshots instead of presenting a partial graph as complete.
+		if (Graph->Nodes.Num() > 4096) return FString();
+		int32 PinCount = 0, LinkCount = 0, PropertyChars = 0;
+		for (const UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (!Node) continue;
+			PinCount += Node->Pins.Num();
+			for (const UEdGraphPin* Pin : Node->Pins) if (Pin) LinkCount += Pin->LinkedTo.Num();
+		}
+		if (PinCount > 65536 || LinkCount > 262144) return FString();
 
 		// Sort nodes by guid for determinism.
 		TArray<UEdGraphNode*> Nodes;
@@ -10524,6 +10879,11 @@ namespace BridgeBPSnapshotImpl
 		});
 
 		TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+		Root->SetStringField(TEXT("schema"), TEXT("unrealbridge.graph_snapshot.v2"));
+		Root->SetStringField(TEXT("graph"), Graph->GetName());
+		Root->SetStringField(TEXT("graph_guid"), Graph->GraphGuid.ToString(EGuidFormats::Digits));
+		Root->SetBoolField(TEXT("complete"), true);
+		Root->SetStringField(TEXT("coverage"), TEXT("Topology, pin types/defaults and non-transient reflected node properties; not an asset serialization or import contract."));
 
 		TArray<TSharedPtr<FJsonValue>> NodeArr;
 		NodeArr.Reserve(Nodes.Num());
@@ -10539,6 +10899,59 @@ namespace BridgeBPSnapshotImpl
 				N->GetNodeTitle(ENodeTitleType::ListView).ToString());
 			NObj->SetNumberField(TEXT("x"), N->NodePosX);
 			NObj->SetNumberField(TEXT("y"), N->NodePosY);
+			NObj->SetStringField(TEXT("class_path"), N->GetClass()->GetPathName());
+			// Preserve unknown node-class fields as Unreal property text. Skip the
+			// base graph/object bookkeeping and transient caches, which are not edits.
+			TSharedRef<FJsonObject> Extensions = MakeShared<FJsonObject>();
+			for (TFieldIterator<FProperty> It(N->GetClass()); It; ++It)
+			{
+				const FProperty* Property = *It;
+				const UClass* Owner = Cast<UClass>(Property->GetOwnerStruct());
+				if (!Owner || !Owner->IsChildOf(UEdGraphNode::StaticClass()) ||
+					Owner == UEdGraphNode::StaticClass() || Property->HasAnyPropertyFlags(CPF_Transient | CPF_Deprecated | CPF_SkipSerialization)) continue;
+				FString Value;
+				Property->ExportTextItem_Direct(Value, Property->ContainerPtrToValuePtr<void>(N), nullptr, N, PPF_None);
+				PropertyChars += Value.Len();
+				if (Value.Len() > 65536 || PropertyChars > 4 * 1024 * 1024) return FString();
+				Extensions->SetStringField(Owner->GetPathName() + TEXT(".") + Property->GetName(), Value);
+			}
+			NObj->SetObjectField(TEXT("extensions"), Extensions);
+			TArray<TSharedPtr<FJsonValue>> Pins;
+			for (const UEdGraphPin* Pin : N->Pins)
+			{
+				if (!Pin) continue;
+				TSharedRef<FJsonObject> P = MakeShared<FJsonObject>();
+				P->SetStringField(TEXT("id"), Pin->PinId.ToString(EGuidFormats::Digits));
+				P->SetStringField(TEXT("persistent_id"), Pin->PersistentGuid.ToString(EGuidFormats::Digits));
+				P->SetStringField(TEXT("name"), Pin->PinName.ToString());
+				P->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Output ? TEXT("output") : TEXT("input"));
+				TSharedRef<FJsonObject> Type = MakeShared<FJsonObject>();
+				if (!FJsonObjectConverter::UStructToJsonObject(FEdGraphPinType::StaticStruct(), &Pin->PinType, Type, 0, CPF_Deprecated)) return FString();
+				P->SetObjectField(TEXT("type"), Type);
+				P->SetStringField(TEXT("default_value"), Pin->DefaultValue);
+				P->SetStringField(TEXT("autogenerated_default"), Pin->AutogeneratedDefaultValue);
+				P->SetStringField(TEXT("default_object"), GetPathNameSafe(Pin->DefaultObject));
+				FString DefaultText;
+				FTextStringHelper::WriteToBuffer(DefaultText, Pin->DefaultTextValue);
+				P->SetStringField(TEXT("default_text"), DefaultText);
+				P->SetStringField(TEXT("parent"), Pin->ParentPin ? Pin->ParentPin->PinId.ToString(EGuidFormats::Digits) : FString());
+				P->SetBoolField(TEXT("orphaned"), Pin->bOrphanedPin);
+				P->SetBoolField(TEXT("default_readonly"), Pin->bDefaultValueIsReadOnly);
+				P->SetBoolField(TEXT("default_ignored"), Pin->bDefaultValueIsIgnored);
+				TArray<TSharedPtr<FJsonValue>> Subpins, Links;
+				for (const UEdGraphPin* Sub : Pin->SubPins) if (Sub) Subpins.Add(MakeShared<FJsonValueString>(Sub->PinId.ToString(EGuidFormats::Digits)));
+				P->SetArrayField(TEXT("subpins"), Subpins);
+				TArray<FString> LinkKeys;
+				for (const UEdGraphPin* Link : Pin->LinkedTo)
+				{
+					if (Link && Link->GetOwningNode()) LinkKeys.Add(Link->GetOwningNode()->NodeGuid.ToString(EGuidFormats::Digits) + TEXT(":") + Link->PinId.ToString(EGuidFormats::Digits));
+				}
+				LinkKeys.Sort();
+				for (const FString& Key : LinkKeys) Links.Add(MakeShared<FJsonValueString>(Key));
+				P->SetArrayField(TEXT("links"), Links);
+				Pins.Add(MakeShared<FJsonValueObject>(P));
+			}
+			NObj->SetArrayField(TEXT("pins"), Pins);
 			NodeArr.Add(MakeShared<FJsonValueObject>(NObj));
 
 			// Collect wires from output pins only so each wire is emitted once.
@@ -10584,6 +10997,7 @@ namespace BridgeBPSnapshotImpl
 		TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
 			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);
 		FJsonSerializer::Serialize(Root, Writer);
+		if (FTCHARToUTF8(*Out).Length() > 8 * 1024 * 1024) return FString();
 		return Out;
 	}
 }

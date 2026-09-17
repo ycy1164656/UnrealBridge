@@ -44,6 +44,7 @@ import os
 import socket
 import struct
 import sys
+import threading
 import uuid
 from logging.handlers import RotatingFileHandler
 
@@ -78,6 +79,8 @@ DEFAULT_TIMEOUT = 30
 
 _MANIFEST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge_manifest.json")
 _HANDSHAKE_CACHE: "dict | None" = None
+_HANDSHAKE_STAMP = None
+_HANDSHAKE_LOCK = threading.Lock()
 
 AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024   # 5 MB per file
 AUDIT_LOG_BACKUPS = 3                    # 4 files total (1 active + 3 backups) = 20 MB hard cap
@@ -86,23 +89,32 @@ AUDIT_LOG_NAME = "exec.log"
 
 def client_handshake() -> dict:
     """Return the generated client contract attached to every executable request."""
-    global _HANDSHAKE_CACHE
-    if _HANDSHAKE_CACHE is not None:
+    global _HANDSHAKE_CACHE, _HANDSHAKE_STAMP
+    with _HANDSHAKE_LOCK:
+        try:
+            stat = os.stat(_MANIFEST_PATH)
+            stamp = (os.path.abspath(_MANIFEST_PATH), stat.st_mtime_ns, stat.st_size)
+            if _HANDSHAKE_CACHE is not None and _HANDSHAKE_STAMP == stamp:
+                return dict(_HANDSHAKE_CACHE)
+            with open(_MANIFEST_PATH, encoding="utf-8") as stream:
+                manifest = json.load(stream)
+            after = os.stat(_MANIFEST_PATH)
+            if (after.st_mtime_ns, after.st_size) != stamp[1:]:
+                raise ValueError("manifest changed during handshake read")
+        except (OSError, ValueError):
+            # Never retain an old executable contract when the file disappears
+            # or is half-written. The server will reject this empty handshake.
+            manifest, stamp = {}, None
+        manifest_hash = str(manifest.get("manifest_hash", ""))
+        _HANDSHAKE_CACHE = {
+            "protocol_version": int(manifest.get("protocol_version", 0) or 0),
+            "plugin_version": str(manifest.get("plugin_version", "")),
+            "registry_hash": str(manifest.get("registry_hash", "")),
+            "manifest_hash": manifest_hash,
+            "wrapper_version": manifest_hash[:16],
+        }
+        _HANDSHAKE_STAMP = stamp
         return dict(_HANDSHAKE_CACHE)
-    try:
-        with open(_MANIFEST_PATH, encoding="utf-8") as stream:
-            manifest = json.load(stream)
-    except (OSError, json.JSONDecodeError):
-        manifest = {}
-    manifest_hash = str(manifest.get("manifest_hash", ""))
-    _HANDSHAKE_CACHE = {
-        "protocol_version": int(manifest.get("protocol_version", 0) or 0),
-        "plugin_version": str(manifest.get("plugin_version", "")),
-        "registry_hash": str(manifest.get("registry_hash", "")),
-        "manifest_hash": manifest_hash,
-        "wrapper_version": manifest_hash[:16],
-    }
-    return dict(_HANDSHAKE_CACHE)
 
 
 # ── Resolution: turn CLI args into a (host, port, token, project_path) tuple ─

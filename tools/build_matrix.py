@@ -43,6 +43,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(errors="replace")
 
 ERROR_PATTERNS = [
+    re.compile(r"^Unhandled exception:", re.IGNORECASE | re.MULTILINE),
     re.compile(r"error C\d+:"),
     re.compile(r"error LNK\d+:"),
     re.compile(r"\): error :"),

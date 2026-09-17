@@ -1,4 +1,5 @@
 #include "UnrealBridgeGameplayLibrary.h"
+#include "UnrealBridgeWorldLibrary.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -23,6 +24,7 @@
 #include "GameFramework/GameStateBase.h"
 #include "Sound/SoundBase.h"
 #include "Engine/Engine.h"
+#include "Engine/LocalPlayer.h"
 #include "DrawDebugHelpers.h"
 #include "Components/PrimitiveComponent.h"
 #include "NavigationSystem.h"
@@ -34,6 +36,7 @@
 #include "JsonObjectConverter.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
 #include "Framework/Application/SlateApplication.h"
 #include "InputCoreTypes.h"
 #include "InputActionValue.h"
@@ -67,7 +70,10 @@ namespace BridgeAgentImpl
 	// needing to match UE frame rate.
 	struct FStickyEntry
 	{
+		TWeakObjectPtr<UWorld> World;
+		TWeakObjectPtr<APlayerController> Controller;
 		TWeakObjectPtr<UInputAction> Action;
+		FString ActionPath;
 		FVector Value = FVector::ZeroVector;
 		// Auto-clear deadline in world-time seconds. <= 0 means "no deadline,
 		// caller will call ClearStickyInput". Set by TriggerInputAction() so
@@ -78,7 +84,13 @@ namespace BridgeAgentImpl
 	static TMap<FString, FStickyEntry> GStickyInputs;
 	static FTSTicker::FDelegateHandle GStickyTicker;
 
+	static FString StickyKey(UWorld* World, const FString& ActionPath)
+	{
+		return FString::Printf(TEXT("%u:%s"), World->GetUniqueID(), *ActionPath);
+	}
+
 	static bool StickyTick(float /*Dt*/);
+	static UWorld* GetNavWorld();
 
 	static void EnsureStickyTickerRunning()
 	{
@@ -119,21 +131,45 @@ namespace BridgeAgentImpl
 		}
 	}
 
-	/** Return the active PIE world, or nullptr if not playing. */
+	/** Return the only active PIE world. Multiple worlds require an explicit selector. */
 	UWorld* GetPIEWorld()
 	{
 		if (!GEditor)
 		{
 			return nullptr;
 		}
+		if (BridgeWorldContext::HasScope())
+		{
+			UWorld* Scoped = BridgeWorldContext::GetScopedWorld();
+			return Scoped && Scoped->WorldType == EWorldType::PIE && Scoped->HasBegunPlay() ? Scoped : nullptr;
+		}
+		UWorld* Match = nullptr;
+		static TWeakObjectPtr<UWorld> LastAmbiguousFirstWorld;
+		static TWeakObjectPtr<UWorld> LastAmbiguousSecondWorld;
 		for (const FWorldContext& Ctx : GEditor->GetWorldContexts())
 		{
-			if (Ctx.WorldType == EWorldType::PIE && Ctx.World() && Ctx.World()->HasBegunPlay())
+			if (Ctx.WorldType == EWorldType::PIE && IsValid(Ctx.World()))
 			{
-				return Ctx.World();
+				if (Match && Match != Ctx.World())
+				{
+					// Persistent input tickers can ask every frame: report once per
+					// pair, while refusing every ambiguous request.
+					if (LastAmbiguousFirstWorld.Get() != Match || LastAmbiguousSecondWorld.Get() != Ctx.World())
+					{
+						UE_LOG(LogUnrealBridgeAgent, Warning,
+							TEXT("Default PIE world is ambiguous ('%s' and '%s'); an explicit world selector is required."),
+							*Match->GetPathName(), *Ctx.World()->GetPathName());
+						LastAmbiguousFirstWorld = Match;
+						LastAmbiguousSecondWorld = Ctx.World();
+					}
+					return nullptr;
+				}
+				Match = Ctx.World();
 			}
 		}
-		return nullptr;
+		LastAmbiguousFirstWorld.Reset();
+		LastAmbiguousSecondWorld.Reset();
+		return Match && Match->HasBegunPlay() ? Match : nullptr;
 	}
 
 	APawn* GetPlayerPawn(UWorld* World)
@@ -161,7 +197,7 @@ bool UUnrealBridgeGameplayLibrary::GetAgentObservation(
 	UWorld* World = BridgeAgentImpl::GetPIEWorld();
 	if (!World)
 	{
-		UE_LOG(LogUnrealBridgeAgent, Verbose, TEXT("GetAgentObservation: PIE not running"));
+		UE_LOG(LogUnrealBridgeAgent, Verbose, TEXT("GetAgentObservation: PIE not running or default world is ambiguous"));
 		return false;
 	}
 	APawn* Pawn = BridgeAgentImpl::GetPlayerPawn(World);
@@ -274,16 +310,7 @@ bool UUnrealBridgeGameplayLibrary::FindNavPath(
 	OutWaypoints.Reset();
 	OutPathLength = 0.0f;
 
-	UWorld* World = BridgeAgentImpl::GetPIEWorld();
-	if (!World)
-	{
-		// Fall back to the editor world so callers can plan paths without
-		// being in PIE (useful for test rigs that pre-compute routes).
-		if (GEditor)
-		{
-			World = GEditor->GetEditorWorldContext(false).World();
-		}
-	}
+	UWorld* World = BridgeAgentImpl::GetNavWorld();
 	if (!World)
 	{
 		UE_LOG(LogUnrealBridgeAgent, Warning, TEXT("FindNavPath: no world available"));
@@ -447,30 +474,24 @@ namespace BridgeAgentImpl
 			return true; // nothing to do — but keep ticker alive, caller may add more
 		}
 
-		UWorld* World = GetPIEWorld();
-		if (!World)
-		{
-			// PIE not running: drop all sticky entries, leaving a fresh
-			// slate for the next PIE session.
-			GStickyInputs.Reset();
-			return true;
-		}
-		APlayerController* PC = World->GetFirstPlayerController();
-		if (!PC || !PC->GetLocalPlayer())
-		{
-			return true;
-		}
-		UEnhancedInputLocalPlayerSubsystem* Subsystem =
-			PC->GetLocalPlayer()->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
-		if (!Subsystem)
-		{
-			return true;
-		}
-
-		const double WorldNow = World->GetTimeSeconds();
 		for (TMap<FString, FStickyEntry>::TIterator It(GStickyInputs); It; ++It)
 		{
 			FStickyEntry& E = It->Value;
+			UWorld* World = E.World.Get();
+			APlayerController* PC = E.Controller.Get();
+			if (!World || World->bIsTearingDown || !PC || PC->GetWorld() != World || !PC->GetLocalPlayer()
+				|| PC->GetLocalPlayer()->GetPlayerController(World) != PC)
+			{
+				It.RemoveCurrent();
+				continue;
+			}
+			UEnhancedInputLocalPlayerSubsystem* Subsystem = PC->GetLocalPlayer()->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+			if (!Subsystem)
+			{
+				It.RemoveCurrent();
+				continue;
+			}
+			const double WorldNow = World->GetTimeSeconds();
 			if (E.AutoClearWorldTime > 0.0 && WorldNow >= E.AutoClearWorldTime)
 			{
 				UE_LOG(LogUnrealBridgeAgent, Verbose,
@@ -496,6 +517,9 @@ namespace BridgeAgentImpl
 
 bool UUnrealBridgeGameplayLibrary::SetStickyInput(const FString& InputActionPath, const FVector& AxisValue)
 {
+	UWorld* World = BridgeAgentImpl::GetPIEWorld();
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	if (!PC || !PC->GetLocalPlayer()) return false;
 	UInputAction* Action = LoadObject<UInputAction>(nullptr, *InputActionPath);
 	if (!Action)
 	{
@@ -504,9 +528,12 @@ bool UUnrealBridgeGameplayLibrary::SetStickyInput(const FString& InputActionPath
 		return false;
 	}
 	BridgeAgentImpl::FStickyEntry Entry;
+	Entry.World = World;
+	Entry.Controller = PC;
 	Entry.Action = Action;
+	Entry.ActionPath = InputActionPath;
 	Entry.Value = AxisValue;
-	BridgeAgentImpl::GStickyInputs.Add(InputActionPath, Entry);
+	BridgeAgentImpl::GStickyInputs.Add(BridgeAgentImpl::StickyKey(World, InputActionPath), Entry);
 	BridgeAgentImpl::EnsureStickyTickerRunning();
 	UE_LOG(LogUnrealBridgeAgent, Log, TEXT("SetStickyInput: %s = (%.2f, %.2f, %.2f)"),
 		*InputActionPath, AxisValue.X, AxisValue.Y, AxisValue.Z);
@@ -515,15 +542,17 @@ bool UUnrealBridgeGameplayLibrary::SetStickyInput(const FString& InputActionPath
 
 bool UUnrealBridgeGameplayLibrary::ClearStickyInput(const FString& InputActionPath)
 {
-	if (InputActionPath.IsEmpty())
+	UWorld* World = BridgeAgentImpl::GetPIEWorld();
+	if (!World) return false;
+	int32 Removed = 0;
+	for (auto It = BridgeAgentImpl::GStickyInputs.CreateIterator(); It; ++It)
 	{
-		const int32 N = BridgeAgentImpl::GStickyInputs.Num();
-		BridgeAgentImpl::GStickyInputs.Reset();
-		UE_LOG(LogUnrealBridgeAgent, Log, TEXT("ClearStickyInput: removed all %d entries"), N);
-		BridgeAgentImpl::StopStickyTickerIfIdle();
-		return N > 0;
+		if (It.Value().World.Get() == World && (InputActionPath.IsEmpty() || It.Value().ActionPath == InputActionPath))
+		{
+			It.RemoveCurrent();
+			++Removed;
+		}
 	}
-	const int32 Removed = BridgeAgentImpl::GStickyInputs.Remove(InputActionPath);
 	BridgeAgentImpl::StopStickyTickerIfIdle();
 	return Removed > 0;
 }
@@ -651,12 +680,9 @@ bool UUnrealBridgeGameplayLibrary::TriggerInputAction(const FString& InputAction
 		return false;
 	}
 
-	BridgeAgentImpl::FStickyEntry Entry;
-	Entry.Action = Action;
-	Entry.Value = FVector(1.0, 0.0, 0.0);
+	if (!SetStickyInput(InputActionPath, FVector(1.0, 0.0, 0.0))) return false;
+	BridgeAgentImpl::FStickyEntry& Entry = BridgeAgentImpl::GStickyInputs.FindChecked(BridgeAgentImpl::StickyKey(World, InputActionPath));
 	Entry.AutoClearWorldTime = World->GetTimeSeconds() + EffectiveHold;
-	BridgeAgentImpl::GStickyInputs.Add(InputActionPath, Entry);
-	BridgeAgentImpl::EnsureStickyTickerRunning();
 	UE_LOG(LogUnrealBridgeAgent, Log,
 		TEXT("TriggerInputAction: '%s' held for %.3fs (auto-clear)"),
 		*InputActionPath, EffectiveHold);
@@ -722,11 +748,14 @@ int32 UUnrealBridgeGameplayLibrary::GetStickyInputs(TArray<FString>& OutPaths, T
 {
 	OutPaths.Reset();
 	OutValues.Reset();
+	UWorld* World = BridgeAgentImpl::GetPIEWorld();
+	if (!World) return 0;
 	OutPaths.Reserve(BridgeAgentImpl::GStickyInputs.Num());
 	OutValues.Reserve(BridgeAgentImpl::GStickyInputs.Num());
 	for (const TPair<FString, BridgeAgentImpl::FStickyEntry>& Pair : BridgeAgentImpl::GStickyInputs)
 	{
-		OutPaths.Add(Pair.Key);
+		if (Pair.Value.World.Get() != World || !Pair.Value.Controller.IsValid()) continue;
+		OutPaths.Add(Pair.Value.ActionPath);
 		OutValues.Add(Pair.Value.Value);
 	}
 	return OutPaths.Num();
@@ -745,30 +774,7 @@ namespace BridgeAgentImpl
 	/** Find an actor by FName or visible label in the PIE world. */
 	static AActor* FindPIEActor(UWorld* World, const FString& NameOrLabel)
 	{
-		if (!World || NameOrLabel.IsEmpty())
-		{
-			return nullptr;
-		}
-		const FName AsFName(*NameOrLabel);
-		for (TActorIterator<AActor> It(World); It; ++It)
-		{
-			AActor* A = *It;
-			if (!A) continue;
-			if (A->GetFName() == AsFName)
-			{
-				return A;
-			}
-		}
-		// Fall back to label match.
-		for (TActorIterator<AActor> It(World); It; ++It)
-		{
-			AActor* A = *It;
-			if (A && A->GetActorLabel() == NameOrLabel)
-			{
-				return A;
-			}
-		}
-		return nullptr;
+		return World ? BridgeWorldContext::ResolveActor(NameOrLabel, World) : nullptr;
 	}
 
 	/** Camera viewpoint of the first PIE player controller. */
@@ -906,9 +912,17 @@ namespace BridgeAgentImpl
 	/** PIE world first, editor world second (matches FindNavPath behaviour). */
 	static UWorld* GetNavWorld()
 	{
+		if (BridgeWorldContext::HasScope()) return BridgeWorldContext::GetScopedWorld();
 		if (UWorld* W = GetPIEWorld())
 		{
 			return W;
+		}
+		if (GEngine)
+		{
+			for (const FWorldContext& Context : GEngine->GetWorldContexts())
+			{
+				if (Context.WorldType == EWorldType::PIE && Context.World()) return nullptr;
+			}
 		}
 		return GEditor ? GEditor->GetEditorWorldContext(false).World() : nullptr;
 	}
@@ -1888,11 +1902,7 @@ namespace BridgeAgentImpl
 	/** Find first APlayerStart in PIE world, falling back to editor world. */
 	static AActor* FindPlayerStart()
 	{
-		UWorld* World = GetPIEWorld();
-		if (!World)
-		{
-			World = GEditor ? GEditor->GetEditorWorldContext(false).World() : nullptr;
-		}
+		UWorld* World = GetNavWorld();
 		if (!World) return nullptr;
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
@@ -3109,11 +3119,7 @@ namespace BridgeInputRuntimeImpl
 {
 	static UEnhancedInputLocalPlayerSubsystem* GetActiveSubsystem()
 	{
-		UWorld* World = nullptr;
-		for (const FWorldContext& Ctx : GEngine->GetWorldContexts())
-		{
-			if (Ctx.WorldType == EWorldType::PIE) { World = Ctx.World(); break; }
-		}
+		UWorld* World = BridgeAgentImpl::GetPIEWorld();
 		if (!World) return nullptr;
 		APlayerController* PC = World->GetFirstPlayerController();
 		if (!PC) return nullptr;
@@ -3189,13 +3195,16 @@ int32 UUnrealBridgeGameplayLibrary::DumpInjectedInputQueue(
 	TArray<FString>& OutPaths, TArray<FVector>& OutValues, TArray<float>& OutHoldRemainingSeconds)
 {
 	OutPaths.Reset(); OutValues.Reset(); OutHoldRemainingSeconds.Reset();
+	UWorld* World = BridgeAgentImpl::GetPIEWorld();
+	if (!World) return 0;
 	for (const TPair<FString, BridgeAgentImpl::FStickyEntry>& Pair : BridgeAgentImpl::GStickyInputs)
 	{
-		OutPaths.Add(Pair.Key);
+		if (Pair.Value.World.Get() != World || !Pair.Value.Controller.IsValid()) continue;
+		OutPaths.Add(Pair.Value.ActionPath);
 		OutValues.Add(Pair.Value.Value);
 		OutHoldRemainingSeconds.Add(
 			Pair.Value.AutoClearWorldTime > 0.0
-				? static_cast<float>(Pair.Value.AutoClearWorldTime - FApp::GetCurrentTime())
+				? FMath::Max(0.0f, static_cast<float>(Pair.Value.AutoClearWorldTime - World->GetTimeSeconds()))
 				: -1.f);
 	}
 	return OutPaths.Num();

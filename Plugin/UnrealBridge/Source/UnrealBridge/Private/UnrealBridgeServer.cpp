@@ -1,5 +1,6 @@
 #include "UnrealBridgeServer.h"
 #include "UnrealBridgeChangeSetLibrary.h"
+#include "UnrealBridgeWorldLibrary.h"
 #include "IPythonScriptPlugin.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -668,8 +669,8 @@ void FUnrealBridgeServer::HandleClient(FSocket* ClientSocket, const FString& End
 		Response->SetBoolField(TEXT("ue58_toolset_registry_compiled"), UnrealBridgeUE58Adapter::IsCompiled());
 		Response->SetBoolField(TEXT("official_toolset_registry_available"), UnrealBridgeUE58Adapter::IsRegistryAvailable());
 		Response->SetStringField(TEXT("official_toolset_provider"), TEXT("EpicToolsetRegistry"));
-		Response->SetStringField(TEXT("official_toolset_execution"), TEXT("durable-polling-job"));
-		Response->SetStringField(TEXT("official_toolset_policy"), TEXT("schema-declared-read-only-only"));
+		Response->SetStringField(TEXT("official_toolset_execution"), TEXT("exact-policy-read-runtime-transactional"));
+		Response->SetStringField(TEXT("official_toolset_policy"), TEXT("exact-id-schema-hash-deny-by-default"));
 		Response->SetStringField(TEXT("official_toolset_save_behavior"), TEXT("never"));
 		Response->SetStringField(TEXT("official_toolset_cancel_mode"), TEXT("bridge-polling-only"));
 	}
@@ -1204,6 +1205,8 @@ bool FUnrealBridgeServer::TickConsumeQueue(float /*DeltaTime*/)
 	}
 
 	bExecInFlight = true;
+	BridgeWorldContext::BeginExecution();
+	ON_SCOPE_EXIT { BridgeWorldContext::EndExecution(); };
 	const bool bPollStep = Job->IsPollStep();
 	BridgeChangeSetRuntime::BeginJob(Job->JobId);
 	FBridgeJobResult Result = DoPythonExec(Job->GetExecutableScript());

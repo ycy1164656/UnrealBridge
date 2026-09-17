@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Export and classify the live UE 5.8 ToolsetRegistry catalog.
+"""Export, classify, and render the UE 5.8 ToolsetRegistry catalog.
 
-The output is deliberately conservative: only tools explicitly described as
-read-only are allowed through the generic bridge adapter. Mutating, unknown,
-and destructive tools remain discoverable but require a typed UnrealBridge
-wrapper (or are rejected) before they can enter production workflows.
+The first pass records Epic's schema and a conservative side-effect inference.
+The rendered 3.0 matrix then overlays the exact, schema-hashed execution policy
+produced by ``build_ue58_access_policy.py``.  Unknown tools remain denied, while
+audited read-only, runtime-interaction, and transactional operations are shown
+on their real execution planes.
 """
 
 from __future__ import annotations
@@ -24,6 +25,13 @@ REPO = Path(__file__).resolve().parents[1]
 POLICY = REPO / "tools" / "ue58_toolset_policy.json"
 DEFAULT_FIXTURE = REPO / "tests" / "fixtures" / "ue58-toolsets.json"
 DEFAULT_MATRIX = REPO / "docs" / "ue58-toolset-capability-matrix.md"
+DEFAULT_ACCESS_POLICY = (
+    REPO
+    / "Plugin"
+    / "UnrealBridge"
+    / "Resources"
+    / "ue58_official_tool_policy.json"
+)
 DEFAULT_BRIDGE = (
     REPO / ".claude" / "skills" / "unreal-bridge" / "scripts" / "bridge.py"
 )
@@ -205,8 +213,23 @@ def normalize_catalog(
     }
 
 
-def render_markdown(audit: dict[str, Any]) -> str:
-    counts = audit["classification_counts"]
+def render_markdown(
+    audit: dict[str, Any], access_policy: dict[str, Any] | None = None
+) -> str:
+    policy_tools = (access_policy or {}).get("tools", {})
+    access_counts = Counter(
+        str(item.get("access") or "Rejected") for item in policy_tools.values()
+    )
+    if not policy_tools:
+        access_counts.update(audit["classification_counts"])
+
+    per_toolset_access: dict[str, Counter[str]] = {}
+    for key, item in policy_tools.items():
+        toolset_name = str(item.get("toolset") or key.split("|", 1)[0])
+        per_toolset_access.setdefault(toolset_name, Counter()).update(
+            [str(item.get("access") or "Rejected")]
+        )
+
     lines = [
         "# UE 5.8.1 ToolsetRegistry 能力审计",
         "",
@@ -215,26 +238,33 @@ def render_markdown(audit: dict[str, Any]) -> str:
         f"> Provider：`{audit['provider']}`",
         f"> Toolset：`{audit['toolset_count']}`；Tool：`{audit['tool_count']}`",
         "",
-        "通用执行策略：只有官方 schema 明确标记为只读的 `Reuse` 工具可通过通用适配器执行；"
-        "`Wrap`、`Extend` 和 `Reject` 均保持阻止，直至存在经过验证的 typed wrapper。",
+        "3.0 执行策略：每个允许项都绑定精确 `toolset|tool` 和结构化 input schema hash；"
+        "未出现在策略中的工具默认拒绝。只读查询、运行态交互和非破坏性资产修改分别走"
+        " `ReadOnly`、`RuntimeInteraction`、`TransactionalSync` 执行面；任意文件/路径、"
+        "Source Control、显式保存和破坏性操作保持 `Rejected`。",
         "",
         "## 汇总",
         "",
-        "| Reuse | Wrap | Extend | Reject |",
+        "| ReadOnly | RuntimeInteraction | TransactionalSync | Rejected |",
         "|---:|---:|---:|---:|",
-        f"| {counts.get('Reuse', 0)} | {counts.get('Wrap', 0)} | {counts.get('Extend', 0)} | {counts.get('Reject', 0)} |",
+        f"| {access_counts.get('ReadOnly', 0)} | {access_counts.get('RuntimeInteraction', 0)} | "
+        f"{access_counts.get('TransactionalSync', 0)} | {access_counts.get('Rejected', 0)} |",
+        "",
+        "允许执行不等于允许保存：三个可执行面都固定 `save_behavior=Never`；"
+        "`TransactionalSync` 还要求显式目标、立即完成和 ChangeSet 回滚能力，"
+        "`RuntimeInteraction` 要求调用者显式 opt-in。",
         "",
         "## Toolset 明细",
         "",
-        "| Toolset | Module | Version | Tools | Reuse | Wrap | Extend | Reject |",
+        "| Toolset | Module | Version | Tools | ReadOnly | Runtime | Transactional | Rejected |",
         "|---|---|---|---:|---:|---:|---:|---:|",
     ]
     for toolset in audit["toolsets"]:
-        item_counts = toolset["classification_counts"]
+        item_counts = per_toolset_access.get(toolset["name"], Counter())
         lines.append(
             f"| `{toolset['name']}` | `{toolset['module']}` | `{toolset['version']}` | {toolset['tool_count']} | "
-            f"{item_counts.get('Reuse', 0)} | {item_counts.get('Wrap', 0)} | "
-            f"{item_counts.get('Extend', 0)} | {item_counts.get('Reject', 0)} |"
+            f"{item_counts.get('ReadOnly', 0)} | {item_counts.get('RuntimeInteraction', 0)} | "
+            f"{item_counts.get('TransactionalSync', 0)} | {item_counts.get('Rejected', 0)} |"
         )
 
     lines.extend(["", "## 工具级决策", ""])
@@ -243,18 +273,34 @@ def render_markdown(audit: dict[str, Any]) -> str:
             [
                 f"### {toolset['name']}",
                 "",
-                "| Tool | 分类 | 副作用推断 | 风险 | Bridge | 保存 | 依据 |",
+                "| Tool | 初始分类 | 风险 | 3.0 执行面 | 保存 | 约束与依据 |",
                 "|---|---|---|---|---|---|---|",
             ]
         )
         for tool in toolset["tools"]:
-            reason = tool["reason"].replace("|", "\\|").replace("\n", " ")
+            key = f"{toolset['name']}|{tool['tool']}"
+            decision = policy_tools.get(key, {})
+            access = str(decision.get("access") or tool["bridge_execution"])
+            save_behavior = str(decision.get("save_behavior") or tool["save_behavior"])
+            reason = str(decision.get("reason") or tool["reason"])
+            constraints: list[str] = []
+            if decision.get("requires_explicit_targets"):
+                constraints.append("explicit targets")
+            if decision.get("requires_immediate_completion"):
+                constraints.append("immediate completion")
+            if decision.get("requires_runtime_opt_in"):
+                constraints.append("runtime opt-in")
+            if decision.get("schema_sha256"):
+                constraints.append(f"schema `{str(decision['schema_sha256'])[:12]}…`")
+            if constraints:
+                reason = f"{reason} Constraints: {', '.join(constraints)}."
+            reason = reason.replace("|", "\\|").replace("\n", " ")
             lines.append(
-                f"| `{tool['tool']}` | {tool['classification']} | {tool['inferred_side_effects']} | {tool['risk']} | "
-                f"{tool['bridge_execution']} | {tool['save_behavior']} | {reason} |"
+                f"| `{tool['tool']}` | {tool['classification']} | {tool['risk']} | "
+                f"{access} | {save_behavior} | {reason} |"
             )
         if not toolset["tools"]:
-            lines.append("| _(none)_ | Extend | Unknown | Unknown | BlockedPendingAudit | ProviderDefined | 无工具 schema。 |")
+            lines.append("| _(none)_ | Extend | Unknown | Rejected | Rejected | 无工具 schema。 |")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -310,32 +356,42 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", help="Running Editor .uproject path/name used for discovery")
     parser.add_argument("--catalog", type=Path, help="Use a previously exported raw catalog JSON")
+    parser.add_argument(
+        "--audit-fixture",
+        type=Path,
+        help="Render an already-normalized audit fixture without contacting the Editor",
+    )
     parser.add_argument("--engine-version", default="5.8.1", help="Engine version for --catalog mode")
     parser.add_argument("--bridge", type=Path, default=DEFAULT_BRIDGE)
     parser.add_argument("--policy", type=Path, default=POLICY)
+    parser.add_argument("--access-policy", type=Path, default=DEFAULT_ACCESS_POLICY)
     parser.add_argument("--fixture-out", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("--matrix-out", type=Path, default=DEFAULT_MATRIX)
     parser.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args()
 
-    if bool(args.project) == bool(args.catalog):
-        parser.error("provide exactly one of --project or --catalog")
+    if sum(bool(value) for value in (args.project, args.catalog, args.audit_fixture)) != 1:
+        parser.error("provide exactly one of --project, --catalog, or --audit-fixture")
 
     policy = _load_json(args.policy)
-    if args.catalog:
+    if args.audit_fixture:
+        audit = _load_json(args.audit_fixture)
+    elif args.catalog:
         catalog = _load_json(args.catalog)
         engine_version = args.engine_version
     else:
         catalog, engine_version = _catalog_from_editor(args.bridge, args.project, args.timeout)
 
-    audit = normalize_catalog(catalog, policy, engine_version=engine_version)
-    args.fixture_out.parent.mkdir(parents=True, exist_ok=True)
-    args.fixture_out.write_text(
-        json.dumps(audit, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    if not args.audit_fixture:
+        audit = normalize_catalog(catalog, policy, engine_version=engine_version)
+        args.fixture_out.parent.mkdir(parents=True, exist_ok=True)
+        args.fixture_out.write_text(
+            json.dumps(audit, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    access_policy = _load_json(args.access_policy)
     args.matrix_out.parent.mkdir(parents=True, exist_ok=True)
-    args.matrix_out.write_text(render_markdown(audit), encoding="utf-8")
+    args.matrix_out.write_text(render_markdown(audit, access_policy), encoding="utf-8")
     print(
         json.dumps(
             {
@@ -345,6 +401,7 @@ def main() -> int:
                 "toolsets": audit["toolset_count"],
                 "tools": audit["tool_count"],
                 "classifications": audit["classification_counts"],
+                "access": access_policy.get("access_counts", {}),
             },
             ensure_ascii=False,
         )

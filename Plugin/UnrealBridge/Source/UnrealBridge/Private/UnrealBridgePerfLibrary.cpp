@@ -53,6 +53,8 @@
 #include "Components/SkinnedMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstance.h"
+#include "MaterialDomain.h"
 #include "HAL/IConsoleManager.h"
 
 // GAverageFPS / GAverageMS are defined in UnrealEngine.cpp and have no
@@ -3101,6 +3103,13 @@ TArray<FBridgeTraceChannelInfo> UUnrealBridgePerfLibrary::ListTraceChannels()
 #include "TraceServices/Model/NetProfiler.h"
 #include "TraceServices/Model/CookProfilerProvider.h"
 #include "TraceServices/Containers/Tables.h"
+#include "Async/Async.h"
+#include "Dom/JsonObject.h"
+#include "JsonObjectConverter.h"
+#include "Misc/Guid.h"
+#include "Misc/ScopeLock.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -3115,6 +3124,14 @@ TArray<FBridgeTraceChannelInfo> UUnrealBridgePerfLibrary::ListTraceChannels()
 #include "Materials/MaterialExpression.h"
 #include "MaterialEditingLibrary.h"
 #include "ProfilingDebugging/MiscTrace.h"  // ETraceFrameType
+
+namespace BridgePerfAsyncImpl
+{
+	// Each bounded worker owns its analysis session. No provider pointer crosses to GT.
+	static thread_local const TAtomic<bool>* Cancellation = nullptr;
+	static thread_local bool bTruncated = false;
+	static bool IsCancelled() { return Cancellation && Cancellation->Load(); }
+}
 
 namespace BridgePerfTraceImpl
 {
@@ -3171,6 +3188,7 @@ namespace BridgePerfTraceImpl
 			[&Aggregates, TimingProv, TimerCount](double StartTime, double EndTime, uint32 /*Depth*/,
 				const TraceServices::FTimingProfilerEvent& Event) -> TraceServices::EEventEnumerate
 			{
+				if (BridgePerfAsyncImpl::IsCancelled()) return TraceServices::EEventEnumerate::Stop;
 				const double DurMs = (EndTime - StartTime) * 1000.0;
 				if (!FMath::IsFinite(DurMs) || DurMs < 0.0)
 				{
@@ -3231,41 +3249,16 @@ FBridgePerfTraceSummary UUnrealBridgePerfLibrary::ParseTraceToSummary(
 {
 	FBridgePerfTraceSummary Out;
 	Out.TracePath = UtracePath;
-	IFileManager& FileMgr = IFileManager::Get();
-	if (!FileMgr.FileExists(*UtracePath))
-	{
-		Out.Error = FString::Printf(TEXT("trace file not found: %s"), *UtracePath);
-		return Out;
-	}
-	Out.FileSizeBytes = FileMgr.FileSize(*UtracePath);
-	if (Out.FileSizeBytes <= 0)
-	{
-		Out.Error = FString::Printf(TEXT("trace file empty or unreadable: %s"), *UtracePath);
-		return Out;
-	}
+	Out.Error = TEXT("synchronous_analysis_disabled: use StartTraceAnalysis, then poll GetTraceAnalysisStatus/GetTraceAnalysisResult");
+	return Out;
+}
 
-	ITraceServicesModule* TSModule = FModuleManager::LoadModulePtr<ITraceServicesModule>("TraceServices");
-	if (!TSModule)
-	{
-		Out.Error = TEXT("TraceServices module load failed");
-		return Out;
-	}
-	TSharedPtr<TraceServices::IAnalysisService> AnalysisService = TSModule->GetAnalysisService();
-	if (!AnalysisService)
-	{
-		Out.Error = TEXT("TraceServices::IAnalysisService unavailable");
-		return Out;
-	}
-
-	// Synchronous Analyze — blocks until the trace stream is fully consumed.
-	TSharedPtr<const TraceServices::IAnalysisSession> Session = AnalysisService->Analyze(*UtracePath);
-	if (!Session.IsValid())
-	{
-		Out.Error = TEXT("Analyze() returned null session — trace probably malformed");
-		return Out;
-	}
-
-	// All provider reads must happen inside a read scope. RAII helper.
+static FBridgePerfTraceSummary BridgePerfTrace_BuildPerformance(
+	const TSharedPtr<const TraceServices::IAnalysisSession>& Session, const FString& UtracePath, int64 FileSizeBytes, int32 TopN, int32 TopNPerThread, int32 TopNCounters)
+{
+	FBridgePerfTraceSummary Out;
+	Out.TracePath = UtracePath;
+	Out.FileSizeBytes = FileSizeBytes;
 	TraceServices::FAnalysisSessionReadScope ReadScope(*Session);
 
 	// Diagnostics provider — engine version + project metadata.
@@ -3328,6 +3321,7 @@ FBridgePerfTraceSummary UUnrealBridgePerfLibrary::ParseTraceToSummary(
 		// bit-inverted metadata ids (TimerIndex >= TimerCount).
 		TMap<uint32, FString> TimerNames;
 		uint32 TimerCount = 0;
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
 		TimingProv->ReadTimers(
 			[&TimerNames, &TimerCount](const TraceServices::ITimingProfilerTimerReader& Reader)
 			{
@@ -3342,6 +3336,19 @@ FBridgePerfTraceSummary UUnrealBridgePerfLibrary::ParseTraceToSummary(
 					}
 				}
 			});
+#else
+		const TraceServices::ITimingProfilerTimerReader& Reader = TimingProv->GetTimerReader();
+		TimerCount = Reader.GetTimerCount();
+		TimerNames.Reserve(TimerCount);
+		for (uint32 i = 0; i < TimerCount; ++i)
+		{
+			if (const TraceServices::FTimingProfilerTimer* Timer = Reader.GetTimer(i))
+			{
+				const TCHAR* Name = Timer->Name ? Timer->Name : TEXT("<unnamed>");
+				TimerNames.Add(Timer->Id, FString(Name));
+			}
+		}
+#endif
 
 		// ── Global CPU aggregate (every CPU timeline merged) ──
 		TMap<uint32, FAgg> CpuAggregates;
@@ -3364,6 +3371,8 @@ FBridgePerfTraceSummary UUnrealBridgePerfLibrary::ParseTraceToSummary(
 			ThreadProv.EnumerateThreads(
 				[&Out, &TimingProv, &TimerNames, TimerCount, ClampedTopNPerThread](const TraceServices::FThreadInfo& Thread)
 				{
+					if (BridgePerfAsyncImpl::IsCancelled()) return;
+					if (Out.PerThreadHotScopes.Num() >= 128) { BridgePerfAsyncImpl::bTruncated = true; return; }
 					uint32 TimelineIdx = ~0u;
 					if (!TimingProv->GetCpuThreadTimelineIndex(Thread.Id, TimelineIdx))
 					{
@@ -3465,6 +3474,7 @@ FBridgePerfTraceSummary UUnrealBridgePerfLibrary::ParseTraceToSummary(
 		CounterProv.EnumerateCounters(
 			[&AllCounters](uint32 CounterId, const TraceServices::ICounter& Counter)
 			{
+				if (BridgePerfAsyncImpl::IsCancelled()) return;
 				FBridgePerfCounter Row;
 				Row.Name              = Counter.GetName()        ? FString(Counter.GetName())        : FString();
 				Row.Group             = Counter.GetGroup()       ? FString(Counter.GetGroup())       : FString();
@@ -3596,40 +3606,16 @@ FBridgePerfAllocSummary UUnrealBridgePerfLibrary::ParseAllocTraceToSummary(const
 {
 	FBridgePerfAllocSummary Out;
 	Out.TracePath = UtracePath;
+	Out.Error = TEXT("synchronous_analysis_disabled: use StartTraceAnalysis, then poll GetTraceAnalysisStatus/GetTraceAnalysisResult");
+	return Out;
+}
 
-	IFileManager& FileMgr = IFileManager::Get();
-	if (!FileMgr.FileExists(*UtracePath))
-	{
-		Out.Error = FString::Printf(TEXT("trace file not found: %s"), *UtracePath);
-		return Out;
-	}
-	Out.FileSizeBytes = FileMgr.FileSize(*UtracePath);
-	if (Out.FileSizeBytes <= 0)
-	{
-		Out.Error = FString::Printf(TEXT("trace file empty or unreadable: %s"), *UtracePath);
-		return Out;
-	}
-
-	ITraceServicesModule* TSModule = FModuleManager::LoadModulePtr<ITraceServicesModule>("TraceServices");
-	if (!TSModule)
-	{
-		Out.Error = TEXT("TraceServices module load failed");
-		return Out;
-	}
-	TSharedPtr<TraceServices::IAnalysisService> AnalysisService = TSModule->GetAnalysisService();
-	if (!AnalysisService)
-	{
-		Out.Error = TEXT("TraceServices::IAnalysisService unavailable");
-		return Out;
-	}
-
-	TSharedPtr<const TraceServices::IAnalysisSession> Session = AnalysisService->Analyze(*UtracePath);
-	if (!Session.IsValid())
-	{
-		Out.Error = TEXT("Analyze() returned null session — trace probably malformed");
-		return Out;
-	}
-
+static FBridgePerfAllocSummary BridgePerfTrace_BuildAlloc(
+	const TSharedPtr<const TraceServices::IAnalysisSession>& Session, const FString& UtracePath, int64 FileSizeBytes)
+{
+	FBridgePerfAllocSummary Out;
+	Out.TracePath = UtracePath;
+	Out.FileSizeBytes = FileSizeBytes;
 	TraceServices::FAnalysisSessionReadScope ReadScope(*Session);
 
 	const TraceServices::IAllocationsProvider* AllocProv = TraceServices::ReadAllocationsProvider(*Session);
@@ -3707,6 +3693,8 @@ FBridgePerfAllocSummary UUnrealBridgePerfLibrary::ParseAllocTraceToSummary(const
 	AllocProv->EnumerateTags(
 		[&Out](const TCHAR* Name, const TCHAR* /*FullPath_unused*/, TraceServices::TagIdType Id, TraceServices::TagIdType ParentId)
 		{
+			if (BridgePerfAsyncImpl::IsCancelled()) return;
+			if (Out.Tags.Num() >= 128) { BridgePerfAsyncImpl::bTruncated = true; return; }
 			FBridgePerfAllocTag Row;
 			Row.Id        = static_cast<int32>(Id);
 			Row.ParentId  = ParentId == ~uint32(0) ? -1 : static_cast<int32>(ParentId);
@@ -3732,38 +3720,16 @@ FBridgePerfNetSummary UUnrealBridgePerfLibrary::ParseNetTraceToSummary(const FSt
 {
 	FBridgePerfNetSummary Out;
 	Out.TracePath = UtracePath;
+	Out.Error = TEXT("synchronous_analysis_disabled: use StartTraceAnalysis, then poll GetTraceAnalysisStatus/GetTraceAnalysisResult");
+	return Out;
+}
 
-	IFileManager& FileMgr = IFileManager::Get();
-	if (!FileMgr.FileExists(*UtracePath))
-	{
-		Out.Error = FString::Printf(TEXT("trace file not found: %s"), *UtracePath);
-		return Out;
-	}
-	Out.FileSizeBytes = FileMgr.FileSize(*UtracePath);
-	if (Out.FileSizeBytes <= 0)
-	{
-		Out.Error = FString::Printf(TEXT("trace file empty or unreadable: %s"), *UtracePath);
-		return Out;
-	}
-
-	ITraceServicesModule* TSModule = FModuleManager::LoadModulePtr<ITraceServicesModule>("TraceServices");
-	if (!TSModule)
-	{
-		Out.Error = TEXT("TraceServices module load failed");
-		return Out;
-	}
-	TSharedPtr<TraceServices::IAnalysisService> AnalysisService = TSModule->GetAnalysisService();
-	if (!AnalysisService)
-	{
-		Out.Error = TEXT("TraceServices::IAnalysisService unavailable");
-		return Out;
-	}
-	TSharedPtr<const TraceServices::IAnalysisSession> Session = AnalysisService->Analyze(*UtracePath);
-	if (!Session.IsValid())
-	{
-		Out.Error = TEXT("Analyze() returned null session — trace probably malformed");
-		return Out;
-	}
+static FBridgePerfNetSummary BridgePerfTrace_BuildNet(
+	const TSharedPtr<const TraceServices::IAnalysisSession>& Session, const FString& UtracePath, int64 FileSizeBytes)
+{
+	FBridgePerfNetSummary Out;
+	Out.TracePath = UtracePath;
+	Out.FileSizeBytes = FileSizeBytes;
 	TraceServices::FAnalysisSessionReadScope ReadScope(*Session);
 
 	const TraceServices::INetProfilerProvider* NetProv = TraceServices::ReadNetProfilerProvider(*Session);
@@ -3790,11 +3756,13 @@ FBridgePerfNetSummary UUnrealBridgePerfLibrary::ParseNetTraceToSummary(const FSt
 	}
 
 	Out.bHasEvents = true;
-	Out.GameInstances.Reserve(InstCount);
+	Out.GameInstances.Reserve(FMath::Min(InstCount, 128u));
 
 	NetProv->ReadGameInstances(
 		[NetProv, &Out](const TraceServices::FNetProfilerGameInstance& Instance)
 		{
+			if (BridgePerfAsyncImpl::IsCancelled()) return;
+			if (Out.GameInstances.Num() >= 128) { BridgePerfAsyncImpl::bTruncated = true; return; }
 			FBridgePerfNetGameInstance Row;
 			Row.InstanceName             = Instance.InstanceName ? FString(Instance.InstanceName) : FString();
 			Row.bIsServer                = Instance.bIsServer;
@@ -3802,11 +3770,13 @@ FBridgePerfNetSummary UUnrealBridgePerfLibrary::ParseNetTraceToSummary(const FSt
 			Row.ObjectCount              = static_cast<int32>(NetProv->GetObjectCount(Instance.GameInstanceIndex));
 
 			const uint32 ConnCount = NetProv->GetConnectionCount(Instance.GameInstanceIndex);
-			Row.Connections.Reserve(ConnCount);
+			Row.Connections.Reserve(FMath::Min(ConnCount, 128u));
 
 			NetProv->ReadConnections(Instance.GameInstanceIndex,
 				[NetProv, &Row](const TraceServices::FNetProfilerConnection& Conn)
 				{
+					if (BridgePerfAsyncImpl::IsCancelled()) return;
+					if (Row.Connections.Num() >= 128) { BridgePerfAsyncImpl::bTruncated = true; return; }
 					FBridgePerfNetConnection ConnRow;
 					ConnRow.Name           = Conn.Name          ? FString(Conn.Name)          : FString();
 					ConnRow.AddressString  = Conn.AddressString ? FString(Conn.AddressString) : FString();
@@ -4042,6 +4012,10 @@ FBridgeGpuPassTimings UUnrealBridgePerfLibrary::GetPerPassGpuTimings()
 {
 	FBridgeGpuPassTimings Out;
 
+#if !UE_VERSION_OLDER_THAN(5, 8, 0)
+	Out.bAvailable = false;
+	Out.Diagnostic = TEXT("UE 5.8 uses the new GPU profiler — use Insights with gpu+rdg channels");
+#else
 #if HAS_GPU_STATS && (RHI_NEW_GPU_PROFILER == 0) && GPUPROFILERTRACE_ENABLED
 	if (!AreGPUStatsEnabled())
 	{
@@ -4094,6 +4068,7 @@ FBridgeGpuPassTimings UUnrealBridgePerfLibrary::GetPerPassGpuTimings()
 #else
 	Out.bAvailable = false;
 	Out.Diagnostic = TEXT("RHI_NEW_GPU_PROFILER active or HAS_GPU_STATS off — use Insights with gpu+rdg channels");
+#endif
 #endif
 
 	return Out;
@@ -4224,38 +4199,16 @@ FBridgePerfCookSummary UUnrealBridgePerfLibrary::ParseCookTraceToSummary(const F
 {
 	FBridgePerfCookSummary Out;
 	Out.TracePath = UtracePath;
+	Out.Error = TEXT("synchronous_analysis_disabled: use StartTraceAnalysis, then poll GetTraceAnalysisStatus/GetTraceAnalysisResult");
+	return Out;
+}
 
-	IFileManager& FileMgr = IFileManager::Get();
-	if (!FileMgr.FileExists(*UtracePath))
-	{
-		Out.Error = FString::Printf(TEXT("trace file not found: %s"), *UtracePath);
-		return Out;
-	}
-	Out.FileSizeBytes = FileMgr.FileSize(*UtracePath);
-	if (Out.FileSizeBytes <= 0)
-	{
-		Out.Error = FString::Printf(TEXT("trace file empty or unreadable: %s"), *UtracePath);
-		return Out;
-	}
-
-	ITraceServicesModule* TSModule = FModuleManager::LoadModulePtr<ITraceServicesModule>("TraceServices");
-	if (!TSModule)
-	{
-		Out.Error = TEXT("TraceServices module load failed");
-		return Out;
-	}
-	TSharedPtr<TraceServices::IAnalysisService> AnalysisService = TSModule->GetAnalysisService();
-	if (!AnalysisService)
-	{
-		Out.Error = TEXT("TraceServices::IAnalysisService unavailable");
-		return Out;
-	}
-	TSharedPtr<const TraceServices::IAnalysisSession> Session = AnalysisService->Analyze(*UtracePath);
-	if (!Session.IsValid())
-	{
-		Out.Error = TEXT("Analyze() returned null session — trace probably malformed");
-		return Out;
-	}
+static FBridgePerfCookSummary BridgePerfTrace_BuildCook(
+	const TSharedPtr<const TraceServices::IAnalysisSession>& Session, const FString& UtracePath, int64 FileSizeBytes, int32 TopN)
+{
+	FBridgePerfCookSummary Out;
+	Out.TracePath = UtracePath;
+	Out.FileSizeBytes = FileSizeBytes;
 	TraceServices::FAnalysisSessionReadScope ReadScope(*Session);
 
 	const TraceServices::ICookProfilerProvider* CookProv = TraceServices::ReadCookProfilerProvider(*Session);
@@ -4318,6 +4271,317 @@ FBridgePerfCookSummary UUnrealBridgePerfLibrary::ParseCookTraceToSummary(const F
 	return Out;
 }
 
+namespace BridgePerfAsyncImpl
+{
+	struct FAnalysisJob
+	{
+		FCriticalSection Mutex;
+		TAtomic<bool> bCancel{false};
+		TFuture<void> Worker;
+		FString Id, Path, Kind, State = TEXT("analyzing"), Error, ResultJson;
+		int64 FileSize = 0;
+		FDateTime FileTimestamp;
+		double Started = FPlatformTime::Seconds(), Finished = 0, LastAccess = Started;
+		bool bTerminal = false;
+	};
+	using FJobPtr = TSharedPtr<FAnalysisJob, ESPMode::ThreadSafe>;
+	static TMap<FString, FJobPtr> Jobs; // Registry is accessed only on GT.
+	static FString SessionId;
+	static bool bShuttingDown = false;
+	static constexpr int32 MaxRetainedJobs = 16;
+	static constexpr int64 MaxResultBytes = 1024 * 1024;
+
+	static FString Json(const TSharedRef<FJsonObject>& Object)
+	{
+		FString Text;
+		FJsonSerializer::Serialize(Object, TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Text));
+		return Text;
+	}
+	static TSharedRef<FJsonObject> Envelope(bool bOk)
+	{
+		auto Out = MakeShared<FJsonObject>();
+		Out->SetBoolField(TEXT("ok"), bOk);
+		Out->SetStringField(TEXT("schema"), TEXT("unrealbridge.trace_analysis.v1"));
+		Out->SetStringField(TEXT("editor_session_id"), SessionId);
+		return Out;
+	}
+	static FString Failure(const FString& Code)
+	{
+		auto Out = Envelope(false);
+		Out->SetStringField(TEXT("error_code"), Code);
+		return Json(Out);
+	}
+	static void Prune()
+	{
+		const double Now = FPlatformTime::Seconds();
+		for (auto It = Jobs.CreateIterator(); It; ++It)
+		{
+			if (It.Value()->Worker.IsReady() && Now - It.Value()->LastAccess > 900) It.RemoveCurrent();
+		}
+	}
+	static FJobPtr Find(const FString& Id)
+	{
+		Prune();
+		if (auto* Job = Jobs.Find(Id)) { (*Job)->LastAccess = FPlatformTime::Seconds(); return *Job; }
+		return nullptr;
+	}
+	static TSharedRef<FJsonObject> Snapshot(const FJobPtr& Job)
+	{
+		auto Out = Envelope(true);
+		FScopeLock Lock(&Job->Mutex);
+		Out->SetStringField(TEXT("analysis_id"), Job->Id);
+		Out->SetStringField(TEXT("state"), Job->State);
+		Out->SetStringField(TEXT("summary_kind"), Job->Kind);
+		Out->SetStringField(TEXT("trace_path"), Job->Path);
+		Out->SetNumberField(TEXT("file_size_bytes"), static_cast<double>(Job->FileSize));
+		Out->SetBoolField(TEXT("terminal"), Job->bTerminal);
+		Out->SetBoolField(TEXT("resources_released"), Job->bTerminal);
+		Out->SetBoolField(TEXT("cancel_requested"), Job->bCancel.Load());
+		Out->SetNumberField(TEXT("elapsed_seconds"), (Job->Finished ? Job->Finished : FPlatformTime::Seconds()) - Job->Started);
+		if (!Job->Error.IsEmpty()) Out->SetStringField(TEXT("error_code"), Job->Error);
+		return Out;
+	}
+	// Bound every exported array/string, including future summary fields. Never
+	// truncate serialized JSON bytes; return valid JSON with explicit coverage.
+	static void BoundValue(TSharedPtr<FJsonValue>& Value, int32 ArrayLimit)
+	{
+		if (!Value) return;
+		if (Value->Type == EJson::String)
+		{
+			const FString Text = Value->AsString();
+			if (Text.Len() > 1024) { Value = MakeShared<FJsonValueString>(Text.Left(1024)); bTruncated = true; }
+		}
+		else if (Value->Type == EJson::Array)
+		{
+			auto Rows = Value->AsArray();
+			if (Rows.Num() > ArrayLimit) { Rows.SetNum(ArrayLimit); bTruncated = true; }
+			for (auto& Row : Rows) BoundValue(Row, ArrayLimit);
+			Value = MakeShared<FJsonValueArray>(Rows);
+		}
+		else if (Value->Type == EJson::Object)
+		{
+			for (auto& Field : Value->AsObject()->Values) BoundValue(Field.Value, ArrayLimit);
+		}
+		else if (Value->Type == EJson::Number && !FMath::IsFinite(Value->AsNumber()))
+		{
+			Value = MakeShared<FJsonValueNull>(); bTruncated = true;
+		}
+	}
+	static void Run(const FJobPtr& Job, TSharedPtr<const TraceServices::IAnalysisSession> Session,
+		int32 TopN, int32 TopNPerThread, int32 TopNCounters)
+	{
+		check(!IsInGameThread());
+		Cancellation = &Job->bCancel;
+		bTruncated = false;
+		ON_SCOPE_EXIT { Cancellation = nullptr; };
+		FString FailureCode;
+		bool bStopped = false;
+		while (!Session->IsAnalysisComplete())
+		{
+			if (FPlatformTime::Seconds() - Job->Started > 300) FailureCode = TEXT("analysis_timeout");
+			if (IFileManager::Get().FileSize(*Job->Path) != Job->FileSize) FailureCode = TEXT("trace_changed_during_analysis");
+			if (!bStopped && (Job->bCancel.Load() || !FailureCode.IsEmpty()))
+			{
+				Session->Stop(false); bStopped = true;
+			}
+			FPlatformProcess::SleepNoStats(0.01f); // Worker only; no GT dependency.
+		}
+		Session->Wait(); // Also joins the processor after its active flag becomes false.
+		{
+			TraceServices::FAnalysisSessionReadScope Lock(*Session);
+			if (Session->GetDurationSeconds() <= 0) FailureCode = TEXT("trace_has_no_time_data");
+		}
+		TArray<TSharedPtr<FJsonValue>> Warnings;
+		{
+			auto Editable = ConstCastSharedPtr<TraceServices::IAnalysisSession>(Session);
+			TraceServices::FAnalysisSessionEditScope Lock(*Editable);
+			for (const auto& Message : Editable->DrainPendingMessages())
+			{
+				if (Message.Severity <= EMessageSeverity::Error) FailureCode = TEXT("trace_analysis_error");
+				if (Warnings.Num() < 16) Warnings.Add(MakeShared<FJsonValueString>(Message.Message.Left(1024)));
+				else bTruncated = true;
+			}
+		}
+		if (IFileManager::Get().FileSize(*Job->Path) != Job->FileSize ||
+			IFileManager::Get().GetTimeStamp(*Job->Path) != Job->FileTimestamp)
+		{
+			FailureCode = TEXT("trace_changed_during_analysis");
+		}
+		TSharedPtr<FJsonObject> Summary;
+		if (!Job->bCancel.Load() && FailureCode.IsEmpty())
+		{
+			{ FScopeLock Lock(&Job->Mutex); Job->State = TEXT("summarizing"); }
+			if (Job->Kind == TEXT("performance"))
+				Summary = FJsonObjectConverter::UStructToJsonObject(BridgePerfTrace_BuildPerformance(Session, Job->Path, Job->FileSize, TopN, TopNPerThread, TopNCounters));
+			else if (Job->Kind == TEXT("alloc"))
+				Summary = FJsonObjectConverter::UStructToJsonObject(BridgePerfTrace_BuildAlloc(Session, Job->Path, Job->FileSize));
+			else if (Job->Kind == TEXT("net"))
+				Summary = FJsonObjectConverter::UStructToJsonObject(BridgePerfTrace_BuildNet(Session, Job->Path, Job->FileSize));
+			else
+				Summary = FJsonObjectConverter::UStructToJsonObject(BridgePerfTrace_BuildCook(Session, Job->Path, Job->FileSize, TopN));
+			if (!Summary) FailureCode = TEXT("summary_serialization_failed");
+			else
+			{
+				FString SummaryWarning;
+				if (Summary->TryGetStringField(TEXT("error"), SummaryWarning) && !SummaryWarning.IsEmpty())
+					Warnings.Add(MakeShared<FJsonValueString>(SummaryWarning.Left(1024)));
+				if (Job->Kind != TEXT("performance") && !Summary->GetBoolField(TEXT("bHasEvents")))
+					Warnings.Add(MakeShared<FJsonValueString>(TEXT("requested_provider_has_no_events: channel may be absent")));
+			}
+		}
+		Session.Reset(); // Completion means the provider/session resources really are gone.
+		auto Out = Envelope(FailureCode.IsEmpty());
+		if (Summary)
+		{
+			TSharedPtr<FJsonValue> Value = MakeShared<FJsonValueObject>(Summary);
+			BoundValue(Value, 200);
+			Out->SetObjectField(TEXT("summary"), Summary);
+			// Reserve envelope/message space in the total 1 MiB response budget.
+			if (FTCHARToUTF8(*Json(Out)).Length() > MaxResultBytes - 128 * 1024) BoundValue(Value, 32);
+			if (FTCHARToUTF8(*Json(Out)).Length() > MaxResultBytes - 128 * 1024) { Out->RemoveField(TEXT("summary")); FailureCode = TEXT("summary_size_limit"); }
+		}
+		Out->SetArrayField(TEXT("warnings"), Warnings);
+		Out->SetBoolField(TEXT("truncated"), bTruncated);
+		Out->SetStringField(TEXT("summary_field_naming"), TEXT("ue_json_lower_camel_case"));
+		Out->SetStringField(TEXT("analysis_id"), Job->Id);
+		Out->SetBoolField(TEXT("terminal"), true);
+		Out->SetBoolField(TEXT("resources_released"), true);
+		Out->SetNumberField(TEXT("file_size_bytes"), static_cast<double>(Job->FileSize));
+		Out->SetNumberField(TEXT("elapsed_seconds"), FPlatformTime::Seconds() - Job->Started);
+		// Serialize the bounded payload outside the snapshot mutex. Cancellation
+		// is checked again under the same lock used by CancelTraceAnalysis.
+		const FString ProposedState = FailureCode.IsEmpty() ? TEXT("succeeded") : TEXT("failed");
+		Out->SetStringField(TEXT("state"), ProposedState);
+		Out->SetBoolField(TEXT("ok"), FailureCode.IsEmpty());
+		if (!FailureCode.IsEmpty()) Out->SetStringField(TEXT("error_code"), FailureCode);
+		FString ResultJson = Json(Out);
+		FScopeLock Lock(&Job->Mutex);
+		if (Job->bCancel.Load())
+		{
+			Out = Envelope(true);
+			Out->SetStringField(TEXT("analysis_id"), Job->Id);
+			Out->SetStringField(TEXT("state"), TEXT("cancelled"));
+			Out->SetBoolField(TEXT("terminal"), true);
+			Out->SetBoolField(TEXT("resources_released"), true);
+			ResultJson = Json(Out);
+			Job->State = TEXT("cancelled");
+		}
+		else { Job->State = ProposedState; Job->Error = FailureCode; }
+		Job->Finished = FPlatformTime::Seconds();
+		Job->ResultJson = MoveTemp(ResultJson);
+		Job->bTerminal = true;
+	}
+
+	void Shutdown()
+	{
+		bShuttingDown = true;
+		for (const auto& Pair : Jobs) Pair.Value->bCancel.Store(true);
+		// Unload must join: workers execute this module's code and own TraceServices
+		// providers. They never dispatch back to GT, so joining cannot await GT work.
+		for (const auto& Pair : Jobs) Pair.Value->Worker.Wait();
+		Jobs.Empty();
+	}
+}
+
+FString UUnrealBridgePerfLibrary::StartTraceAnalysis(const FString& UtracePath, const FString& SummaryKind,
+	int32 TopN, int32 TopNPerThread, int32 TopNCounters, int32 MaxFileSizeMb)
+{
+	using namespace BridgePerfAsyncImpl;
+	if (!IsInGameThread()) return Failure(TEXT("game_thread_required"));
+	if (bShuttingDown) return Failure(TEXT("module_shutting_down"));
+	if (SessionId.IsEmpty()) SessionId = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	Prune();
+	int32 Active = 0;
+	for (const auto& Pair : Jobs) if (!Pair.Value->Worker.IsReady()) ++Active;
+	if (Active >= 2) return Failure(TEXT("analysis_capacity_reached"));
+	if (Jobs.Num() >= MaxRetainedJobs)
+	{
+		FString Oldest; double OldestTime = DBL_MAX;
+		for (const auto& Pair : Jobs)
+			if (Pair.Value->Worker.IsReady() && Pair.Value->LastAccess < OldestTime) { Oldest = Pair.Key; OldestTime = Pair.Value->LastAccess; }
+		if (!Oldest.IsEmpty()) Jobs.Remove(Oldest);
+	}
+	const FString Kind = SummaryKind.ToLower();
+	if (Kind != TEXT("performance") && Kind != TEXT("alloc") && Kind != TEXT("net") && Kind != TEXT("cook")) return Failure(TEXT("invalid_summary_kind"));
+	if (UtracePath.Len() > 4096 || FPaths::IsRelative(UtracePath) || UtracePath.StartsWith(TEXT("\\\\")) || UtracePath.StartsWith(TEXT("//")) ||
+		!FPaths::GetExtension(UtracePath).Equals(TEXT("utrace"), ESearchCase::IgnoreCase)) return Failure(TEXT("absolute_local_utrace_required"));
+	FString Path = FPaths::ConvertRelativePathToFull(UtracePath);
+	FPaths::NormalizeFilename(Path);
+	for (const auto& Pair : Jobs)
+		if (!Pair.Value->Worker.IsReady() && FPaths::IsSamePath(Pair.Value->Path, Path)) return Failure(TEXT("trace_already_analyzing"));
+	const int64 FileSize = IFileManager::Get().FileSize(*Path);
+	if (FileSize <= 0) return Failure(TEXT("trace_missing_or_empty"));
+	if (MaxFileSizeMb < 1 || MaxFileSizeMb > 1024 || FileSize > static_cast<int64>(MaxFileSizeMb) * 1024 * 1024) return Failure(TEXT("trace_size_limit"));
+	{
+		// Reject arbitrary/corrupt headers before loading providers. Legacy protocol
+		// zero and little-endian TRCE/TRC2 are the engine's supported magic values.
+		TUniquePtr<FArchive> File(IFileManager::Get().CreateFileReader(*Path));
+		uint32 Magic = 0;
+		if (!File || FileSize < 4) return Failure(TEXT("invalid_trace_header"));
+		File->Serialize(&Magic, sizeof(Magic));
+		if (File->IsError() || (Magic != 0x54524345 && Magic != 0x54524332 && Magic != 1)) return Failure(TEXT("invalid_trace_header"));
+	}
+	const auto Capture = GetTraceState();
+	if (Capture.bActive && FPaths::IsSamePath(Capture.Path, Path)) return Failure(TEXT("trace_capture_still_active"));
+	ITraceServicesModule* Module = FModuleManager::LoadModulePtr<ITraceServicesModule>("TraceServices");
+	if (!Module) return Failure(TEXT("trace_services_unavailable"));
+	auto Service = Module->GetAnalysisService();
+	if (!Service) return Failure(TEXT("analysis_service_unavailable"));
+	// Warm reflected metadata on GT; workers only read these existing definitions.
+	FBridgePerfTraceSummary::StaticStruct(); FBridgePerfAllocSummary::StaticStruct();
+	FBridgePerfNetSummary::StaticStruct(); FBridgePerfCookSummary::StaticStruct();
+	auto Job = MakeShared<FAnalysisJob, ESPMode::ThreadSafe>();
+	Job->Id = TEXT("ubr:trace:") + SessionId + TEXT(":") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	Job->Path = Path; Job->Kind = Kind; Job->FileSize = FileSize;
+	Job->FileTimestamp = IFileManager::Get().GetTimeStamp(*Path);
+	auto Session = Service->StartAnalysis(*Path); // Starts processor; never Analyze/Wait on GT.
+	if (!Session) return Failure(TEXT("trace_open_failed"));
+	Jobs.Add(Job->Id, Job);
+	Job->Worker = Async(EAsyncExecution::Thread, [Job, Session = MoveTemp(Session), TopN, TopNPerThread, TopNCounters]() mutable
+	{
+		Run(Job, MoveTemp(Session), FMath::Clamp(TopN, 1, 200), FMath::Clamp(TopNPerThread, 0, 32), FMath::Clamp(TopNCounters, 0, 200));
+	});
+	return Json(Snapshot(Job));
+}
+
+FString UUnrealBridgePerfLibrary::GetTraceAnalysisStatus(const FString& AnalysisId)
+{
+	using namespace BridgePerfAsyncImpl;
+	if (!IsInGameThread()) return Failure(TEXT("game_thread_required"));
+	auto Job = Find(AnalysisId);
+	return Job ? Json(Snapshot(Job)) : Failure(TEXT("unknown_or_expired_analysis"));
+}
+
+FString UUnrealBridgePerfLibrary::GetTraceAnalysisResult(const FString& AnalysisId, bool bRelease)
+{
+	using namespace BridgePerfAsyncImpl;
+	if (!IsInGameThread()) return Failure(TEXT("game_thread_required"));
+	auto Job = Find(AnalysisId);
+	if (!Job) return Failure(TEXT("unknown_or_expired_analysis"));
+	FString Result;
+	{ FScopeLock Lock(&Job->Mutex); Result = Job->ResultJson; }
+	if (Result.IsEmpty()) return Json(Snapshot(Job));
+	if (bRelease)
+	{
+		if (!Job->Worker.IsReady()) return Failure(TEXT("worker_finalizing_retry_release"));
+		Jobs.Remove(AnalysisId);
+	}
+	return Result;
+}
+
+FString UUnrealBridgePerfLibrary::CancelTraceAnalysis(const FString& AnalysisId)
+{
+	using namespace BridgePerfAsyncImpl;
+	if (!IsInGameThread()) return Failure(TEXT("game_thread_required"));
+	auto Job = Find(AnalysisId);
+	if (!Job) return Failure(TEXT("unknown_or_expired_analysis"));
+	{
+		FScopeLock Lock(&Job->Mutex);
+		if (!Job->bTerminal) { Job->bCancel.Store(true); Job->State = TEXT("cancelling"); }
+	}
+	return Json(Snapshot(Job));
+}
+
 // ─── M7-4 AnalyzeAllMaterials ─────────────────────────────────────
 
 FBridgeAllMaterialsAnalysis UUnrealBridgePerfLibrary::AnalyzeAllMaterials(int32 TopN)
@@ -4350,17 +4614,19 @@ FBridgeAllMaterialsAnalysis UUnrealBridgePerfLibrary::AnalyzeAllMaterials(int32 
 		FBridgeMaterialPerfRow Row;
 		Row.MaterialPath          = Mat->GetPathName();
 		Row.bTwoSided             = Mat->TwoSided != 0;
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
 		Row.bUsedWithSkeletalMesh = Mat->bUsedWithSkeletalMesh != 0;
 		Row.bUsedWithStaticLighting = Mat->bUsedWithStaticLighting != 0;
+#else
+		Row.bUsedWithSkeletalMesh = Mat->GetUsageByFlag(MATUSAGE_SkeletalMesh);
+		Row.bUsedWithStaticLighting = Mat->GetUsageByFlag(MATUSAGE_StaticLighting);
+#endif
 
 		if (const UEnum* BlendEnum = StaticEnum<EBlendMode>())
 		{
 			Row.BlendMode = BlendEnum->GetNameStringByValue(static_cast<int64>(Mat->BlendMode));
 		}
-		if (const UEnum* DomainEnum = StaticEnum<EMaterialDomain>())
-		{
-			Row.MaterialDomain = DomainEnum->GetNameStringByValue(static_cast<int64>(Mat->MaterialDomain));
-		}
+		Row.MaterialDomain = MaterialDomainString(Mat->MaterialDomain);
 		// ShadingModels is a bitfield in 5.7; we surface the first set bit name.
 		if (const UEnum* SMEnum = StaticEnum<EMaterialShadingModel>())
 		{
@@ -4435,3 +4701,15 @@ FBridgeAllMaterialsAnalysis UUnrealBridgePerfLibrary::AnalyzeAllMaterials(int32 
 	return Out;
 }
 #endif // !UE_VERSION_OLDER_THAN(5, 7, 0) — pre-5.7 path lives in UnrealBridgePerfLibrary_Stubs.cpp
+
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
+namespace BridgePerfAsyncImpl { void Shutdown() {} }
+FString UUnrealBridgePerfLibrary::StartTraceAnalysis(const FString&, const FString&, int32, int32, int32, int32)
+{ return TEXT("{\"ok\":false,\"error_code\":\"requires_ue57_or_newer\"}"); }
+FString UUnrealBridgePerfLibrary::GetTraceAnalysisStatus(const FString&)
+{ return TEXT("{\"ok\":false,\"error_code\":\"requires_ue57_or_newer\"}"); }
+FString UUnrealBridgePerfLibrary::GetTraceAnalysisResult(const FString&, bool)
+{ return TEXT("{\"ok\":false,\"error_code\":\"requires_ue57_or_newer\"}"); }
+FString UUnrealBridgePerfLibrary::CancelTraceAnalysis(const FString&)
+{ return TEXT("{\"ok\":false,\"error_code\":\"requires_ue57_or_newer\"}"); }
+#endif

@@ -3,6 +3,9 @@
 #include "UnrealBridgeHttpServer.h"
 #include "UnrealBridgeServer.h"
 #include "UnrealBridgeUE58Library.h"
+#include "UnrealBridgeWorldLibrary.h"
+#include "UnrealBridgeSlateInputLibrary.h"
+#include "UnrealBridgeAudioRoutingPrivate.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Interfaces/IPluginManager.h"
 #include "Interfaces/IPv4/IPv4Address.h"
@@ -40,6 +43,11 @@ namespace BridgePerfFrameHook
 // No Start at module init (caller-driven) but Shutdown must release the
 // FTSTicker handle if a sampling run is still active when the module exits.
 namespace BridgePerfSampler
+{
+	void Shutdown();
+}
+
+namespace BridgePerfAsyncImpl
 {
 	void Shutdown();
 }
@@ -138,6 +146,7 @@ void FUnrealBridgeModule::StartupModule()
 	BridgeDebugState::Register();
 	BridgePerfFrameHook::Register();
 	UnrealBridgeUE58Adapter::Startup();
+	BridgeWorldContext::Startup();
 
 	// Map /Plugin/UnrealBridge/ -> this plugin's Shaders/ dir so UMaterialExpressionCustom
 	// nodes can #include "/Plugin/UnrealBridge/BridgeSnippets.ush" and friends.
@@ -332,8 +341,11 @@ void FUnrealBridgeModule::StartupModule()
 
 void FUnrealBridgeModule::ShutdownModule()
 {
+	BridgeAudioSession::Shutdown();
+	BridgeSlateInput::Shutdown();
 	UnrealBridgeUE58Adapter::Shutdown();
 	BridgePerfSampler::Shutdown();
+	BridgePerfAsyncImpl::Shutdown();
 	BridgePerfFrameHook::Unregister();
 	BridgeDebugState::Unregister();
 
@@ -355,6 +367,7 @@ void FUnrealBridgeModule::ShutdownModule()
 		Server.Reset();
 		UE_LOG(LogUnrealBridgeModule, Log, TEXT("Server stopped."));
 	}
+	BridgeWorldContext::Shutdown();
 }
 
 IMPLEMENT_MODULE(FUnrealBridgeModule, UnrealBridge)

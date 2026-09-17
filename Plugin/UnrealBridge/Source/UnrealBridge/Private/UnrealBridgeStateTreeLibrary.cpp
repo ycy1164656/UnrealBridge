@@ -2,20 +2,33 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "Components/StateTreeComponent.h"
+#include "Engine/World.h"
 #include "EditorAssetLibrary.h"
 #include "Factories/Factory.h"
+#include "GameFramework/Actor.h"
 #include "Modules/ModuleManager.h"
+#include "Misc/EngineVersionComparison.h"
+#include "PropertyBindingBinding.h"
+#include "PropertyBindingDataView.h"
+#include "PropertyBindingPath.h"
+#include "PropertyBindingTypes.h"
 #include "ScopedTransaction.h"
 #include "StateTree.h"
 #include "StateTreeCompilerLog.h"
+#include "StateTreeConditionBase.h"
 #include "StateTreeEditingSubsystem.h"
 #include "StateTreeEditorData.h"
 #include "StateTreeEditorNode.h"
+#include "StateTreeEvaluatorBase.h"
+#include "StateTreeExecutionTypes.h"
 #include "StateTreeNodeBase.h"
 #include "StateTreeState.h"
 #include "StateTreeTaskBase.h"
 #include "StateTreeTypes.h"
+#include "StructUtils/PropertyBag.h"
 #include "UObject/UnrealType.h"
+#include "UObject/UObjectIterator.h"
 
 #define LOCTEXT_NAMESPACE "UnrealBridgeStateTreeLibrary"
 
@@ -217,6 +230,198 @@ namespace BridgeStateTreeImpl
 		return Info;
 	}
 
+	FBridgeStateTreeNodeInfo MakeNodeInfo(
+		const FStateTreeEditorNode& Node,
+		const FString& Kind,
+		const FString& StateId = FString(),
+		const FString& TransitionId = FString())
+	{
+		FBridgeStateTreeNodeInfo Info;
+		Info.Id = Node.ID.ToString(EGuidFormats::DigitsWithHyphensLower);
+		Info.Kind = Kind;
+		Info.StateId = StateId;
+		Info.TransitionId = TransitionId;
+		Info.Name = Node.GetName().ToString();
+		if (const UScriptStruct* NodeStruct = Node.Node.GetScriptStruct())
+		{
+			Info.StructPath = NodeStruct->GetPathName();
+		}
+		if (const UScriptStruct* InstanceStruct = Node.Instance.GetScriptStruct())
+		{
+			Info.InstanceType = InstanceStruct->GetPathName();
+		}
+		else if (Node.InstanceObject)
+		{
+			Info.InstanceType = Node.InstanceObject->GetClass()->GetPathName();
+		}
+		Info.ExpressionOperand = EnumName(Node.ExpressionOperand);
+		Info.ExpressionIndent = Node.ExpressionIndent;
+		return Info;
+	}
+
+	FString PropertyBagContainerTypesToString(const FPropertyBagContainerTypes& Types)
+	{
+		TArray<FString> Names;
+		for (uint32 Index = 0; Index < Types.Num(); ++Index)
+		{
+			Names.Add(EnumName(Types[static_cast<int32>(Index)]));
+		}
+		return FString::Join(Names, TEXT("/"));
+	}
+
+	void AppendParameters(
+		const FInstancedPropertyBag& Bag,
+		const FGuid& StructId,
+		const FString& StateId,
+		const FString& StatePath,
+		TArray<FBridgeStateTreeParameterInfo>& OutParameters)
+	{
+		const UPropertyBag* BagStruct = Bag.GetPropertyBagStruct();
+		if (!BagStruct)
+		{
+			return;
+		}
+		for (const FPropertyBagPropertyDesc& Desc : BagStruct->GetPropertyDescs())
+		{
+			FBridgeStateTreeParameterInfo Info;
+			Info.StructId = StructId.ToString(EGuidFormats::DigitsWithHyphensLower);
+			Info.StateId = StateId;
+			Info.StatePath = StatePath;
+			Info.Name = Desc.Name.ToString();
+			Info.ValueType = EnumName(Desc.ValueType);
+			Info.ContainerTypes = PropertyBagContainerTypesToString(Desc.ContainerTypes);
+			Info.ValueTypeObject = Desc.ValueTypeObject ? Desc.ValueTypeObject->GetPathName() : FString();
+			const TValueOrError<FString, EPropertyBagResult> Value = Bag.GetValueSerializedString(Desc.Name);
+			if (Value.IsValid())
+			{
+				Info.Value = Value.GetValue();
+			}
+			OutParameters.Add(MoveTemp(Info));
+		}
+	}
+
+	UScriptStruct* LoadNodeStruct(const FString& StructPath)
+	{
+		UScriptStruct* Struct = FindObject<UScriptStruct>(nullptr, *StructPath);
+		return Struct ? Struct : LoadObject<UScriptStruct>(nullptr, *StructPath);
+	}
+
+	bool InitializeEditorNode(
+		FStateTreeEditorNode& Node,
+		UObject* Outer,
+		UScriptStruct* NodeStruct,
+		const FString& InstanceDataExportText,
+		FString& OutError)
+	{
+		if (!Outer || !NodeStruct)
+		{
+			OutError = TEXT("Node outer or struct is unavailable.");
+			return false;
+		}
+#if UE_VERSION_NEWER_THAN(5, 7, 99)
+		Node.InitializeAs(Outer, NodeStruct);
+#else
+		Node.ID = FGuid::NewGuid();
+		Node.Node.InitializeAs(NodeStruct);
+		const FStateTreeNodeBase& NodeBase = Node.Node.Get<FStateTreeNodeBase>();
+		if (const UScriptStruct* InstanceStruct = Cast<const UScriptStruct>(NodeBase.GetInstanceDataType()))
+		{
+			Node.Instance.InitializeAs(InstanceStruct);
+		}
+		else if (const UClass* InstanceClass = Cast<const UClass>(NodeBase.GetInstanceDataType()))
+		{
+			Node.InstanceObject = NewObject<UObject>(Outer, InstanceClass, NAME_None, RF_Transactional);
+		}
+#endif
+		if (InstanceDataExportText.IsEmpty())
+		{
+			return true;
+		}
+		if (Node.InstanceObject)
+		{
+			OutError = TEXT("Whole-object instance import is not supported; set individual properties after adding the node.");
+			return false;
+		}
+		UScriptStruct* InstanceStruct = const_cast<UScriptStruct*>(Node.Instance.GetScriptStruct());
+		if (!InstanceStruct || !Node.Instance.GetMutableMemory())
+		{
+			OutError = TEXT("The node has no struct instance data to import.");
+			return false;
+		}
+		const TCHAR* Parsed = InstanceStruct->ImportText(
+			*InstanceDataExportText,
+			Node.Instance.GetMutableMemory(),
+			Outer,
+			PPF_None,
+			GLog,
+			InstanceStruct->GetName());
+		if (!Parsed)
+		{
+			OutError = TEXT("InstanceDataExportText could not be imported.");
+			return false;
+		}
+		return true;
+	}
+
+	FStateTreeEditorNode* FindAnyNode(
+		UStateTreeEditorData* EditorData,
+		const FGuid& NodeId,
+		UObject*& OutOwner)
+	{
+		OutOwner = nullptr;
+		if (!EditorData)
+		{
+			return nullptr;
+		}
+		for (FStateTreeEditorNode& Node : EditorData->Evaluators)
+		{
+			if (Node.ID == NodeId)
+			{
+				OutOwner = EditorData;
+				return &Node;
+			}
+		}
+		for (FStateTreeEditorNode& Node : EditorData->GlobalTasks)
+		{
+			if (Node.ID == NodeId)
+			{
+				OutOwner = EditorData;
+				return &Node;
+			}
+		}
+
+		FStateTreeEditorNode* Found = nullptr;
+		EditorData->VisitHierarchy([&](UStateTreeState& State, UStateTreeState*)
+		{
+			auto FindIn = [&](TArray<FStateTreeEditorNode>& Nodes) -> bool
+			{
+				for (FStateTreeEditorNode& Node : Nodes)
+				{
+					if (Node.ID == NodeId)
+					{
+						Found = &Node;
+						OutOwner = &State;
+						return true;
+					}
+				}
+				return false;
+			};
+			if (FindIn(State.EnterConditions) || FindIn(State.Tasks) || FindIn(State.Considerations))
+			{
+				return EStateTreeVisitor::Break;
+			}
+			for (FStateTreeTransition& Transition : State.Transitions)
+			{
+				if (FindIn(Transition.Conditions))
+				{
+					return EStateTreeVisitor::Break;
+				}
+			}
+			return EStateTreeVisitor::Continue;
+		});
+		return Found;
+	}
+
 	FBridgeStateTreeTransitionInfo MakeTransitionInfo(const FStateTreeTransition& Transition)
 	{
 		FBridgeStateTreeTransitionInfo Info;
@@ -227,6 +432,11 @@ namespace BridgeStateTreeImpl
 		Info.TargetStateName = Transition.State.Name.ToString();
 		Info.RequiredEventTag = Transition.RequiredEvent.Tag.ToString();
 		Info.bEnabled = Transition.bTransitionEnabled;
+		const FString TransitionId = Info.Id;
+		for (const FStateTreeEditorNode& Condition : Transition.Conditions)
+		{
+			Info.Conditions.Add(MakeNodeInfo(Condition, TEXT("TransitionCondition"), FString(), TransitionId));
+		}
 		return Info;
 	}
 
@@ -244,6 +454,10 @@ namespace BridgeStateTreeImpl
 		for (const FStateTreeEditorNode& Task : State.Tasks)
 		{
 			Info.Tasks.Add(MakeTaskInfo(Task));
+		}
+		for (const FStateTreeEditorNode& Condition : State.EnterConditions)
+		{
+			Info.EnterConditions.Add(MakeNodeInfo(Condition, TEXT("EnterCondition"), Info.Id));
 		}
 		for (const FStateTreeTransition& Transition : State.Transitions)
 		{
@@ -455,11 +669,44 @@ FBridgeStateTreeStructure UUnrealBridgeStateTreeLibrary::GetStateTreeStructure(c
 	{
 		Result.SchemaClassPath = EditorData->Schema->GetClass()->GetPathName();
 	}
+	for (const FStateTreeEditorNode& Evaluator : EditorData->Evaluators)
+	{
+		Result.Evaluators.Add(BridgeStateTreeImpl::MakeNodeInfo(Evaluator, TEXT("Evaluator")));
+	}
+	for (const FStateTreeEditorNode& GlobalTask : EditorData->GlobalTasks)
+	{
+		Result.GlobalTasks.Add(BridgeStateTreeImpl::MakeNodeInfo(GlobalTask, TEXT("GlobalTask")));
+	}
+	BridgeStateTreeImpl::AppendParameters(
+		EditorData->GetRootParametersPropertyBag(),
+		EditorData->GetRootParametersGuid(),
+		FString(),
+		TEXT("Root"),
+		Result.Parameters);
 	EditorData->VisitHierarchy([&](UStateTreeState& State, UStateTreeState* ParentState)
 	{
 		Result.States.Add(BridgeStateTreeImpl::MakeStateInfo(State, ParentState));
+		BridgeStateTreeImpl::AppendParameters(
+			State.Parameters.Parameters,
+			State.Parameters.ID,
+			State.ID.ToString(EGuidFormats::DigitsWithHyphensLower),
+			State.GetPath(),
+			Result.Parameters);
 		return EStateTreeVisitor::Continue;
 	});
+	if (const FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings())
+	{
+		Bindings->ForEachBinding([&](const FPropertyBindingBinding& Binding)
+		{
+			FBridgeStateTreeBindingInfo Info;
+			Info.SourceStructId = Binding.GetSourcePath().GetStructID().ToString(EGuidFormats::DigitsWithHyphensLower);
+			Info.SourcePath = Binding.GetSourcePath().ToString();
+			Info.TargetStructId = Binding.GetTargetPath().GetStructID().ToString(EGuidFormats::DigitsWithHyphensLower);
+			Info.TargetPath = Binding.GetTargetPath().ToString();
+			Info.Description = Binding.ToString();
+			Result.Bindings.Add(MoveTemp(Info));
+		});
+	}
 	return Result;
 }
 
@@ -621,6 +868,342 @@ FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::AddStateTreeTask(
 
 	Result = BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
 	Result.CreatedId = Task.ID.ToString(EGuidFormats::DigitsWithHyphensLower);
+	return Result;
+}
+
+FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::AddStateTreeEvaluator(
+	const FString& StateTreePath,
+	const FString& EvaluatorStructPath,
+	const FString& InstanceDataExportText,
+	bool bCompile,
+	bool bSave)
+{
+	FBridgeStateTreeEditResult Result;
+	UStateTree* StateTree = BridgeStateTreeImpl::LoadStateTree(StateTreePath);
+	UStateTreeEditorData* EditorData = BridgeStateTreeImpl::GetEditorData(StateTree);
+	UScriptStruct* EvaluatorStruct = BridgeStateTreeImpl::LoadNodeStruct(EvaluatorStructPath);
+	if (!StateTree || !EditorData || !EvaluatorStruct
+		|| !EvaluatorStruct->IsChildOf(FStateTreeEvaluatorBase::StaticStruct()))
+	{
+		Result.Error = TEXT("StateTree/editor data is unavailable or EvaluatorStructPath is not an FStateTreeEvaluatorBase struct.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeAddStateTreeEvaluator", "Bridge: Add StateTree Evaluator"));
+	StateTree->Modify();
+	EditorData->Modify();
+	FStateTreeEditorNode& Node = EditorData->Evaluators.AddDefaulted_GetRef();
+	if (!BridgeStateTreeImpl::InitializeEditorNode(Node, EditorData, EvaluatorStruct, InstanceDataExportText, Result.Error))
+	{
+		EditorData->Evaluators.Pop();
+		return Result;
+	}
+	EditorData->UpdateBindings();
+	Result = BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+	Result.CreatedId = Node.ID.ToString(EGuidFormats::DigitsWithHyphensLower);
+	return Result;
+}
+
+FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::AddStateTreeGlobalTask(
+	const FString& StateTreePath,
+	const FString& TaskStructPath,
+	const FString& InstanceDataExportText,
+	bool bCompile,
+	bool bSave)
+{
+	FBridgeStateTreeEditResult Result;
+	UStateTree* StateTree = BridgeStateTreeImpl::LoadStateTree(StateTreePath);
+	UStateTreeEditorData* EditorData = BridgeStateTreeImpl::GetEditorData(StateTree);
+	UScriptStruct* TaskStruct = BridgeStateTreeImpl::LoadNodeStruct(TaskStructPath);
+	if (!StateTree || !EditorData || !TaskStruct
+		|| !TaskStruct->IsChildOf(FStateTreeTaskBase::StaticStruct()))
+	{
+		Result.Error = TEXT("StateTree/editor data is unavailable or TaskStructPath is not an FStateTreeTaskBase struct.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeAddStateTreeGlobalTask", "Bridge: Add StateTree Global Task"));
+	StateTree->Modify();
+	EditorData->Modify();
+	FStateTreeEditorNode& Node = EditorData->GlobalTasks.AddDefaulted_GetRef();
+	if (!BridgeStateTreeImpl::InitializeEditorNode(Node, EditorData, TaskStruct, InstanceDataExportText, Result.Error))
+	{
+		EditorData->GlobalTasks.Pop();
+		return Result;
+	}
+	EditorData->UpdateBindings();
+	Result = BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+	Result.CreatedId = Node.ID.ToString(EGuidFormats::DigitsWithHyphensLower);
+	return Result;
+}
+
+FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::AddStateTreeEnterCondition(
+	const FString& StateTreePath,
+	const FString& StateId,
+	const FString& ConditionStructPath,
+	const FString& InstanceDataExportText,
+	const FString& ExpressionOperand,
+	int32 ExpressionIndent,
+	bool bCompile,
+	bool bSave)
+{
+	FBridgeStateTreeEditResult Result;
+	UStateTree* StateTree = BridgeStateTreeImpl::LoadStateTree(StateTreePath);
+	UStateTreeEditorData* EditorData = BridgeStateTreeImpl::GetEditorData(StateTree);
+	UScriptStruct* ConditionStruct = BridgeStateTreeImpl::LoadNodeStruct(ConditionStructPath);
+	FGuid StateGuid;
+	EStateTreeExpressionOperand Operand = EStateTreeExpressionOperand::And;
+	if (!StateTree || !EditorData || !BridgeStateTreeImpl::ParseGuid(StateId, StateGuid)
+		|| !ConditionStruct || !ConditionStruct->IsChildOf(FStateTreeConditionBase::StaticStruct())
+		|| !BridgeStateTreeImpl::ParseEnum(ExpressionOperand, Operand))
+	{
+		Result.Error = TEXT("StateTree/editor data, StateId, condition struct, or expression operand is invalid.");
+		return Result;
+	}
+	UStateTreeState* State = EditorData->GetMutableStateByID(StateGuid);
+	if (!State)
+	{
+		Result.Error = TEXT("State was not found.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeAddStateTreeEnterCondition", "Bridge: Add StateTree Enter Condition"));
+	StateTree->Modify();
+	EditorData->Modify();
+	State->Modify();
+	FStateTreeEditorNode& Node = State->EnterConditions.AddDefaulted_GetRef();
+	if (!BridgeStateTreeImpl::InitializeEditorNode(Node, State, ConditionStruct, InstanceDataExportText, Result.Error))
+	{
+		State->EnterConditions.Pop();
+		return Result;
+	}
+	Node.ExpressionOperand = Operand;
+	Node.ExpressionIndent = static_cast<uint8>(FMath::Clamp(ExpressionIndent, 0, 255));
+	EditorData->UpdateBindings();
+	Result = BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+	Result.CreatedId = Node.ID.ToString(EGuidFormats::DigitsWithHyphensLower);
+	return Result;
+}
+
+FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::AddStateTreeTransitionCondition(
+	const FString& StateTreePath,
+	const FString& TransitionId,
+	const FString& ConditionStructPath,
+	const FString& InstanceDataExportText,
+	const FString& ExpressionOperand,
+	int32 ExpressionIndent,
+	bool bCompile,
+	bool bSave)
+{
+	FBridgeStateTreeEditResult Result;
+	UStateTree* StateTree = BridgeStateTreeImpl::LoadStateTree(StateTreePath);
+	UStateTreeEditorData* EditorData = BridgeStateTreeImpl::GetEditorData(StateTree);
+	UScriptStruct* ConditionStruct = BridgeStateTreeImpl::LoadNodeStruct(ConditionStructPath);
+	FGuid TransitionGuid;
+	EStateTreeExpressionOperand Operand = EStateTreeExpressionOperand::And;
+	if (!StateTree || !EditorData || !BridgeStateTreeImpl::ParseGuid(TransitionId, TransitionGuid)
+		|| !ConditionStruct || !ConditionStruct->IsChildOf(FStateTreeConditionBase::StaticStruct())
+		|| !BridgeStateTreeImpl::ParseEnum(ExpressionOperand, Operand))
+	{
+		Result.Error = TEXT("StateTree/editor data, TransitionId, condition struct, or expression operand is invalid.");
+		return Result;
+	}
+	UStateTreeState* OwnerState = nullptr;
+	FStateTreeTransition* Transition = BridgeStateTreeImpl::FindTransition(EditorData, TransitionGuid, OwnerState);
+	if (!Transition || !OwnerState)
+	{
+		Result.Error = TEXT("Transition was not found.");
+		return Result;
+	}
+
+	const FScopedTransaction TransactionScope(LOCTEXT("BridgeAddStateTreeTransitionCondition", "Bridge: Add StateTree Transition Condition"));
+	StateTree->Modify();
+	EditorData->Modify();
+	OwnerState->Modify();
+	FStateTreeEditorNode& Node = Transition->Conditions.AddDefaulted_GetRef();
+	if (!BridgeStateTreeImpl::InitializeEditorNode(Node, OwnerState, ConditionStruct, InstanceDataExportText, Result.Error))
+	{
+		Transition->Conditions.Pop();
+		return Result;
+	}
+	Node.ExpressionOperand = Operand;
+	Node.ExpressionIndent = static_cast<uint8>(FMath::Clamp(ExpressionIndent, 0, 255));
+	EditorData->UpdateBindings();
+	Result = BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+	Result.CreatedId = Node.ID.ToString(EGuidFormats::DigitsWithHyphensLower);
+	return Result;
+}
+
+FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::AddStateTreeParameter(
+	const FString& StateTreePath,
+	const FString& StateId,
+	const FString& Name,
+	const FString& ValueType,
+	const FString& ValueTypeObjectPath,
+	const FString& DefaultValueExportText,
+	bool bCompile,
+	bool bSave)
+{
+	FBridgeStateTreeEditResult Result;
+	UStateTree* StateTree = BridgeStateTreeImpl::LoadStateTree(StateTreePath);
+	UStateTreeEditorData* EditorData = BridgeStateTreeImpl::GetEditorData(StateTree);
+	if (!StateTree || !EditorData || Name.IsEmpty())
+	{
+		Result.Error = TEXT("StateTree/editor data is unavailable or Name is empty.");
+		return Result;
+	}
+
+	EPropertyBagPropertyType ParsedType = EPropertyBagPropertyType::None;
+	if (!BridgeStateTreeImpl::ParseEnum(ValueType, ParsedType)
+		|| ParsedType == EPropertyBagPropertyType::None
+		|| ParsedType == EPropertyBagPropertyType::Count)
+	{
+		Result.Error = FString::Printf(TEXT("Unknown or unsupported property-bag ValueType: %s"), *ValueType);
+		return Result;
+	}
+	const bool bNeedsTypeObject = ParsedType == EPropertyBagPropertyType::Enum
+		|| ParsedType == EPropertyBagPropertyType::Struct
+		|| ParsedType == EPropertyBagPropertyType::Object
+		|| ParsedType == EPropertyBagPropertyType::SoftObject
+		|| ParsedType == EPropertyBagPropertyType::Class
+		|| ParsedType == EPropertyBagPropertyType::SoftClass;
+	const UObject* ValueTypeObject = ValueTypeObjectPath.IsEmpty()
+		? nullptr : StaticLoadObject(UObject::StaticClass(), nullptr, *ValueTypeObjectPath);
+	if (bNeedsTypeObject && !ValueTypeObject)
+	{
+		Result.Error = TEXT("ValueTypeObjectPath is required and must resolve for this ValueType.");
+		return Result;
+	}
+
+	FGuid StructGuid = EditorData->GetRootParametersGuid();
+	UStateTreeState* State = nullptr;
+	if (!StateId.IsEmpty())
+	{
+		FGuid StateGuid;
+		if (!BridgeStateTreeImpl::ParseGuid(StateId, StateGuid)
+			|| !(State = EditorData->GetMutableStateByID(StateGuid)))
+		{
+			Result.Error = TEXT("StateId is invalid or the state was not found.");
+			return Result;
+		}
+		StructGuid = State->Parameters.ID;
+	}
+	if (!StructGuid.IsValid() || !EditorData->CanCreateParameter(StructGuid))
+	{
+		Result.Error = TEXT("The selected StateTree struct does not allow parameter creation.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeAddStateTreeParameter", "Bridge: Add StateTree Parameter"));
+	StateTree->Modify();
+	EditorData->Modify();
+	if (State)
+	{
+		State->Modify();
+	}
+	UE::PropertyBinding::FPropertyCreationDescriptor Descriptor;
+	Descriptor.PropertyDesc.Name = FName(*Name);
+	Descriptor.PropertyDesc.ValueType = ParsedType;
+	Descriptor.PropertyDesc.ValueTypeObject = ValueTypeObject;
+	TArray<UE::PropertyBinding::FPropertyCreationDescriptor, TFixedAllocator<1>> Descriptors;
+	Descriptors.Add(Descriptor);
+	EditorData->CreateParametersForStruct(StructGuid, Descriptors);
+	const FName ActualName = Descriptors[0].PropertyDesc.Name;
+
+	if (!DefaultValueExportText.IsEmpty())
+	{
+		FPropertyBindingDataView View;
+		if (!EditorData->GetBindingDataViewByID(StructGuid, View) || !View.IsValid())
+		{
+			Result.Error = TEXT("The created parameter data view could not be resolved.");
+			return Result;
+		}
+		FProperty* Property = FindFProperty<FProperty>(View.GetStruct(), ActualName);
+		void* ValueAddress = Property ? Property->ContainerPtrToValuePtr<void>(View.GetMutableMemory()) : nullptr;
+		const TCHAR* Start = *DefaultValueExportText;
+		const TCHAR* Parsed = Property && ValueAddress
+			? Property->ImportText_Direct(Start, ValueAddress, State ? static_cast<UObject*>(State) : static_cast<UObject*>(EditorData), PPF_None, GLog)
+			: nullptr;
+		if (!Parsed || Parsed == Start)
+		{
+			Result.Error = TEXT("DefaultValueExportText could not be imported for the created parameter.");
+			return Result;
+		}
+	}
+	EditorData->UpdateBindings();
+	Result = BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+	Result.CreatedId = FString::Printf(
+		TEXT("%s:%s"),
+		*StructGuid.ToString(EGuidFormats::DigitsWithHyphensLower),
+		*ActualName.ToString());
+	return Result;
+}
+
+FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::AddStateTreeBinding(
+	const FString& StateTreePath,
+	const FString& SourceStructId,
+	const FString& SourcePath,
+	const FString& TargetStructId,
+	const FString& TargetPath,
+	bool bReplaceExisting,
+	bool bCompile,
+	bool bSave)
+{
+	FBridgeStateTreeEditResult Result;
+	UStateTree* StateTree = BridgeStateTreeImpl::LoadStateTree(StateTreePath);
+	UStateTreeEditorData* EditorData = BridgeStateTreeImpl::GetEditorData(StateTree);
+	FGuid SourceGuid;
+	FGuid TargetGuid;
+	if (!StateTree || !EditorData
+		|| !BridgeStateTreeImpl::ParseGuid(SourceStructId, SourceGuid)
+		|| !BridgeStateTreeImpl::ParseGuid(TargetStructId, TargetGuid)
+		|| SourcePath.IsEmpty() || TargetPath.IsEmpty())
+	{
+		Result.Error = TEXT("StateTree/editor data, struct GUIDs, or property paths are invalid.");
+		return Result;
+	}
+
+	FPropertyBindingDataView SourceView;
+	FPropertyBindingDataView TargetView;
+	if (!EditorData->GetBindingDataViewByID(SourceGuid, SourceView) || !SourceView.IsValid()
+		|| !EditorData->GetBindingDataViewByID(TargetGuid, TargetView) || !TargetView.IsValid())
+	{
+		Result.Error = TEXT("SourceStructId or TargetStructId does not resolve to bindable data.");
+		return Result;
+	}
+	FPropertyBindingPath SourceBindingPath(SourceGuid);
+	FPropertyBindingPath TargetBindingPath(TargetGuid);
+	FString PathError;
+	if (!SourceBindingPath.FromString(SourcePath)
+		|| !SourceBindingPath.UpdateSegmentsFromValue(SourceView, &PathError)
+		|| !TargetBindingPath.FromString(TargetPath)
+		|| !TargetBindingPath.UpdateSegmentsFromValue(TargetView, &PathError))
+	{
+		Result.Error = FString::Printf(TEXT("A property binding path could not be resolved: %s"), *PathError);
+		return Result;
+	}
+	FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings();
+	if (!Bindings)
+	{
+		Result.Error = TEXT("StateTree editor bindings are unavailable.");
+		return Result;
+	}
+	if (!bReplaceExisting && Bindings->HasBinding(TargetBindingPath))
+	{
+		Result.Error = TEXT("TargetPath already has a binding; set bReplaceExisting=true to replace it.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeAddStateTreeBinding", "Bridge: Add StateTree Binding"));
+	StateTree->Modify();
+	EditorData->Modify();
+	Bindings->AddBinding(SourceBindingPath, TargetBindingPath);
+	EditorData->OnPropertyBindingChanged(SourceBindingPath, TargetBindingPath);
+	EditorData->UpdateBindings();
+	Result = BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+	Result.CreatedId = FString::Printf(
+		TEXT("%s:%s->%s:%s"),
+		*SourceStructId, *SourcePath, *TargetStructId, *TargetPath);
 	return Result;
 }
 
@@ -802,6 +1385,60 @@ FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::SetStateTreeTaskInstan
 	return BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
 }
 
+FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::SetStateTreeNodeInstanceProperty(
+	const FString& StateTreePath,
+	const FString& NodeId,
+	const FString& PropertyName,
+	const FString& ValueExportText,
+	bool bCompile,
+	bool bSave)
+{
+	FBridgeStateTreeEditResult Result;
+	UStateTree* StateTree = BridgeStateTreeImpl::LoadStateTree(StateTreePath);
+	UStateTreeEditorData* EditorData = BridgeStateTreeImpl::GetEditorData(StateTree);
+	FGuid NodeGuid;
+	if (!StateTree || !EditorData || !BridgeStateTreeImpl::ParseGuid(NodeId, NodeGuid) || PropertyName.IsEmpty())
+	{
+		Result.Error = TEXT("StateTree/editor data is unavailable, NodeId is invalid, or PropertyName is empty.");
+		return Result;
+	}
+
+	UObject* Owner = nullptr;
+	FStateTreeEditorNode* Node = BridgeStateTreeImpl::FindAnyNode(EditorData, NodeGuid, Owner);
+	if (!Node || !Owner)
+	{
+		Result.Error = TEXT("Evaluator, task, or condition node was not found.");
+		return Result;
+	}
+	FStateTreeDataView InstanceView = Node->GetInstance();
+	UStruct* InstanceType = const_cast<UStruct*>(InstanceView.GetStruct());
+	void* Container = InstanceView.GetMutableMemory();
+	FProperty* Property = InstanceType ? InstanceType->FindPropertyByName(FName(*PropertyName)) : nullptr;
+	if (!Property || !Container)
+	{
+		Result.Error = TEXT("Node instance property was not found.");
+		return Result;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BridgeSetStateTreeNodeProperty", "Bridge: Set StateTree Node Property"));
+	StateTree->Modify();
+	EditorData->Modify();
+	Owner->Modify();
+	if (Node->InstanceObject)
+	{
+		Node->InstanceObject->Modify();
+	}
+	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Container);
+	const TCHAR* Start = *ValueExportText;
+	const TCHAR* Parsed = Property->ImportText_Direct(Start, ValuePtr, Owner, PPF_None, GLog);
+	if (!Parsed || Parsed == Start)
+	{
+		Result.Error = TEXT("ValueExportText could not be imported for the node property.");
+		return Result;
+	}
+	return BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+}
+
 FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::SetStateTreeTransitionEnabled(
 	const FString& StateTreePath,
 	const FString& TransitionId,
@@ -833,6 +1470,50 @@ FBridgeStateTreeEditResult UUnrealBridgeStateTreeLibrary::SetStateTreeTransition
 	OwnerState->Modify();
 	Transition->bTransitionEnabled = bEnabled;
 	return BridgeStateTreeImpl::FinalizeEdit(StateTree, bCompile, bSave);
+}
+
+TArray<FBridgeStateTreeRuntimeInfo> UUnrealBridgeStateTreeLibrary::GetRuntimeStateTrees(int32 MaxComponents)
+{
+	TArray<FBridgeStateTreeRuntimeInfo> Result;
+	MaxComponents = FMath::Clamp(MaxComponents, 1, 4096);
+	for (TObjectIterator<UStateTreeComponent> It; It && Result.Num() < MaxComponents; ++It)
+	{
+		UStateTreeComponent* Component = *It;
+		UWorld* World = IsValid(Component) ? Component->GetWorld() : nullptr;
+		if (!IsValid(Component) || Component->IsTemplate() || !World
+			|| (World->WorldType != EWorldType::PIE
+				&& World->WorldType != EWorldType::Game
+				&& World->WorldType != EWorldType::GamePreview))
+		{
+			continue;
+		}
+
+		FBridgeStateTreeRuntimeInfo Info;
+		Info.World = World->GetPathName();
+		Info.ComponentPath = Component->GetPathName();
+		Info.OwnerPath = IsValid(Component->GetOwner()) ? Component->GetOwner()->GetPathName() : FString();
+		Info.bRunning = Component->IsRunning();
+		Info.bPaused = Component->IsPaused();
+		if (const UEnum* StatusEnum = StaticEnum<EStateTreeRunStatus>())
+		{
+			Info.RunStatus = StatusEnum->GetNameStringByValue(static_cast<int64>(Component->GetStateTreeRunStatus()));
+		}
+		if (FProperty* ReferenceProperty = Component->GetClass()->FindPropertyByName(TEXT("StateTreeRef")))
+		{
+			const void* ValuePtr = ReferenceProperty->ContainerPtrToValuePtr<void>(Component);
+			ReferenceProperty->ExportTextItem_Direct(
+				Info.StateTreeReference, ValuePtr, nullptr, Component, PPF_None);
+		}
+#if WITH_GAMEPLAY_DEBUGGER
+		for (const FName StateName : Component->GetActiveStateNames())
+		{
+			Info.ActiveStates.Add(StateName.ToString());
+		}
+		Info.DebugInfo = Component->GetDebugInfoString();
+#endif
+		Result.Add(MoveTemp(Info));
+	}
+	return Result;
 }
 
 #undef LOCTEXT_NAMESPACE

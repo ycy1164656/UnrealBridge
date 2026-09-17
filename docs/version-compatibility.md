@@ -1,37 +1,45 @@
-# UnrealBridge — engine version compatibility
+# UnrealBridge — engine support and historical compatibility
 
-The plugin claims **Unreal Engine 5.3+**. Historical build-matrix runs have
-verified clean BuildPlugin against 5.3 / 5.4 / 5.5 / 5.6 / 5.7 / 5.8, while
-the UnrealBridge 3.0 release run on 2026-08-26 clean-build verified UE 5.8.1.
-UE 5.2 is configured but disabled and unsupported. Some features are gated to
-**5.7+** because they depend on engine APIs that do not exist or behave
-differently on older 5.x releases. A handful of **5.8-only** shims handle API
-renames and parameter additions that landed in 5.8.
+**UnrealBridge 3.0 supports Unreal Engine 5.8.1 only.** UE 5.6 and every other
+pre-5.8.1 engine are outside the 3.0 install, build, regression, and maintenance
+contract. Protocol version 2 wire compatibility does not imply engine-version
+compatibility.
+
+Historical 2.x build-matrix runs did verify clean BuildPlugin against UE 5.3 /
+5.4 / 5.5 / 5.6 / 5.7 / 5.8. The source still contains version gates and shims
+from that period. They are retained as historical implementation detail, not as
+a 3.0 support claim. The remainder of this document separates the current 3.0
+support evidence from those legacy records.
 
 ## UnrealBridge 3.0 and UE 5.8 ToolsetRegistry
 
 UnrealBridge 3.0 keeps protocol version 2 and adds a UE-version-gated adapter
 for the official Experimental `ToolsetRegistry`:
 
-- On UE 5.8+, `UnrealBridge.Build.cs` adds the `ToolsetRegistry` module and
+- On the supported UE 5.8.1 target, `UnrealBridge.Build.cs` adds the `ToolsetRegistry` module and
   defines `UNREALBRIDGE_WITH_UE58_TOOLSET_REGISTRY=1`.
-- On UE 5.3–5.7, the module and its Experimental headers are not referenced;
-  the existing TCP, HTTP MCP, Job, ChangeSet, manifest, and wrapper paths stay
-  available.
-- Official tools are discovered from their live schema. Generic execution is
-  allowed only when `annotations.readOnlyHint=true` and the tool is not marked
-  destructive. Unannotated or mutating tools require a typed, audited wrapper.
-- Official calls run as durable polling Jobs. Their generic adapter never
-  saves packages and does not expose provider cancellation as if it were
-  guaranteed.
+- Retained UE 5.3–5.7 source branches do not reference the module or its
+  Experimental headers. Those branches are not built or supported as part of
+  the 3.0 release.
+- Official tools are discovered from their live schema, then authorized by an
+  exact `toolset|tool` plus structural input-schema hash. The audited policy has
+  387 `ReadOnly`, 49 explicit-opt-in `RuntimeInteraction`, 326 explicit-target
+  `TransactionalSync`, and 70 `Rejected` entries.
+- All executable planes are no-save. Transactional operations require explicit
+  package targets, immediate completion, ChangeSet ownership and rollback;
+  runtime interactions require caller opt-in. Destructive, explicit-save,
+  external-path, source-control and arbitrary-script operations are rejected.
+- Official calls run through durable Jobs or typed transactional wrappers and
+  do not expose provider cancellation as if it were guaranteed.
 
 The UE 5.8.1 live audit found 53 toolsets and 832 tools. The generated decision
 record is [`ue58-toolset-capability-matrix.md`](ue58-toolset-capability-matrix.md).
 
-This document lists what's gated. The build matrix in `tools/build_matrix.py`
-verifies the gates by compiling the plugin against each engine version.
+The sections below document retained legacy gates. `tools/build_matrix.py` can
+still exercise configured historical engines, but only the UE 5.8.1 result is a
+3.0 release gate.
 
-## Whole-library gates (disappear entirely on 5.4)
+## Legacy whole-library gates (historical pre-5.8 behavior)
 
 Each library below is wrapped in `#if !UE_VERSION_OLDER_THAN(5, 7, 0)`. On 5.4
 its `.h` and `.cpp` compile to empty translation units, no `UCLASS` is
@@ -45,7 +53,7 @@ fail with "no such function on UnrealBridgeXxxLibrary".
 | `UnrealBridgeMaterialLibrary` | `EMaterialDomain::MD_*` enum values differ in scope; `MATUSAGE_Voxels` / `MATUSAGE_StaticMesh` don't exist in 5.4 |
 | `UnrealBridgeNavigationLibrary` | `ARecastNavMesh::GetDebugGeometryForTile` 2nd arg type changed (`int32` → `FNavTileRef`) and the "default tile = aggregate all" sentinel doesn't exist on 5.4 |
 
-## Single-UFUNCTION gates (library still works, one function unavailable on 5.4)
+## Legacy single-UFUNCTION gates
 
 | UFUNCTION | Reason |
 |---|---|
@@ -53,7 +61,7 @@ fail with "no such function on UnrealBridgeXxxLibrary".
 | `UnrealBridgeBlueprintLibrary::AddAsyncActionNode` | `UK2Node_AsyncAction::InitializeProxyFromFunction` doesn't exist on 5.4 |
 | `UnrealBridgeGameplayAbilityLibrary::AddAbilityTaskNode` | `UK2Node_LatentAbilityCall` UCLASS in `GameplayAbilitiesEditor` is non-API in 5.4; `NewObject<>` of it fails to link from external modules |
 
-## Inline shims (function works on both, different code paths)
+## Legacy inline shims
 
 These remain callable on 5.4 — the macro picks the right code path internally.
 
@@ -92,7 +100,7 @@ every version in the matrix — so each `UE_VERSION_OLDER_THAN(M, m, 0)`
 gate listed in the table above is verified across all Last verified
 versions below.
 
-## Verifying
+## Verifying legacy branches (not a 3.0 support gate)
 
 ```
 python tools/build_matrix.py             # build against all configured engines
@@ -112,13 +120,10 @@ Current 3.0 release evidence:
 
 - UE 5.8.1 clean `BuildPlugin`: pass.
 - ShooterRoyal UE 5.8.1 `LyraEditor Win64 Development`: pass.
-- UE 5.6.1 was attempted on the same machine, but the untouched 2.0 snapshot
-  and the 3.0 worktree both stop inside UBT with an internal
-  `ModuleRules.IsValidForTarget` `ArgumentNullException` before UnrealBridge
-  compilation starts. This is recorded as a local engine/UBT verification
-  blocker, not as a 3.0 compatibility pass or a plugin regression.
+- UE 5.6 is intentionally not a 3.0 target; no UE 5.6 result is required for
+  release acceptance and no compatibility result is claimed.
 
-## Toolchain note: 5.3 / 5.4 vs. MSVC ≥ 14.44
+## Historical toolchain note: 5.3 / 5.4 vs. MSVC ≥ 14.44
 
 5.3 / 5.4 engine source contains an unguarded `#elif __has_feature(...)` in
 `Engine/Source/Runtime/Core/Public/Experimental/ConcurrentLinearAllocator.h`
@@ -151,7 +156,8 @@ If neither option is convenient, disable 5.3 / 5.4 in your local
 plugin code is still version-compatible, it just can't be verified
 against those engines on your toolchain.
 
-**5.2 is known-broken and unsupported.** The matrix was exercised against
+**Historical note:** 5.2 was known-broken even before the 3.0 support range was
+narrowed to 5.8.1. The matrix was exercised against
 it once (2026-05-06) and surfaced API drifts in PerfLibrary
 (`RHIGlobals.h` is 5.3+), CurveLibrary (`RCTM_SmartAuto` enum value,
 `FFloatCurve::GetName`), AnimLibrary (`USkeleton::GetCurveMetaDataNames`),
@@ -160,9 +166,9 @@ AssetLibrary (`UStaticMesh::IsNaniteEnabled`), GameplayAbilityLibrary
 the build aborted at the first failing module, so the full extent is
 larger. Supporting 5.2 would require either substantial inline shims or
 whole-library 5.3+ gates. Given UE 5.2 was released 2023-05 and is no
-longer in Epic's launcher, the project does not support it.
+longer in Epic's launcher, no legacy support was added for it.
 
-## Lowering the threshold
+## Lowering a legacy source threshold
 
 When you install another 5.x and add it to `tools/engines.local.json`,
 re-running the matrix will reveal which of the 5.7-gated items also work on

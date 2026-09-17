@@ -11,6 +11,9 @@
 #include "PCGNode.h"
 #include "PCGPin.h"
 #include "PCGSettings.h"
+#if !UE_VERSION_OLDER_THAN(5, 7, 0)
+#include "Data/Registry/PCGDataType.h"
+#endif
 
 #include "Engine/World.h"
 #include "Editor.h"
@@ -129,7 +132,19 @@ namespace BridgePCGImpl
 	{
 		FBridgePCGPinInfo Info;
 		Info.Label = Pin.Properties.Label.ToString();
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 		Info.AllowedTypes = static_cast<int64>(Pin.Properties.AllowedTypes);
+#else
+		// UE 5.7 replaced the legacy EPCGDataType bitfield with a composable
+		// identifier. Preserve the bridge's numeric compatibility field for
+		// built-in types without invoking the deprecated implicit conversion.
+		uint32 LegacyTypeMask = 0;
+		for (const FPCGDataTypeBaseId& TypeId : Pin.Properties.AllowedTypes.GetIds())
+		{
+			LegacyTypeMask |= static_cast<uint32>(TypeId.AsLegacyType());
+		}
+		Info.AllowedTypes = static_cast<int64>(LegacyTypeMask);
+#endif
 		Info.bOutput = Pin.IsOutputPin();
 		Info.bRequired = Pin.Properties.IsRequiredPin();
 		Info.ConnectionCount = Pin.EdgeCount();

@@ -27,10 +27,24 @@ public:
 			ToolProvider = "EpicToolsetRegistry", ToolEngineMin = "5.8.0", ToolIntroducedVersion = "3.0.0"))
 	static FString GetOfficialToolsetCatalogJson();
 
+	/** Session/revision snapshot. IncludeCatalog adds the full raw array; metadata alone is cheap.
+	 * Registration, removal and name-filter changes invalidate the revision. Existing raw discovery is unchanged.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",
+		meta = (ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never",
+			ToolProvider = "EpicToolsetRegistry", ToolEngineMin = "5.8.0", ToolIntroducedVersion = "3.0.0"))
+	static FString GetOfficialToolsetCatalogSnapshotJson(bool bIncludeCatalog = false);
+
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",
 		meta = (ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never",
 			ToolProvider = "EpicToolsetRegistry", ToolEngineMin = "5.8.0", ToolIntroducedVersion = "3.0.0"))
 	static FString GetOfficialToolsetSchemaJson(const FString& ToolsetName);
+
+	/** Return the deny-by-default, exact-id official execution policy bundled with the plugin. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",
+		meta = (ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never",
+			ToolProvider = "EpicToolsetRegistry", ToolEngineMin = "5.8.0", ToolIntroducedVersion = "3.0.0"))
+	static FString GetOfficialToolPolicyJson();
 
 	/** Start an official call without waiting. Only schema-declared read-only tools are accepted. */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",
@@ -42,6 +56,50 @@ public:
 		const FString& ToolsetName,
 		const FString& ToolName,
 		const FString& JsonInput);
+
+	/** Start an audited Slate/Automation/PIE/GameFeature-style runtime interaction. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",
+		meta = (ToolRisk = "RuntimeInteraction", ToolExecution = "PollingJob", ToolSaveBehavior = "Never",
+			ToolSupportsIdempotency = "false", ToolProvider = "EpicToolsetRegistry",
+			ToolEngineMin = "5.8.0", ToolIntroducedVersion = "3.0.0"))
+	static FString StartOfficialRuntimeToolsetCall(
+		const FString& CallId,
+		const FString& ToolsetName,
+		const FString& ToolName,
+		const FString& JsonInput,
+		bool bAllowRuntimeSideEffects = false);
+
+	/**
+	 * Execute an audited non-destructive official mutation inside the current
+	 * bridge Job's explicit ChangeSet. The provider must complete immediately;
+	 * saving is never performed. bApply=false always requests rollback preview.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",
+		meta = (ToolRisk = "Mutating", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never",
+			ToolProvider = "EpicToolsetRegistry", ToolEngineMin = "5.8.0", ToolIntroducedVersion = "3.0.0"))
+	static FString ExecuteOfficialTransactionalToolsetCall(
+		const FString& ToolsetName,
+		const FString& ToolName,
+		const FString& JsonInput,
+		const TArray<FString>& TargetPackages,
+		bool bApply = false);
+
+	/**
+	 * Execute several audited immediate reads/mutations inside one ChangeSet.
+	 * JsonCalls is an array of {toolset, tool, arguments} objects and must contain
+	 * at least one TransactionalSync mutation. ReadOnly calls may be interleaved
+	 * for before/after validation. Any policy, provider, or readback failure rolls
+	 * the entire batch back; packages are never saved.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",
+		meta = (ToolRisk = "Mutating", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never",
+			ToolProvider = "EpicToolsetRegistry", ToolEngineMin = "5.8.0", ToolIntroducedVersion = "3.0.0"))
+	static FString ExecuteOfficialTransactionalToolsetBatch(
+		const FString& JsonCalls,
+		const TArray<FString>& TargetPackages,
+		bool bApply = false,
+		const FString& NiagaraSystemPathToCompile = TEXT(""),
+		const FString& NiagaraUserParameterRenamesJson = TEXT("[]"));
 
 	/** Poll a previously started call. The returned JSON always contains complete and success. */
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|UE58",

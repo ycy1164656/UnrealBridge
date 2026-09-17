@@ -35,7 +35,10 @@
 #include "UObject/Package.h"
 #include "Misc/App.h"
 #include "Misc/EngineVersion.h"
+#include "Misc/EngineVersionComparison.h"
+#include "Misc/ConfigCacheIni.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectIterator.h"
 #include "UObject/UObjectGlobals.h"
 #include "HighResScreenshot.h"
 #include "ShowFlags.h"
@@ -56,6 +59,7 @@
 #include "EditorModeManager.h"
 #include "UnrealWidget.h"
 #include "Settings/LevelEditorViewportSettings.h"
+#include "Settings/LevelEditorPlaySettings.h"
 #include "Settings/EditorLoadingSavingSettings.h"
 #include "ISourceControlModule.h"
 #include "ISourceControlProvider.h"
@@ -338,7 +342,13 @@ namespace BridgeEditorImpl
 			{
 				Fallback = Inner;
 			}
-		}, false);
+		},
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
+		false
+#else
+		EGetObjectsFlags::None
+#endif
+		);
 		if (Match)
 		{
 			return Match;
@@ -558,6 +568,50 @@ bool UUnrealBridgeEditorLibrary::StartPIE()
 	GEditor->RequestPlaySession(Params);
 	// The request is deferred to the next editor tick; kick it so PIE actually
 	// starts (and spawns the default pawn) without requiring an external tick.
+	GEditor->StartQueuedPlaySessionRequest();
+	return true;
+}
+
+bool UUnrealBridgeEditorLibrary::StartNetworkPIE(int32 ClientCount, bool bRunUnderOneProcess)
+{
+	if (!GEditor)
+	{
+		return false;
+	}
+	if (GEditor->PlayWorld)
+	{
+		return true;
+	}
+
+	ULevelEditorPlaySettings* SessionSettings = DuplicateObject<ULevelEditorPlaySettings>(
+		GetDefault<ULevelEditorPlaySettings>(), GetTransientPackage());
+	if (!SessionSettings)
+	{
+		return false;
+	}
+	SessionSettings->SetPlayNetMode(EPlayNetMode::PIE_ListenServer);
+	SessionSettings->SetRunUnderOneProcess(bRunUnderOneProcess);
+	SessionSettings->SetPlayNumberOfClients(FMath::Clamp(ClientCount, 1, 10));
+	SessionSettings->bLaunchSeparateServer = false;
+
+	FRequestPlaySessionParams Params;
+	Params.WorldType = EPlaySessionWorldType::PlayInEditor;
+	Params.EditorPlaySettings = SessionSettings;
+
+	if (FModuleManager::Get().IsModuleLoaded("LevelEditor"))
+	{
+		FLevelEditorModule& LE = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
+		TSharedPtr<IAssetViewport> ActiveViewport = LE.GetFirstActiveViewport();
+		if (ActiveViewport.IsValid())
+		{
+			Params.DestinationSlateViewport = ActiveViewport;
+			FEditorViewportClient& VC = ActiveViewport->GetAssetViewportClient();
+			Params.StartLocation = VC.GetViewLocation();
+			Params.StartRotation = VC.GetViewRotation();
+		}
+	}
+
+	GEditor->RequestPlaySession(Params);
 	GEditor->StartQueuedPlaySessionRequest();
 	return true;
 }

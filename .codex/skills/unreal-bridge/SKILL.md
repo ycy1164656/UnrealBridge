@@ -1,12 +1,13 @@
 ---
 name: unreal-bridge
-description: Use UnrealBridge from Codex to inspect or automate a running Unreal Editor through its local TCP or HTTP MCP endpoints.
+description: Use UnrealBridge 3.0 from Codex to inspect or automate a running Unreal Engine 5.8.1 Editor through local TCP or HTTP MCP endpoints.
 ---
 
 # UnrealBridge for Codex
 
-Use this skill when working with a running Unreal Editor that has the
-`UnrealBridge` plugin installed and enabled.
+Use this skill when working with a running Unreal Engine 5.8.1 Editor that has
+the `UnrealBridge` 3.0 plugin installed and enabled. UE 5.6 and other
+pre-5.8.1 engines are outside the 3.0 support scope.
 
 ## Bridge Path
 
@@ -94,6 +95,39 @@ poll script with `--poll-code` or `--poll-file`. The poll script must print one
 JSON object containing a boolean `complete` field. Never emulate this with
 `time.sleep()` inside UE Python.
 
+## UnrealBridge 3.0 Workflows
+
+Use the grouped MCP surface before constructing ad-hoc Python for supported
+workflows:
+
+- `bridge_list_domains`, `bridge_search_tools`, and `bridge_describe_tools`
+  search native libraries, high-level domains, and UE 5.8 official Toolsets.
+- Use `_fields`, `_omit`, `max_items`, and `cursor` to bound large results.
+- Use `bridge_read_artifact` for large JSON, screenshots, logs, traces, reports,
+  and golden-image diffs returned as content-addressed Artifacts.
+- Use `bridge_submit_scenario` for multi-step work that needs assertions, safe
+  retry, cancellation and rollback hooks. Persisted state is not proof that an
+  executor survived a host or Editor restart; reconcile unknown side effects.
+- Use `bridge_submit_automation_run` for durable Automation discovery, run,
+  status, results, stop, and report capture.
+- Prefer the named Control Rig, Sequencer, PCG, Physics, Dataflow, Mesh,
+  Material, MetaSound, GameFeature, Slate, Niagara, and other typed domain
+  workflows when their declared operation matches the task.
+
+For project evidence, use `bridge_project_context` / `bridge_project_impact`;
+for Blueprint export/diff/proposals use `bridge_graph_*`. For multiplayer
+acceptance, prefer `bridge_runtime_run` with a typed `owned_pie` recipe and
+`client_count=3`; poll `bridge_runtime_status` through verified cleanup. This
+starts a transient Listen Server plus two clients and only stops the exact
+PIE session owned by that run. Read-only `observe` mode preserves existing PIE.
+
+For World handles, background Trace, catalog freshness, context budgets,
+compact graphs and runtime recipe examples, read
+[the reliability API reference](C:/dev/UnrealBridge/.claude/skills/unreal-bridge/references/bridge-reliability-workflows.md).
+Use `Perf.start_trace_analysis` and status/result/cancel; old synchronous Trace
+summary APIs now return a migration error. New MCP tools need the host adapter
+process reloaded before a client's tool list can discover them.
+
 ## Embedded HTTP MCP
 
 Protocol v2 also exposes a loopback-only MCP/REST endpoint at
@@ -120,8 +154,12 @@ uv --directory C:\dev\UnrealBridge run --with "mcp>=1.6.0,<2" python C:\dev\Unre
 ```
 
 The adapter exposes grouped tools (`bridge_call`, `asset_op`, `level_op`,
-`blueprint_op`, `umg_op`, etc.) instead of one tool per `UFUNCTION`. It also
-exposes UE 5.8 ToolsetRegistry discovery and read-only official-tool Jobs;
-mutating or destructive official tools remain blocked until a typed wrapper is
-audited. Keep the `mcp>=1.6.0,<2` upper bound because MCP 2.x moved FastMCP's
-Python import surface.
+`blueprint_op`, `umg_op`, etc.) instead of one tool per `UFUNCTION`. UE 5.8
+official calls are authorized by exact `toolset|tool` plus input-schema hash:
+387 audited `ReadOnly`, 49 explicit-opt-in `RuntimeInteraction`, and 326
+explicit-target `TransactionalSync` operations are available; 70 destructive,
+save, external-path, source-control, or arbitrary-script operations remain
+`Rejected`. Every allowed plane is no-save. Transactional calls must use
+ChangeSet ownership/rollback, and a schema mismatch is denied. Keep the
+`mcp>=1.6.0,<2` upper bound because MCP 2.x moved FastMCP's Python import
+surface.

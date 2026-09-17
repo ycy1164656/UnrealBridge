@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 3,
-	"VersionName": "3.0.0",
+	"Version": 4,
+	"VersionName": "3.1.0",
 	"FriendlyName": "UnrealBridge",
 	"Description": "TCP bridge server that allows external tools (like Claude Code) to execute Python scripts in the Unreal Editor's Python interpreter and receive results.",
 	"Category": "Editor",
@@ -27,11 +27,23 @@
 			"Enabled": true
 		},
 		{
+			"Name": "GameFeatures",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayStateTree",
+			"Enabled": true
+		},
+		{
 			"Name": "EnhancedInput",
 			"Enabled": true
 		},
 		{
 			"Name": "Niagara",
+			"Enabled": true
+		},
+		{
+			"Name": "Metasound",
 			"Enabled": true
 		},
 		{
@@ -47,11 +59,11 @@
 			"Enabled": true
 		},
 		{
-			"Name": "StructUtils",
+			"Name": "StateTree",
 			"Enabled": true
 		},
 		{
-			"Name": "StateTree",
+			"Name": "SmartObjects",
 			"Enabled": true
 		},
 		{
@@ -68,6 +80,11 @@
 		},
 		{
 			"Name": "ToolsetRegistry",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "AllToolsets",
 			"Enabled": true,
 			"Optional": true
 		}

@@ -12,6 +12,7 @@
 #include "Sockets.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/App.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUnrealBridgeDiscovery, Log, All);
 

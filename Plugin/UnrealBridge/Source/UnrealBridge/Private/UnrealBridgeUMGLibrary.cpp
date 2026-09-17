@@ -8,9 +8,13 @@
 #include "Components/CanvasPanel.h"
 #include "Components/ContentWidget.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/EditableText.h"
+#include "Components/EditableTextBox.h"
 #include "Components/Widget.h"
 #include "Components/PanelWidget.h"
 #include "Components/PanelSlot.h"
+#include "Components/RichTextBlock.h"
+#include "Components/TextBlock.h"
 #include "EditorAssetLibrary.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Animation/WidgetAnimation.h"
@@ -30,11 +34,13 @@
 #include "Serialization/BufferArchive.h"
 #include "Tracks/MovieSceneFloatTrack.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectIterator.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node_ComponentBoundEvent.h"
 #include "WidgetBlueprintEditorUtils.h"
+#include "Widgets/SWidget.h"
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -144,6 +150,146 @@ namespace BridgeUMGImpl
 			{
 				GatherWidgets(Panel->GetChildAt(i), Info.Name, Out);
 			}
+		}
+	}
+
+	FString WorldTypeToString(EWorldType::Type WorldType)
+	{
+		switch (WorldType)
+		{
+		case EWorldType::None: return TEXT("None");
+		case EWorldType::Game: return TEXT("Game");
+		case EWorldType::Editor: return TEXT("Editor");
+		case EWorldType::PIE: return TEXT("PIE");
+		case EWorldType::EditorPreview: return TEXT("EditorPreview");
+		case EWorldType::GamePreview: return TEXT("GamePreview");
+		case EWorldType::GameRPC: return TEXT("GameRPC");
+		case EWorldType::Inactive: return TEXT("Inactive");
+		default: return TEXT("Unknown");
+		}
+	}
+
+	FString RuntimeWidgetText(const UWidget* Widget)
+	{
+		if (const UTextBlock* TextBlock = Cast<UTextBlock>(Widget))
+		{
+			return TextBlock->GetText().ToString();
+		}
+		if (const URichTextBlock* RichTextBlock = Cast<URichTextBlock>(Widget))
+		{
+			return RichTextBlock->GetText().ToString();
+		}
+		if (const UEditableText* EditableText = Cast<UEditableText>(Widget))
+		{
+			return EditableText->GetText().ToString();
+		}
+		if (const UEditableTextBox* EditableTextBox = Cast<UEditableTextBox>(Widget))
+		{
+			return EditableTextBox->GetText().ToString();
+		}
+		return FString();
+	}
+
+	FBridgeRuntimeWidgetInfo BuildRuntimeWidgetInfo(
+		UUserWidget* Owner,
+		UWidget* Widget,
+		const FString& SemanticPath,
+		const FString& ParentObjectPath,
+		int32 Depth)
+	{
+		FBridgeRuntimeWidgetInfo Info;
+		if (!Widget)
+		{
+			Info.Error = TEXT("Runtime widget is null");
+			return Info;
+		}
+		Info.bFound = true;
+		Info.WidgetObjectPath = Widget->GetPathName();
+		Info.SemanticPath = SemanticPath;
+		Info.Name = Widget->GetName();
+		Info.WidgetClass = Widget->GetClass()->GetPathName();
+		Info.ParentObjectPath = ParentObjectPath;
+		Info.Depth = Depth;
+		Info.Text = RuntimeWidgetText(Widget);
+		Info.Visibility = VisibilityToString(Widget->GetVisibility());
+		Info.bEnabled = Widget->GetIsEnabled();
+		Info.bHasKeyboardFocus = Widget->HasKeyboardFocus();
+		Info.bHovered = Widget->IsHovered();
+		if (APlayerController* PlayerController = Widget->GetOwningPlayer())
+		{
+			Info.bHasUserFocus = Widget->HasUserFocus(PlayerController);
+		}
+		if (Owner)
+		{
+			Info.OwnerUserWidgetPath = Owner->GetPathName();
+			Info.OwnerUserWidgetClass = Owner->GetClass()->GetPathName();
+			Info.bInViewport = Owner->IsInViewport();
+		}
+		if (UWorld* World = Widget->GetWorld())
+		{
+			Info.WorldPath = World->GetPathName();
+			Info.WorldType = WorldTypeToString(World->WorldType);
+		}
+
+		const FGeometry& Geometry = Widget->GetCachedGeometry();
+		Info.AbsolutePosition = FVector2D(Geometry.GetAbsolutePosition());
+		Info.AbsoluteSize = FVector2D(Geometry.GetAbsoluteSize());
+		Info.LocalSize = FVector2D(Geometry.GetLocalSize());
+		if (const TSharedPtr<SWidget> SlateWidget = Widget->GetCachedWidget())
+		{
+			Info.SlateType = SlateWidget->GetTypeAsString();
+			Info.SlateAddress = FString::Printf(TEXT("0x%p"), SlateWidget.Get());
+		}
+		return Info;
+	}
+
+	void GatherRuntimeWidgets(
+		UUserWidget* Owner,
+		UWidget* Widget,
+		const FString& SemanticPath,
+		const FString& ParentObjectPath,
+		int32 Depth,
+		TSet<UWidget*>& Seen,
+		TArray<FBridgeRuntimeWidgetInfo>& Out)
+	{
+		if (!Widget || Seen.Contains(Widget))
+		{
+			return;
+		}
+		Seen.Add(Widget);
+		Out.Add(BuildRuntimeWidgetInfo(Owner, Widget, SemanticPath, ParentObjectPath, Depth));
+
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 Index = 0; Index < Panel->GetChildrenCount(); ++Index)
+			{
+				if (UWidget* Child = Panel->GetChildAt(Index))
+				{
+					GatherRuntimeWidgets(
+						Owner,
+						Child,
+						SemanticPath + TEXT("/") + Child->GetName(),
+						Widget->GetPathName(),
+						Depth + 1,
+						Seen,
+						Out);
+				}
+			}
+		}
+
+		UUserWidget* NestedOwner = Cast<UUserWidget>(Widget);
+		if (NestedOwner && NestedOwner != Owner && NestedOwner->WidgetTree
+			&& NestedOwner->WidgetTree->RootWidget)
+		{
+			UWidget* NestedRoot = NestedOwner->WidgetTree->RootWidget;
+			GatherRuntimeWidgets(
+				NestedOwner,
+				NestedRoot,
+				SemanticPath + TEXT("/") + NestedRoot->GetName(),
+				Widget->GetPathName(),
+				Depth + 1,
+				Seen,
+				Out);
 		}
 	}
 
@@ -463,6 +609,105 @@ TArray<FBridgeWidgetInfo> UUnrealBridgeUMGLibrary::GetWidgetTree(const FString& 
 	}
 
 	return Result;
+}
+
+TArray<FBridgeRuntimeWidgetInfo> UUnrealBridgeUMGLibrary::GetRuntimeWidgetTree(
+	const FString& UserWidgetClassFilter,
+	const FString& InstanceNameFilter)
+{
+	TArray<FBridgeRuntimeWidgetInfo> Result;
+	TSet<UWidget*> Seen;
+
+	for (int32 RootPass = 0; RootPass < 2; ++RootPass)
+	{
+		for (TObjectIterator<UUserWidget> It; It; ++It)
+		{
+			UUserWidget* UserWidget = *It;
+			if (!IsValid(UserWidget)
+				|| UserWidget->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject)
+				|| Seen.Contains(UserWidget))
+			{
+				continue;
+			}
+
+			UWorld* World = UserWidget->GetWorld();
+			if (!World || (World->WorldType != EWorldType::PIE
+				&& World->WorldType != EWorldType::Game
+				&& World->WorldType != EWorldType::GamePreview
+				&& World->WorldType != EWorldType::EditorPreview))
+			{
+				continue;
+			}
+			const bool bRootInstance = UserWidget->GetParent() == nullptr;
+			if ((RootPass == 0) != bRootInstance)
+			{
+				continue;
+			}
+			const FString ClassPath = UserWidget->GetClass()->GetPathName();
+			if (!UserWidgetClassFilter.IsEmpty()
+				&& !ClassPath.Contains(UserWidgetClassFilter, ESearchCase::IgnoreCase)
+				&& !UserWidget->GetClass()->GetName().Contains(UserWidgetClassFilter, ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+			if (!InstanceNameFilter.IsEmpty()
+				&& !UserWidget->GetName().Contains(InstanceNameFilter, ESearchCase::IgnoreCase)
+				&& !UserWidget->GetPathName().Contains(InstanceNameFilter, ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+
+			const FString SemanticRoot = UserWidget->GetName();
+			const FString ParentPath = UserWidget->GetParent()
+				? UserWidget->GetParent()->GetPathName() : FString();
+			BridgeUMGImpl::GatherRuntimeWidgets(
+				UserWidget, UserWidget, SemanticRoot, ParentPath, 0, Seen, Result);
+			if (UserWidget->WidgetTree && UserWidget->WidgetTree->RootWidget)
+			{
+				UWidget* RootWidget = UserWidget->WidgetTree->RootWidget;
+				BridgeUMGImpl::GatherRuntimeWidgets(
+					UserWidget,
+					RootWidget,
+					SemanticRoot + TEXT("/") + RootWidget->GetName(),
+					UserWidget->GetPathName(),
+					1,
+					Seen,
+					Result);
+			}
+		}
+	}
+
+	return Result;
+}
+
+FBridgeRuntimeWidgetInfo UUnrealBridgeUMGLibrary::GetRuntimeWidgetState(
+	const FString& WidgetObjectPath)
+{
+	for (const FBridgeRuntimeWidgetInfo& Info : GetRuntimeWidgetTree(TEXT(""), TEXT("")))
+	{
+		if (Info.WidgetObjectPath == WidgetObjectPath)
+		{
+			return Info;
+		}
+	}
+
+	FBridgeRuntimeWidgetInfo Result;
+	Result.WidgetObjectPath = WidgetObjectPath;
+	UWidget* Widget = Cast<UWidget>(StaticFindObject(UWidget::StaticClass(), nullptr, *WidgetObjectPath));
+	if (!Widget || Widget->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
+	{
+		Result.Error = FString::Printf(TEXT("Live widget '%s' was not found"), *WidgetObjectPath);
+		return Result;
+	}
+	UUserWidget* Owner = Cast<UUserWidget>(Widget);
+	if (!Owner)
+	{
+		Owner = Widget->GetTypedOuter<UUserWidget>();
+	}
+	const FString ParentPath = Widget->GetParent()
+		? Widget->GetParent()->GetPathName() : FString();
+	return BridgeUMGImpl::BuildRuntimeWidgetInfo(
+		Owner, Widget, Widget->GetName(), ParentPath, 0);
 }
 
 // ─── CreateWidgetBlueprint ─────────────────────────────────

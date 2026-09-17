@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,12 +11,21 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 AUDIT_PATH = REPO / "tools" / "audit_ue58_toolsets.py"
 POLICY_PATH = REPO / "tools" / "ue58_toolset_policy.json"
+ACCESS_BUILDER_PATH = REPO / "tools" / "build_ue58_access_policy.py"
 
 spec = importlib.util.spec_from_file_location("audit_ue58_toolsets", AUDIT_PATH)
 audit_module = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 sys.modules[spec.name] = audit_module
 spec.loader.exec_module(audit_module)
+
+access_spec = importlib.util.spec_from_file_location(
+    "build_ue58_access_policy", ACCESS_BUILDER_PATH
+)
+access_module = importlib.util.module_from_spec(access_spec)
+assert access_spec and access_spec.loader
+sys.modules[access_spec.name] = access_module
+access_spec.loader.exec_module(access_module)
 
 
 class UE58UpgradeContractTests(unittest.TestCase):
@@ -25,8 +35,8 @@ class UE58UpgradeContractTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        self.assertEqual(descriptor["Version"], 3)
-        self.assertEqual(descriptor["VersionName"], "3.0.0")
+        self.assertEqual(descriptor["Version"], 4)
+        self.assertEqual(descriptor["VersionName"], "3.1.0")
 
         version_header = (
             REPO
@@ -37,8 +47,13 @@ class UE58UpgradeContractTests(unittest.TestCase):
             / "Public"
             / "UnrealBridgeVersion.h"
         ).read_text(encoding="utf-8")
-        self.assertIn('Plugin = TEXT("3.0.0")', version_header)
+        self.assertIn('Plugin = TEXT("3.1.0")', version_header)
         self.assertIn("Protocol = 2", version_header)
+
+        dependencies = {entry["Name"]: entry for entry in descriptor["Plugins"]}
+        for dependency in ("ToolsetRegistry", "AllToolsets"):
+            self.assertTrue(dependencies[dependency]["Enabled"])
+            self.assertTrue(dependencies[dependency]["Optional"])
 
     def test_ue58_dependency_is_conditionally_compiled(self) -> None:
         build_rules = (
@@ -106,6 +121,137 @@ class UE58UpgradeContractTests(unittest.TestCase):
         self.assertEqual(tools["DeleteEverything"]["classification"], "Reject")
         self.assertEqual(tools["QueryWithoutAnnotation"]["classification"], "Extend")
         self.assertEqual(tools["QueryWithoutAnnotation"]["inferred_side_effects"], "ReadOnlyCandidate")
+
+    def test_runtime_policy_is_exact_complete_and_deny_by_default(self) -> None:
+        audit = json.loads(
+            (REPO / "tests" / "fixtures" / "ue58-toolsets.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        policy, catalog = access_module.build_policy(audit)
+        self.assertTrue(policy["deny_by_default"])
+        self.assertEqual(policy["tool_count"], audit["tool_count"])
+        self.assertEqual(sum(policy["access_counts"].values()), audit["tool_count"])
+        self.assertEqual(catalog["tool_count"], audit["tool_count"])
+        self.assertTrue(
+            all(len(entry["schema_sha256"]) == 64 for entry in policy["tools"].values())
+        )
+
+        def access(toolset: str, tool: str) -> str:
+            return policy["tools"][f"{toolset}|{tool}"]["access"]
+
+        self.assertEqual(
+            access("NiagaraToolsets.NiagaraToolset_System", "GetModuleInputValues"),
+            "ReadOnly",
+        )
+        self.assertEqual(
+            access("NiagaraToolsets.NiagaraToolset_System", "SetStackInputData"),
+            "TransactionalSync",
+        )
+        self.assertEqual(
+            access("SlateInspectorToolset.SlateInspectorToolset", "Click"),
+            "RuntimeInteraction",
+        )
+        self.assertEqual(
+            access("AutomationTestToolset.AutomationTestToolset", "RunTests"),
+            "RuntimeInteraction",
+        )
+        self.assertEqual(
+            access("NiagaraToolsets.NiagaraToolset_System", "RemoveModule"),
+            "Rejected",
+        )
+        self.assertEqual(
+            access(
+                "animation_toolset.toolsets.controlrig.ControlRigTools",
+                "create",
+            ),
+            "Rejected",
+        )
+        self.assertEqual(
+            access(
+                "editor_toolset.toolsets.scene.SceneTools",
+                "commit_level_instance",
+            ),
+            "Rejected",
+        )
+        self.assertEqual(
+            access("editor_toolset.toolsets.asset.AssetTools", "is_dirty"),
+            "ReadOnly",
+        )
+        self.assertEqual(
+            access("editor_toolset.toolsets.asset.AssetTools", "exists"),
+            "ReadOnly",
+        )
+        self.assertEqual(
+            access(
+                "animation_toolset.toolsets.controlrig.ControlRigTools",
+                "import_bones_from_asset",
+            ),
+            "TransactionalSync",
+        )
+        self.assertEqual(
+            access(
+                "animation_toolset.toolsets.import_export.SequencerImportExportTools",
+                "export_anim_sequence",
+            ),
+            "TransactionalSync",
+        )
+        self.assertEqual(
+            access(
+                "editor_toolset.toolsets.scene.SceneTools",
+                "edit_level_instance",
+            ),
+            "RuntimeInteraction",
+        )
+        self.assertEqual(
+            access("UMGToolSet.UMGToolSet", "CompileWidgetBlueprint"),
+            "TransactionalSync",
+        )
+        self.assertEqual(
+            access(
+                "editor_toolset.toolsets.programmatic.ProgrammaticToolset",
+                "execute_tool_script",
+            ),
+            "Rejected",
+        )
+
+    def test_python_source_audit_rejects_decorated_tools_that_save(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = (
+                Path(temp_dir)
+                / "FixtureToolset"
+                / "Content"
+                / "Python"
+                / "fixture"
+                / "toolsets"
+                / "asset.py"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                """
+class FixtureTools:
+    @toolset_registry.tool_call
+    @staticmethod
+    def create(path: str):
+        unreal.EditorAssetLibrary.save_asset(path)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def inspect(path: str):
+        return unreal.EditorAssetLibrary.does_asset_exist(path)
+""",
+                encoding="utf-8",
+            )
+            findings = access_module.audit_python_tool_sources(Path(temp_dir))
+
+        self.assertEqual(
+            findings,
+            {
+                "fixture.toolsets.asset.FixtureTools|create": [
+                    "unreal.EditorAssetLibrary.save_asset"
+                ]
+            },
+        )
 
 
 if __name__ == "__main__":

@@ -1003,4 +1003,17 @@ public:
 	static FBridgeAnimLayoutResult AutoLayoutStateMachine(const FString& AnimBlueprintPath,
 		const FString& StateMachineGraphName,
 		int32 HorizontalSpacing, int32 VerticalSpacing);
+
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Animation|Authoring",meta=(ToolRisk="ReadOnly",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))
+	static FString GetMontageEditModel(const FString& MontagePath);
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Animation|Authoring",meta=(ToolRisk="ReadOnly",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))
+	static FString PreviewMontageSegmentOps(const FString& RequestJson);
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Animation|Authoring",meta=(ToolRisk="Mutating",ToolSaveBehavior="Optional",ToolExecution="GameThreadShort"))
+	static FString ApplyMontageSegmentOps(const FString& RequestJson);
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Animation|Authoring",meta=(ToolRisk="ReadOnly",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))
+	static FString GetNotifyEditModel(const FString& AnimationPath);
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Animation|Authoring",meta=(ToolRisk="Mutating",ToolSaveBehavior="Optional",ToolExecution="GameThreadShort"))
+	static FString AddTypedAnimNotify(const FString& RequestJson);
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Animation|Authoring",meta=(ToolRisk="Mutating",ToolSaveBehavior="Optional",ToolExecution="GameThreadShort"))
+	static FString UpdateTypedAnimNotify(const FString& RequestJson);
 };

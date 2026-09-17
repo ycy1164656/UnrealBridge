@@ -25,6 +25,7 @@
 #include "BoneContainer.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "ScopedTransaction.h"
 
@@ -290,8 +291,12 @@ TArray<FBridgePSDAnimEntry> UUnrealBridgePoseSearchLibrary::ListDatabaseAnimatio
 	for (int32 i = 0; i < N; ++i)
 	{
 		FBridgePSDAnimEntry Row;
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 		const FPoseSearchDatabaseAnimationAssetBase* Entry =
 			PSD->GetDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(i);
+#else
+		const FPoseSearchDatabaseAnimationAsset* Entry = PSD->GetDatabaseAnimationAsset(i);
+#endif
 		if (!Entry)
 		{
 			Out.Add(Row);
@@ -308,6 +313,7 @@ TArray<FBridgePSDAnimEntry> UUnrealBridgePoseSearchLibrary::ListDatabaseAnimatio
 
 		if (Cast<UBlendSpace>(Asset))
 		{
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 			if (const FPoseSearchDatabaseBlendSpace* BlendEntry =
 				PSD->GetDatabaseAnimationAsset<FPoseSearchDatabaseBlendSpace>(i))
 			{
@@ -318,6 +324,14 @@ TArray<FBridgePSDAnimEntry> UUnrealBridgePoseSearchLibrary::ListDatabaseAnimatio
 				Row.BlendSpaceParamX = BlendEntry->BlendParamX;
 				Row.BlendSpaceParamY = BlendEntry->BlendParamY;
 			}
+#else
+			Row.BlendSpaceHorizontalSamples = Entry->NumberOfHorizontalSamples;
+			Row.BlendSpaceVerticalSamples = Entry->NumberOfVerticalSamples;
+			Row.bBlendSpaceUseSingleSample = Entry->bUseSingleSample;
+			Row.bBlendSpaceUseGridForSampling = Entry->bUseGridForSampling;
+			Row.BlendSpaceParamX = Entry->BlendParamX;
+			Row.BlendSpaceParamY = Entry->BlendParamY;
+#endif
 		}
 
 		const FFloatInterval Range = Entry->GetSamplingRange();
@@ -355,6 +369,7 @@ TArray<FString> UUnrealBridgePoseSearchLibrary::FindDatabasesUsingAnimation(cons
 
 namespace BridgePoseSearchImpl
 {
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	template <typename EntryType>
 	int32 AddTypedEntry(
 		UPoseSearchDatabase* PSD,
@@ -384,6 +399,35 @@ namespace BridgePoseSearchImpl
 		return INDEX_NONE;
 #endif
 	}
+#else
+	int32 AddUnifiedEntry(
+		UPoseSearchDatabase* PSD,
+		FPoseSearchDatabaseAnimationAsset Entry,
+		float Min,
+		float Max,
+		EPoseSearchMirrorOption Mirror,
+		bool bEnabled)
+	{
+#if WITH_EDITORONLY_DATA
+		if (!PSD || !Entry.GetAnimationAsset()) return INDEX_NONE;
+		Entry.bEnabled = bEnabled;
+		Entry.MirrorOption = Mirror;
+		Entry.SetSamplingRange(FFloatInterval(Min, Max));
+
+		const FScopedTransaction Tx(LOCTEXT("AddPSDEntry", "Add PoseSearch Database Entry"));
+		PSD->Modify();
+		PSD->AddAnimationAsset(Entry);
+		PSD->MarkPackageDirty();
+#if WITH_EDITOR
+		using namespace UE::PoseSearch;
+		FAsyncPoseSearchDatabasesManagement::RequestAsyncBuildIndex(PSD, ERequestAsyncBuildFlag::NewRequest);
+#endif
+		return PSD->GetNumAnimationAssets() - 1;
+#else
+		return INDEX_NONE;
+#endif
+	}
+#endif
 
 	int32 AddAnimationEntry(
 		UPoseSearchDatabase* PSD,
@@ -393,6 +437,7 @@ namespace BridgePoseSearchImpl
 		EPoseSearchMirrorOption Mirror,
 		bool bEnabled)
 	{
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 		if (UAnimSequence* Sequence = Cast<UAnimSequence>(Asset))
 		{
 			FPoseSearchDatabaseSequence Entry;
@@ -418,6 +463,16 @@ namespace BridgePoseSearchImpl
 			return AddTypedEntry(PSD, Entry, Min, Max, Mirror, bEnabled);
 		}
 		return INDEX_NONE;
+#else
+		if (!Cast<UAnimSequence>(Asset) && !Cast<UBlendSpace>(Asset)
+			&& !Cast<UAnimComposite>(Asset) && !Cast<UAnimMontage>(Asset))
+		{
+			return INDEX_NONE;
+		}
+		FPoseSearchDatabaseAnimationAsset Entry;
+		Entry.AnimAsset = Asset;
+		return AddUnifiedEntry(PSD, MoveTemp(Entry), Min, Max, Mirror, bEnabled);
+#endif
 	}
 
 	FBridgePSDAddResult MakeAddError(const FString& Msg)
@@ -499,8 +554,13 @@ FBridgePSDAddResult UUnrealBridgePoseSearchLibrary::AddBlendSpaceToDatabase(cons
 	}
 
 #if WITH_EDITORONLY_DATA
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	FPoseSearchDatabaseBlendSpace Entry;
 	Entry.BlendSpace = BS;
+#else
+	FPoseSearchDatabaseAnimationAsset Entry;
+	Entry.AnimAsset = BS;
+#endif
 	Entry.NumberOfHorizontalSamples = FMath::Max(1, HSamples);
 	Entry.NumberOfVerticalSamples = FMath::Max(1, VSamples);
 	Entry.bUseGridForSampling = bUseGridForSampling;
@@ -508,7 +568,11 @@ FBridgePSDAddResult UUnrealBridgePoseSearchLibrary::AddBlendSpaceToDatabase(cons
 	Entry.BlendParamX = BlendParamX;
 	Entry.BlendParamY = BlendParamY;
 	FBridgePSDAddResult R;
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	R.Index = AddTypedEntry(PSD, Entry, SamplingRangeMin, SamplingRangeMax, Mirror, bEnabled);
+#else
+	R.Index = AddUnifiedEntry(PSD, MoveTemp(Entry), SamplingRangeMin, SamplingRangeMax, Mirror, bEnabled);
+#endif
 #else
 	FBridgePSDAddResult R;
 	R.Error = TEXT("AddBlendSpaceToDatabase requires editor-only data");
@@ -554,8 +618,12 @@ int32 UUnrealBridgePoseSearchLibrary::RemoveDatabaseAnimationByAsset(const FStri
 
 	for (int32 i = 0; i < PSD->GetNumAnimationAssets(); ++i)
 	{
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 		const FPoseSearchDatabaseAnimationAssetBase* E =
 			PSD->GetDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(i);
+#else
+		const FPoseSearchDatabaseAnimationAsset* E = PSD->GetDatabaseAnimationAsset(i);
+#endif
 		if (E && E->GetAnimationAsset() == Anim)
 		{
 			RemoveDatabaseAnimationAt(DatabasePath, i);
@@ -594,16 +662,27 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseAnimationEnabled(const FString& 
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	FPoseSearchDatabaseAnimationAssetBase* E =
 		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(Index);
 	if (!E)
+#else
+	const FPoseSearchDatabaseAnimationAsset* Current = PSD->GetDatabaseAnimationAsset(Index);
+	if (!Current)
+#endif
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UnrealBridge: SetDatabaseAnimationEnabled index %d invalid"), Index);
 		return false;
 	}
 	const FScopedTransaction Tx(LOCTEXT("PSDEntryEnabled", "Set PoseSearch Database Entry Enabled"));
 	PSD->Modify();
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	E->SetIsEnabled(bEnabled);
+#else
+	FPoseSearchDatabaseAnimationAsset Entry = *Current;
+	Entry.SetIsEnabled(bEnabled);
+	PSD->SetAnimationAssetAt(Entry, Index);
+#endif
 	PSD->MarkPackageDirty();
 #if WITH_EDITOR
 	using namespace UE::PoseSearch;
@@ -622,13 +701,24 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseAnimationSamplingRange(const FSt
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	FPoseSearchDatabaseAnimationAssetBase* E =
 		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(Index);
 	if (!E) return false;
+#else
+	const FPoseSearchDatabaseAnimationAsset* Current = PSD->GetDatabaseAnimationAsset(Index);
+	if (!Current) return false;
+#endif
 
 	const FScopedTransaction Tx(LOCTEXT("PSDEntryRange", "Set PoseSearch Database Entry Sampling Range"));
 	PSD->Modify();
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	E->SetSamplingRange(FFloatInterval(SamplingRangeMin, SamplingRangeMax));
+#else
+	FPoseSearchDatabaseAnimationAsset Entry = *Current;
+	Entry.SetSamplingRange(FFloatInterval(SamplingRangeMin, SamplingRangeMax));
+	PSD->SetAnimationAssetAt(Entry, Index);
+#endif
 	PSD->MarkPackageDirty();
 #if WITH_EDITOR
 	using namespace UE::PoseSearch;
@@ -646,16 +736,27 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseAnimationMirrorOption(const FStr
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	FPoseSearchDatabaseAnimationAssetBase* E =
 		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseAnimationAssetBase>(Index);
 	if (!E) return false;
+#else
+	const FPoseSearchDatabaseAnimationAsset* Current = PSD->GetDatabaseAnimationAsset(Index);
+	if (!Current) return false;
+#endif
 
 	EPoseSearchMirrorOption Opt = EPoseSearchMirrorOption::UnmirroredOnly;
 	if (!ParseMirrorOption(MirrorOption, Opt)) return false;
 
 	const FScopedTransaction Tx(LOCTEXT("PSDEntryMirror", "Set PoseSearch Database Entry Mirror Option"));
 	PSD->Modify();
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	E->MirrorOption = Opt;
+#else
+	FPoseSearchDatabaseAnimationAsset Entry = *Current;
+	Entry.MirrorOption = Opt;
+	PSD->SetAnimationAssetAt(Entry, Index);
+#endif
 	PSD->MarkPackageDirty();
 #if WITH_EDITOR
 	using namespace UE::PoseSearch;
@@ -676,18 +777,34 @@ bool UUnrealBridgePoseSearchLibrary::SetDatabaseBlendSpaceSampling(const FString
 	using namespace BridgePoseSearchImpl;
 	UPoseSearchDatabase* PSD = LoadDatabase(DatabasePath);
 	if (!PSD) return false;
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	FPoseSearchDatabaseBlendSpace* E =
 		PSD->GetMutableDatabaseAnimationAsset<FPoseSearchDatabaseBlendSpace>(Index);
 	if (!E) return false;
+#else
+	const FPoseSearchDatabaseAnimationAsset* Current = PSD->GetDatabaseAnimationAsset(Index);
+	if (!Current || !Cast<UBlendSpace>(Current->GetAnimationAsset())) return false;
+	FPoseSearchDatabaseAnimationAsset Entry = *Current;
+#endif
 
 	const FScopedTransaction Tx(LOCTEXT("PSDEntryBSSampling", "Set PoseSearch Database BlendSpace Sampling"));
 	PSD->Modify();
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
 	E->NumberOfHorizontalSamples = FMath::Max(1, HSamples);
 	E->NumberOfVerticalSamples   = FMath::Max(1, VSamples);
 	E->bUseGridForSampling       = bUseGridForSampling;
 	E->bUseSingleSample          = bUseSingleSample;
 	E->BlendParamX               = BlendParamX;
 	E->BlendParamY               = BlendParamY;
+#else
+	Entry.NumberOfHorizontalSamples = FMath::Max(1, HSamples);
+	Entry.NumberOfVerticalSamples   = FMath::Max(1, VSamples);
+	Entry.bUseGridForSampling       = bUseGridForSampling;
+	Entry.bUseSingleSample          = bUseSingleSample;
+	Entry.BlendParamX               = BlendParamX;
+	Entry.BlendParamY               = BlendParamY;
+	PSD->SetAnimationAssetAt(Entry, Index);
+#endif
 	PSD->MarkPackageDirty();
 #if WITH_EDITOR
 	using namespace UE::PoseSearch;

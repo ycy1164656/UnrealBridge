@@ -2021,11 +2021,34 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
 	static TArray<FBridgeTraceChannelInfo> ListTraceChannels();
 
+	/** Start a bounded background analysis of a closed local .utrace file.
+	 * JSON schema unrealbridge.trace_analysis.v1; kinds: performance, alloc, net, cook.
+	 * Two concurrent analyses; 16 retained results with a 15-minute idle TTL.
+	 * File limit 1..1024 MiB; TopN 1..200, TopNPerThread 0..32, TopNCounters 0..200.
+	 * Poll status/result; cancellation is a request until worker resources are released.
+	 * Results are session-local, bounded to 1 MiB; truncation is explicit.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	static FString StartTraceAnalysis(const FString& UtracePath, const FString& SummaryKind = TEXT("performance"),
+		int32 TopN = 20, int32 TopNPerThread = 10, int32 TopNCounters = 100, int32 MaxFileSizeMb = 512);
+
+	/** Short state snapshot. Never waits for analysis or acquires provider locks. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	static FString GetTraceAnalysisStatus(const FString& AnalysisId);
+
+	/** Returns the completed bounded JSON result. Optional release only removes a finished worker. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	static FString GetTraceAnalysisResult(const FString& AnalysisId, bool bRelease = false);
+
+	/** Request cancellation; poll until cancelled. Does not block the GameThread. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	static FString CancelTraceAnalysis(const FString& AnalysisId);
+
 	/**
 	 * Parse a previously-captured `.utrace` file (typically the path returned
 	 * by `stop_trace_capture`) into a structured summary (M4-5). Wraps
-	 * `TraceServices::IAnalysisService::Analyze` (synchronous), then walks
-	 * Diagnostics + Frames + TimingProfiler providers.
+	 * Deprecated compatibility signature. Returns an error directing callers to
+	 * StartTraceAnalysis; analysis and provider traversal run on its worker.
 	 *
 	 * Output:
 	 *  - Diagnostics: platform / app / project / build version / changelist
@@ -2033,9 +2056,7 @@ public:
 	 *  - Hot scopes: top-N timers ranked by total inclusive time across all
 	 *    CPU thread timelines, with name + total ms + call count
 	 *
-	 * Cost: dominated by Analyze() — typically 1-10s per 100 MB of trace.
-	 * Synchronous, blocks the bridge exec; for large traces, kick this from
-	 * an off-main thread or simply tolerate the wait.
+	 * This entry point never performs synchronous analysis.
 	 *
 	 * Editor-only path is fine; this works in both editor and cmdlet.
 	 *
@@ -2053,7 +2074,7 @@ public:
 	 *                         on any failure (file missing, module load fail,
 	 *                         unparseable trace).
 	 */
-	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf", meta = (DeprecatedFunction, DeprecationMessage = "Use StartTraceAnalysis and GetTraceAnalysisResult"))
 	static FBridgePerfTraceSummary ParseTraceToSummary(
 		const FString& UtracePath,
 		int32 TopN = 20,
@@ -2075,13 +2096,12 @@ public:
 	 * a later commit. This MVP is enough to detect "did the run leak", peak
 	 * memory commit, and which subsystem tags are registered.
 	 *
-	 * Cost: dominated by Analyze() — alloc traces are large (1 GB activity
-	 * = several GB trace). Cap on trace file size enforced by caller's disk
-	 * budget; Analyze is synchronous and blocks the bridge exec.
+	 * Deprecated compatibility signature: returns a migration error immediately.
+	 * Use StartTraceAnalysis with SummaryKind=alloc.
 	 *
 	 * @param UtracePath  Absolute path to a `.utrace` file. Must exist.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf", meta = (DeprecatedFunction, DeprecationMessage = "Use StartTraceAnalysis with SummaryKind=alloc"))
 	static FBridgePerfAllocSummary ParseAllocTraceToSummary(const FString& UtracePath);
 
 	/**
@@ -2103,7 +2123,7 @@ public:
 	 *
 	 * @param UtracePath  Absolute path to a `.utrace` file. Must exist.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf", meta = (DeprecatedFunction, DeprecationMessage = "Use StartTraceAnalysis with SummaryKind=net"))
 	static FBridgePerfNetSummary ParseNetTraceToSummary(const FString& UtracePath);
 
 	/**
@@ -2189,7 +2209,7 @@ public:
 	 * @param UtracePath  Absolute path to a `.utrace` file. Must exist.
 	 * @param TopN        Cap on rows (1..1000). Clamped.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf")
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Perf", meta = (DeprecatedFunction, DeprecationMessage = "Use StartTraceAnalysis with SummaryKind=cook"))
 	static FBridgePerfCookSummary ParseCookTraceToSummary(const FString& UtracePath, int32 TopN = 50);
 
 	/**

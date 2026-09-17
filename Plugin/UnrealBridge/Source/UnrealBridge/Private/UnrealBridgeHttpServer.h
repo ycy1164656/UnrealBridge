@@ -81,6 +81,7 @@ private:
 		const FString& ToolsetName,
 		const FString& ToolName,
 		const TSharedPtr<FJsonObject>& Arguments,
+		bool bRuntimeInteraction,
 		FString& OutStartScript,
 		FString& OutPollScript) const;
 

@@ -28,6 +28,10 @@ public class UnrealBridge : ModuleRules
 			"AssetTools",
 			"AssetRegistry",
 			"AIModule",
+			"AIGraph", // SRUB-07 graph node lifecycle and schema base.
+			"BehaviorTreeEditor", // SRUB-07 schema, runtime rebuild and execution order.
+			"AudioEditor", // SRUB-08 Sound Cue graph schema and runtime node synchronization.
+			"AudioExtensions", // SRUB-08 typed USoundModulatorBase volume routing; optional AudioModulation remains dynamically discovered.
 			"Kismet",
 			"GraphEditor",
 			"UMGEditor",
@@ -48,6 +52,8 @@ public class UnrealBridge : ModuleRules
 			"GameplayTagsEditor",
 			"GameplayTasks",
 			"GameplayTasksEditor",
+			"GameFeatures",
+			"GameplayStateTreeModule",
 			"MainFrame",
 			"NavigationSystem",
 			"Navmesh",
@@ -69,13 +75,16 @@ public class UnrealBridge : ModuleRules
 			"RenderCore",
 			"RHI",
 			"MaterialEditor",
+			"MetasoundEngine",
+			"MetasoundFrontend",
+			"MetasoundEditor",
 			"PoseSearch",
 			"Chooser",
 			"ChooserEditor",
-			"StructUtils",
 			"PropertyBindingUtils",
 			"StateTreeModule",
 			"StateTreeEditorModule",
+			"SmartObjectsModule",
 			"IKRig",
 			"IKRigEditor",
 			// Geometry Script — Lane 2 of the procedural-content roadmap

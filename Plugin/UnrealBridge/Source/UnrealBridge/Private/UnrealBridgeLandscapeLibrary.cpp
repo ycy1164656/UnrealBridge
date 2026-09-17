@@ -13,6 +13,7 @@
 #include "LandscapeLayerInfoObject.h"
 #include "LandscapeProxy.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/EngineVersionComparison.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "ScopedTransaction.h"
 #include "UObject/UnrealType.h"
@@ -519,8 +520,11 @@ FBridgeLandscapeImportResult UUnrealBridgeLandscapeLibrary::LandscapeImportWeigh
 	{
 		Edit.SetAlphaData(
 			Item.LayerInfo, Extent.Min.X, Extent.Min.Y, Extent.Max.X, Extent.Max.Y,
-			Item.Data.GetData(), Result.Width, ELandscapeLayerPaintingRestriction::None,
-			bWeightAdjust, false);
+			Item.Data.GetData(), Result.Width, ELandscapeLayerPaintingRestriction::None
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
+			, bWeightAdjust, false
+#endif
+			);
 		Result.ImportedLayers.Add(Item.LayerName);
 	}
 	Landscape->PostEditChange();

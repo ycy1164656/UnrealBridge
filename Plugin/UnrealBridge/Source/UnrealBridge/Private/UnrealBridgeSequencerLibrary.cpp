@@ -15,7 +15,9 @@
 #include "Misc/PackageName.h"
 #include "MovieScene.h"
 #include "MovieSceneBinding.h"
+#include "MovieScenePossessable.h"
 #include "MovieSceneSection.h"
+#include "MovieSceneSpawnable.h"
 #include "MovieSceneTrack.h"
 #include "ScopedTransaction.h"
 #include "Channels/MovieSceneStringChannel.h"
@@ -114,16 +116,49 @@ namespace BridgeSequencerImpl
 		return nullptr;
 	}
 
+	const TArray<FMovieSceneBinding>& GetBindingsReadOnly(const UMovieScene* MovieScene)
+	{
+		check(MovieScene);
+		return MovieScene->GetBindings();
+	}
+
+	FString GetBindingDisplayName(UMovieScene* MovieScene, const FMovieSceneBinding& Binding)
+	{
+		if (!MovieScene)
+		{
+			return FString();
+		}
+		const FGuid BindingId = Binding.GetObjectGuid();
+		const FString DisplayName = MovieScene->GetObjectDisplayName(BindingId).ToString();
+		if (!DisplayName.IsEmpty())
+		{
+			return DisplayName;
+		}
+		if (const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(BindingId))
+		{
+			return Possessable->GetName();
+		}
+		if (const FMovieSceneSpawnable* Spawnable = MovieScene->FindSpawnable(BindingId))
+		{
+			return Spawnable->GetName();
+		}
+		return FString();
+	}
+
 	FGuid FindOrAddActorBinding(ULevelSequence* Sequence, UMovieScene* MovieScene, AActor* Actor, bool bCreateIfMissing)
 	{
 		if (!Sequence || !MovieScene || !Actor)
 		{
 			return FGuid();
 		}
-		for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+		const FString ActorLabel = Actor->GetActorLabel();
+		for (const FMovieSceneBinding& Binding : GetBindingsReadOnly(MovieScene))
 		{
-			if (Binding.GetName() == Actor->GetActorLabel())
+			if (MovieScene->FindPossessable(Binding.GetObjectGuid())
+				&& GetBindingDisplayName(MovieScene, Binding) == ActorLabel)
 			{
+				MovieScene->SetObjectDisplayName(
+					Binding.GetObjectGuid(), FText::FromString(ActorLabel));
 				return Binding.GetObjectGuid();
 			}
 		}
@@ -133,8 +168,9 @@ namespace BridgeSequencerImpl
 		}
 		Sequence->Modify();
 		MovieScene->Modify();
-		const FGuid BindingId = MovieScene->AddPossessable(Actor->GetActorLabel(), Actor->GetClass());
+		const FGuid BindingId = MovieScene->AddPossessable(ActorLabel, Actor->GetClass());
 		Sequence->BindPossessableObject(BindingId, *Actor, Actor->GetWorld());
+		MovieScene->SetObjectDisplayName(BindingId, FText::FromString(ActorLabel));
 		return BindingId;
 	}
 
@@ -454,7 +490,7 @@ FBridgeSequencerBindingInfo UUnrealBridgeSequencerLibrary::AddActorBinding(
 	}
 	if (const FMovieSceneBinding* Binding = MovieScene->FindBinding(BindingId))
 	{
-		Info.BindingName = Binding->GetName();
+		Info.BindingName = BridgeSequencerImpl::GetBindingDisplayName(MovieScene, *Binding);
 	}
 	else
 	{
@@ -535,7 +571,7 @@ TArray<FBridgeSequencerTrackInfo> UUnrealBridgeSequencerLibrary::ListSequenceTra
 	{
 		return Result;
 	}
-	for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+	for (const FMovieSceneBinding& Binding : BridgeSequencerImpl::GetBindingsReadOnly(MovieScene))
 	{
 		for (UMovieSceneTrack* Track : Binding.GetTracks())
 		{
@@ -544,7 +580,10 @@ TArray<FBridgeSequencerTrackInfo> UUnrealBridgeSequencerLibrary::ListSequenceTra
 				continue;
 			}
 			BridgeSequencerImpl::AppendTrackInfo(
-				Result, Track, Binding.GetName(), Binding.GetObjectGuid().ToString());
+				Result,
+				Track,
+				BridgeSequencerImpl::GetBindingDisplayName(MovieScene, Binding),
+				Binding.GetObjectGuid().ToString());
 		}
 	}
 	for (UMovieSceneTrack* Track : MovieScene->GetTracks())
@@ -638,12 +677,16 @@ TArray<FBridgeSequencerSectionInfo> UUnrealBridgeSequencerLibrary::ListSequenceS
 		return Result;
 	}
 	const FFrameRate TickResolution = MovieScene->GetTickResolution();
-	for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+	for (const FMovieSceneBinding& Binding : BridgeSequencerImpl::GetBindingsReadOnly(MovieScene))
 	{
 		for (UMovieSceneTrack* Track : Binding.GetTracks())
 		{
 			BridgeSequencerImpl::AppendSectionInfo(
-				Result, Track, Binding.GetName(), Binding.GetObjectGuid().ToString(), TickResolution);
+				Result,
+				Track,
+				BridgeSequencerImpl::GetBindingDisplayName(MovieScene, Binding),
+				Binding.GetObjectGuid().ToString(),
+				TickResolution);
 		}
 	}
 	for (UMovieSceneTrack* Track : MovieScene->GetTracks())
@@ -715,17 +758,18 @@ FBridgeSequencerValidationResult UUnrealBridgeSequencerLibrary::ValidateLevelSeq
 		}
 	};
 
-	for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+	for (const FMovieSceneBinding& Binding : BridgeSequencerImpl::GetBindingsReadOnly(MovieScene))
 	{
-		if (BindingNames.Contains(Binding.GetName()))
+		const FString BindingName = BridgeSequencerImpl::GetBindingDisplayName(MovieScene, Binding);
+		if (BindingNames.Contains(BindingName))
 		{
 			++Result.WarningCount;
-			Result.Messages.Add(FString::Printf(TEXT("WARNING: Duplicate binding name: %s"), *Binding.GetName()));
+			Result.Messages.Add(FString::Printf(TEXT("WARNING: Duplicate binding name: %s"), *BindingName));
 		}
-		BindingNames.Add(Binding.GetName());
+		BindingNames.Add(BindingName);
 		for (UMovieSceneTrack* Track : Binding.GetTracks())
 		{
-			ValidateTrack(Track, Binding.GetName());
+			ValidateTrack(Track, BindingName);
 		}
 	}
 	for (UMovieSceneTrack* Track : MovieScene->GetTracks())
