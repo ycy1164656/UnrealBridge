@@ -30,7 +30,7 @@ async def main():
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             initialized=await session.initialize()
-            assert initialized.serverInfo.version=="3.1.0", initialized.serverInfo
+            assert initialized.serverInfo.version=="3.2.0", initialized.serverInfo
             listing = await session.list_tools()
             names = {tool.name for tool in listing.tools}
             assert "bridge_submit_upgrade_validation" in names

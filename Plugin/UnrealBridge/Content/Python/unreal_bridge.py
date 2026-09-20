@@ -16,12 +16,12 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-09-10T14:18:05+00:00'
+_GENERATED_AT = '2026-09-19T10:26:14+00:00'
 _UE_VERSION = '5.8.2-56702186+++UE5+Release-5.8'
 _PROTOCOL_VERSION = 2
-_PLUGIN_VERSION = '3.1.0'
-_REGISTRY_HASH = '7bfef7aee57835f4aaa37f72ea2fa876'
-_MANIFEST_HASH = 'b5efa601d4b00ece807f7a9cad4cf27c67e29375c397e3cdf7c99309e73085ef'
+_PLUGIN_VERSION = '3.2.0'
+_REGISTRY_HASH = 'c464e184d0ce700199149450a92e30fd'
+_MANIFEST_HASH = 'cf15342113f44ac34b8bd166584a97e2f59b2f6d4b10d8b60f8cd0c86d39c46f'
 
 def verify_runtime_compatibility():
     """Fail fast when the generated wrapper no longer matches the loaded plugin."""
@@ -2811,6 +2811,25 @@ class Editor:
     def write_log_message(*, message, severity="Log"):
         """X.write_log_message(message, severity="Log") -> bool"""
         return unreal.UnrealBridgeEditorLibrary.write_log_message(message, severity)
+
+
+class Evidence:
+    """Wraps unreal.UnrealBridgeEvidenceLibrary (kwargs-only)."""
+
+    @staticmethod
+    def begin_viewport_capture(*, request_json):
+        """X.begin_viewport_capture(request_json) -> str"""
+        return unreal.UnrealBridgeEvidenceLibrary.begin_viewport_capture(request_json)
+
+    @staticmethod
+    def get_viewport_capture(*, capture_id):
+        """X.get_viewport_capture(capture_id) -> str"""
+        return unreal.UnrealBridgeEvidenceLibrary.get_viewport_capture(capture_id)
+
+    @staticmethod
+    def stop_viewport_capture(*, capture_id, owner_id):
+        """X.stop_viewport_capture(capture_id, owner_id) -> str"""
+        return unreal.UnrealBridgeEvidenceLibrary.stop_viewport_capture(capture_id, owner_id)
 
 
 class Foliage:
@@ -5955,6 +5974,20 @@ class Registry:
     def get_tool_registry_json():
         """X.get_tool_registry_json() -> str"""
         return unreal.UnrealBridgeRegistryLibrary.get_tool_registry_json()
+
+
+class Sandbox:
+    """Wraps unreal.UnrealBridgeSandboxLibrary (kwargs-only)."""
+
+    @staticmethod
+    def get_sandbox_status():
+        """X.get_sandbox_status() -> str"""
+        return unreal.UnrealBridgeSandboxLibrary.get_sandbox_status()
+
+    @staticmethod
+    def sandbox_request(*, request_json):
+        """X.sandbox_request(request_json) -> str"""
+        return unreal.UnrealBridgeSandboxLibrary.sandbox_request(request_json)
 
 
 class Sequencer:

@@ -449,6 +449,9 @@ def _cli() -> int:
     parser.add_argument("--no-wrapper", action="store_true", help="Skip generating the kwargs-only wrapper module")
     parser.add_argument("--bridge", help="Path to bridge.py (default: auto-detect relative to this script)")
     parser.add_argument("--timeout", type=int, default=60, help="Bridge call timeout in seconds (default: 60)")
+    parser.add_argument("--project", required=True, help="Exact absolute .uproject path; output identity must match")
+    parser.add_argument("--endpoint", help="Optional verified host:port; project identity is still checked")
+    parser.add_argument("--deploy", action="store_true", help="Conflict-check and deploy only generated wrapper/meta to the selected project")
     args = parser.parse_args()
 
     here = os.path.dirname(os.path.abspath(__file__))
@@ -468,8 +471,11 @@ def _cli() -> int:
     # previous manifest cannot be allowed to reject the generator itself.
     cmd = [
         sys.executable, bridge, "--json", "--no-preflight", "--manifest-bootstrap",
-        "exec-file", os.path.abspath(__file__),
+        "--project", os.path.abspath(args.project),
     ]
+    if args.endpoint:
+        cmd.extend(["--endpoint", args.endpoint])
+    cmd.extend(["exec-file", os.path.abspath(__file__)])
     try:
         # Force UTF-8 + replace on decode errors. `text=True` alone defaults to
         # the active locale (GBK on zh-CN Windows), which dies on the UTF-8
@@ -520,15 +526,16 @@ def _cli() -> int:
         print(f"ERROR: no JSON line in script output:\n{manifest_text[:500]}", file=sys.stderr)
         return 1
 
+    if not manifest_matches_project(last_json, args.project):
+        print("ERROR: generator returned a different or unidentified project; no output was written", file=sys.stderr)
+        return 1
+
     canonical_manifest = json.dumps(
         last_json, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     last_json["manifest_hash"] = hashlib.sha256(canonical_manifest).hexdigest()
 
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(last_json, f, indent=2, ensure_ascii=False, sort_keys=True)
-        f.write("\n")
+    _write_generated(out, json.dumps(last_json, indent=2, ensure_ascii=False, sort_keys=True) + "\n", repo)
 
     runtime_meta = {
         "protocol_version": last_json.get("protocol_version", 1),
@@ -541,10 +548,7 @@ def _cli() -> int:
     meta_out = os.path.join(
         repo, "Plugin", "UnrealBridge", "Content", "Python", "bridge_manifest_meta.json"
     )
-    os.makedirs(os.path.dirname(meta_out), exist_ok=True)
-    with open(meta_out, "w", encoding="utf-8") as f:
-        json.dump(runtime_meta, f, indent=2, ensure_ascii=False, sort_keys=True)
-        f.write("\n")
+    _write_generated(meta_out, json.dumps(runtime_meta, indent=2, ensure_ascii=False, sort_keys=True) + "\n", repo)
 
     n_libs = len(last_json.get("libraries", {}))
     n_funcs = sum(len(L.get("functions", {})) for L in last_json.get("libraries", {}).values())
@@ -559,36 +563,17 @@ def _cli() -> int:
             repo, "Plugin", "UnrealBridge", "Content", "Python", "unreal_bridge.py"
         )
         wrapper_src, stats = _generate_wrapper(last_json)
-        os.makedirs(os.path.dirname(wrapper_out), exist_ok=True)
-        with open(wrapper_out, "w", encoding="utf-8") as f:
-            f.write(wrapper_src)
+        _write_generated(wrapper_out, wrapper_src, repo)
         print(f"Wrote {wrapper_out}")
         print(f"  {stats['classes']} classes, {stats['methods']} methods, "
               f"{stats['skipped']} skipped (Python keyword in param name)")
 
-        # UE auto-loads Python from the target project's Plugins/UnrealBridge/
-        # Content/Python/, not the source repo. Mirror the wrapper there so a
-        # plain `import unreal_bridge` inside UE just works after regen.
-        proj_uproject = (last_json.get("project_path") or "").strip()
-        if proj_uproject:
-            mirror = os.path.join(
-                os.path.dirname(proj_uproject), "Plugins", "UnrealBridge",
-                "Content", "Python", "unreal_bridge.py",
-            )
-            try:
-                os.makedirs(os.path.dirname(mirror), exist_ok=True)
-                with open(mirror, "w", encoding="utf-8") as f:
-                    f.write(wrapper_src)
-                mirror_meta = os.path.join(os.path.dirname(mirror), "bridge_manifest_meta.json")
-                with open(mirror_meta, "w", encoding="utf-8") as f:
-                    json.dump(runtime_meta, f, indent=2, ensure_ascii=False, sort_keys=True)
-                    f.write("\n")
-                print(f"Mirrored to {mirror}")
-            except OSError as e:
-                print(f"WARN: could not mirror wrapper to project ({e})", file=sys.stderr)
-        else:
-            print("WARN: project_path missing from manifest — wrapper not mirrored to live editor",
-                  file=sys.stderr)
+        if args.deploy:
+            from deploy_scoped import deploy
+            if os.path.abspath(wrapper_out) != os.path.join(repo, 'Plugin', 'UnrealBridge', 'Content', 'Python', 'unreal_bridge.py'):
+                raise ValueError('--deploy requires the canonical wrapper output')
+            print(json.dumps(deploy(repo, args.project,
+                ['Content/Python/unreal_bridge.py', 'Content/Python/bridge_manifest_meta.json'], apply=True)))
 
     return 0
 
@@ -753,9 +738,37 @@ def _short_name(lib_name: str) -> str:
     return s or lib_name
 
 
+def _write_generated(path, text, repo):
+    from pathlib import Path
+    from datetime import datetime, timezone
+    import shutil
+    target = Path(path)
+    data = text.encode('utf-8')
+    if target.exists() and target.read_bytes() == data:
+        return
+    if target.exists():
+        backup = Path(repo) / '.tmp/codex-backups' / datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') / 'manifest'
+        backup.mkdir(parents=True)
+        shutil.copy2(target, backup / target.name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    if not data or target.read_bytes() != data:
+        raise OSError('Generated file readback failed: ' + str(target))
+
+
+def manifest_matches_project(manifest, expected):
+    """Even a manually selected endpoint cannot authorize another project."""
+    def canonical(value):
+        if not isinstance(value, str) or not os.path.isabs(value) or not value.lower().endswith('.uproject'):
+            return None
+        return os.path.normcase(os.path.realpath(value)).replace('\\', '/')
+    wanted = canonical(expected)
+    return wanted is not None and canonical(manifest.get('project_path')) == wanted
+
+
 # ── Entry point ────────────────────────────────────────────────────────────
 
 if _IN_UE:
     print(json.dumps(_build_manifest_in_ue(), ensure_ascii=False))
-else:
+elif __name__ == '__main__':
     sys.exit(_cli())

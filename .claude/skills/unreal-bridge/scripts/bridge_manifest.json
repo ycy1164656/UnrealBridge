@@ -43,7 +43,7 @@
       "TIMER"
     ]
   },
-  "generated_at": "2026-09-10T14:18:05+00:00",
+  "generated_at": "2026-09-19T10:26:14+00:00",
   "libraries": {
     "UnrealBridgeAILibrary": {
       "functions": {
@@ -33340,6 +33340,148 @@
           "provider": "UnrealBridge",
           "returns": "bool",
           "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        }
+      }
+    },
+    "UnrealBridgeEvidenceLibrary": {
+      "functions": {
+        "begin_viewport_capture": {
+          "description": "Begin Viewport Capture",
+          "doc": "X.begin_viewport_capture(request_json) -> str",
+          "engine_min": "5.8.2",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "request_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "request_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ExplicitOptIn",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "get_viewport_capture": {
+          "description": "Get Viewport Capture",
+          "doc": "X.get_viewport_capture(capture_id) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "stop_viewport_capture": {
+          "description": "Stop Viewport Capture",
+          "doc": "X.stop_viewport_capture(capture_id, owner_id) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_id": {
+                "type": "string"
+              },
+              "owner_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id",
+              "owner_id"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_id",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ExplicitOptIn",
           "save_behavior": "Never",
           "supports_dry_run": false,
           "supports_idempotency": false
@@ -71494,6 +71636,74 @@
         }
       }
     },
+    "UnrealBridgeSandboxLibrary": {
+      "functions": {
+        "get_sandbox_status": {
+          "description": "Get Sandbox Status",
+          "doc": "X.get_sandbox_status() -> str",
+          "engine_min": "5.8.2",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "introduced_version": "3.2.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "sandbox_request": {
+          "description": "Strict unrealbridge.sandbox.v1 envelope. Writes require exact session, owner, lease and package scope.",
+          "doc": "X.sandbox_request(request_json) -> str",
+          "engine_min": "5.8.2",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "request_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "request_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ExplicitOptIn",
+          "save_behavior": "ExplicitTargets",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        }
+      }
+    },
     "UnrealBridgeSequencerLibrary": {
       "functions": {
         "add_actor_binding": {
@@ -79403,11 +79613,11 @@
       }
     }
   },
-  "manifest_hash": "b5efa601d4b00ece807f7a9cad4cf27c67e29375c397e3cdf7c99309e73085ef",
-  "plugin_version": "3.1.0",
+  "manifest_hash": "cf15342113f44ac34b8bd166584a97e2f59b2f6d4b10d8b60f8cd0c86d39c46f",
+  "plugin_version": "3.2.0",
   "project_path": "C:/dev/ShooterRoyal_5_8_DirectUpgrade/ShooterRoyal.uproject",
   "protocol_version": 2,
-  "registry_hash": "7bfef7aee57835f4aaa37f72ea2fa876",
+  "registry_hash": "c464e184d0ce700199149450a92e30fd",
   "registry_version": 1,
   "structs": {
     "BridgeAbilityCooldownInfo": [

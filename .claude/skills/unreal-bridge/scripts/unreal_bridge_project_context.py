@@ -74,6 +74,8 @@ class ProjectContextIndex:
         self._cache: OrderedDict[Path, SourceFile] = OrderedDict()
         self._cache_bytes = 0
         self._lock = threading.RLock()
+        self._view_fingerprint = None
+        self._generation = 0
 
     def source_path(self, value: str | Path) -> Path:
         value = str(value)
@@ -323,9 +325,65 @@ def _page(rows, header, *, max_items, max_bytes, cursor, query_hash):
     return result
 
 
+def project_role_query(index, query, target_paths=None):
+    """Project-owned aliases are search hints, never proven dependency edges or instructions."""
+    path = index.source_path('Tools/UnrealBridge/project_roles.json')
+    if not path.exists():
+        return query, target_paths, {'status': 'not_configured'}
+    if path.stat().st_size > 64 * 1024:
+        raise ContextError('Project role mapping exceeds 64 KiB')
+    raw = path.read_bytes()
+    config = json.loads(raw)
+    if not isinstance(config, dict) or set(config) != {'schema', 'revision', 'roles'} or config['schema'] != 'unrealbridge.project_roles.v1':
+        raise ContextError('Invalid project role mapping')
+    matched, expanded, targets = [], [query], list(target_paths or [])
+    for role in config['roles']:
+        if not isinstance(role, dict) or set(role) - {'id', 'aliases', 'terms', 'source_targets', 'asset_targets', 'bindings'}:
+            raise ContextError('Invalid project role fields')
+        if any(alias.casefold() in query.casefold() for alias in role.get('aliases', [])):
+            matched.append(role['id'])
+            expanded.extend(role.get('terms', [])[:6])
+            if not target_paths:
+                targets.extend(role.get('source_targets', [])[:8])
+                targets.extend(role.get('asset_targets', [])[:4])
+    return ' '.join(expanded)[:1024], list(dict.fromkeys(targets))[:32] or target_paths, {
+        'status': 'matched' if matched else 'no_alias_match', 'roles': matched,
+        'mapping_sha256': hashlib.sha256(raw).hexdigest(), 'revision': config['revision'],
+        'basis': 'project mapping selects candidates; only actual references establish relations'}
+
+
+def _relation_rows(rows, view):
+    result = []
+    for row in rows:
+        common = {'view_identity': view, 'source_fingerprint': row.get('file_sha256', row.get('asset_fingerprint')),
+                  'source': {'path': row['path'], 'line': row.get('line'), 'field': row.get('field')},
+                  'evidence_level': 'observed_reference', 'coverage': 'bounded direct sample'}
+        kind = row['kind']
+        if kind in ('asset_dependency', 'asset_referencer'):
+            result.append({**common, 'kind': 'relation', 'relation': 'package_depends_on' if kind == 'asset_dependency' else 'referenced_by',
+                           'from': row['from'], 'to': row['to'], 'basis': row['basis']})
+        elif kind == 'blueprint_summary' and row['summary'].get('parent_class_path'):
+            result.append({**common, 'kind': 'relation', 'relation': 'inherits', 'from': row['path'],
+                           'to': row['summary']['parent_class_path'], 'basis': row['basis']})
+        elif kind == 'source_asset_literal':
+            for asset in row['asset_paths']:
+                result.append({**common, 'kind': 'relation', 'relation': 'source_mentions',
+                               'evidence_level': 'lexical', 'from': row['path'], 'to': asset,
+                               'basis': 'Literal occurrence; not a runtime or compiler call edge'})
+        elif kind in ('property_ref', 'row_ref'):
+            result.append({**common, 'kind': 'relation', 'relation': kind, 'from': row['path'],
+                           'to': row['to'], 'basis': 'Actual sampled property/row value'})
+    return result
+
+
 def build_context(index: ProjectContextIndex, query: str, target_paths=None, *, mode='context', max_items=20,
                   max_bytes=32768, cursor=None, asset_reader: Callable | None = None,
-                  semantic_reader: Callable | None = None, catalog_metadata=None):
+                  semantic_reader: Callable | None = None, catalog_metadata=None, include_relations=False,
+                  resolve_roles=False):
+    original_query = query
+    role_mapping = {'status': 'not_requested'}
+    if resolve_roles:
+        query, target_paths, role_mapping = project_role_query(index, query, target_paths)
     collected = index.collect(query, target_paths, mode=mode)
     requested = collected['asset_targets'] + [path for row in collected['rows'] for path in row['asset_paths']]
     selected = list(dict.fromkeys(requested))[:4]
@@ -357,6 +415,9 @@ def build_context(index: ProjectContextIndex, query: str, target_paths=None, *, 
             rows.append({**common, 'kind': 'asset_dependency', 'from': item['path'], 'to': dependency})
         for referencer in item.get('referencers', []):
             rows.append({**common, 'kind': 'asset_referencer', 'from': referencer, 'to': item['path']})
+        for ref in item.get('field_references', [])[:64]:
+            if ref.get('kind') in ('property_ref', 'row_ref') and ref.get('field') and ref.get('to'):
+                rows.append({**common, **ref})
     for candidate in semantic.get('candidates', [])[:20]:
         rows.append({'kind': 'semantic_candidate', 'candidate': candidate,
                      'basis': 'semantic retrieval only; does not establish a dependency'})
@@ -375,5 +436,18 @@ def build_context(index: ProjectContextIndex, query: str, target_paths=None, *, 
         header['semantic_job_id'] = semantic['job_id']
     if assets.get('dirty_added'):
         header['dirty_added_during_asset_read'] = assets['dirty_added']
-    query_hash = fingerprint([str(index.root), query, target_paths, mode, collected['source_fingerprint'], assets, semantic, catalog_metadata])
+    view = assets.get('view_identity', {'project_root': str(index.root), 'view': 'disk_only', 'editor_session_id': None,
+                                      'sandbox_id': None, 'sandbox_generation': None})
+    query_hash = fingerprint([str(index.root), query, target_paths, mode, collected['source_fingerprint'], assets, semantic,
+                              catalog_metadata, role_mapping, view, include_relations])
+    if include_relations or resolve_roles:
+        with index._lock:
+            if index._view_fingerprint != query_hash:
+                index._view_fingerprint = query_hash
+                index._generation += 1
+            generation = index._generation
+        header.update(view_identity=view, index_generation=generation, role_mapping=role_mapping,
+                      original_query=original_query, stale_reason=None if assets.get('status') == 'live' else 'live_asset_view_unavailable',
+                      relation_scope='direct sampled edges only; unsampled dependencies are unknown')
+        rows = _relation_rows(rows, view) + rows if include_relations else rows
     return _page(rows, header, max_items=max_items, max_bytes=max_bytes, cursor=cursor, query_hash=query_hash)

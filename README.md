@@ -22,7 +22,7 @@
 
 UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It provides a typed operation surface for core scenarios such as animation-asset introspection, reactive event subscription, asset search and reference analysis, and automatic layout of Blueprint graphs. The Agent issues queries and modifications against a locally running editor instance; every change takes effect in real time, is bounded by the transaction system, and is undoable.
 
-> **Current development version: 3.1.0.** This adds scoped authoring, runtime sessions and coordinate input while retaining protocol v2. The 3.0 baseline was verified on UE 5.8.1; the bounded 3.1 upgrade work uses UE 5.8.2. Foreground-dependent acceptance is still pending and no blanket compatibility claim is made. See the [3.1 upgrade notes](docs/unrealbridge-3.1-release-notes.md) and the historical [3.0 release notes](docs/unrealbridge-3.0-release-notes.md).
+> **Current development version: 3.2.0, protocol v2.** Adds frozen content recipes, registered verification, FileSandbox ownership and reviewed persistence, bounded external recovery, video evidence, and local audio/VFX production. Built and selectively tested on UE 5.8.2; this is not blanket acceptance of every workflow. See [3.2 implementation and limitations](docs/unrealbridge-3.2-release-notes.md), [daily workflow](.claude/skills/unreal-bridge/references/bridge-production32.md), and the historical [3.1 notes](docs/unrealbridge-3.1-release-notes.md).
 
 ## Highlights
 

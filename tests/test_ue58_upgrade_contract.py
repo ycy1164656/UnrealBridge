@@ -35,8 +35,8 @@ class UE58UpgradeContractTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        self.assertEqual(descriptor["Version"], 4)
-        self.assertEqual(descriptor["VersionName"], "3.1.0")
+        self.assertEqual(descriptor["Version"], 5)
+        self.assertEqual(descriptor["VersionName"], "3.2.0")
 
         version_header = (
             REPO
@@ -47,7 +47,7 @@ class UE58UpgradeContractTests(unittest.TestCase):
             / "Public"
             / "UnrealBridgeVersion.h"
         ).read_text(encoding="utf-8")
-        self.assertIn('Plugin = TEXT("3.1.0")', version_header)
+        self.assertIn('Plugin = TEXT("3.2.0")', version_header)
         self.assertIn("Protocol = 2", version_header)
 
         dependencies = {entry["Name"]: entry for entry in descriptor["Plugins"]}

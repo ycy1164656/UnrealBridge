@@ -60,7 +60,7 @@ async def _run(project: str | None) -> dict[str, Any]:
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "unreal-bridge"
-            assert initialized.serverInfo.version == "3.0.0"
+            assert initialized.serverInfo.version == "3.2.0"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
@@ -73,6 +73,11 @@ async def _run(project: str | None) -> dict[str, Any]:
                 "bridge_submit_automation_run",
                 "bridge_compare_golden_image",
                 "bridge_ping",
+                "bridge_content_recipe",
+                "bridge_sandbox",
+                "bridge_recovery",
+                "bridge_capture",
+                "bridge_audio_provider",
             }
             missing = sorted(required - tool_names)
             assert not missing, f"missing MCP tools: {missing}"

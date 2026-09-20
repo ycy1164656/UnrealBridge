@@ -125,6 +125,17 @@ public class UnrealBridge : ModuleRules
 			PrivateDependencyModuleNames.Add("ToolsetRegistry");
 		}
 
+		// Optional 5.8 asset I/O isolation; no Engine source changes and no dependency on older engines.
+		bool bWithFileSandbox = bWithUE58ToolsetRegistry
+			&& System.Environment.GetEnvironmentVariable("UNREALBRIDGE_DISABLE_FILE_SANDBOX") != "1"
+			&& System.IO.File.Exists(System.IO.Path.Combine(EngineDirectory,
+				"Plugins/Developer/Sandbox/FileSandbox/Source/FileSandboxCore/Public/ISandboxManager.h"));
+		PublicDefinitions.Add("UNREALBRIDGE_WITH_FILE_SANDBOX=" + (bWithFileSandbox ? "1" : "0"));
+		if (bWithFileSandbox)
+		{
+			PrivateDependencyModuleNames.Add("FileSandboxCore");
+		}
+
 		// Live Coding is a Windows-only editor module. Guard the dep so
 		// non-Windows builds of this editor plugin don't fail to link.
 		if (Target.Platform == UnrealTargetPlatform.Win64)

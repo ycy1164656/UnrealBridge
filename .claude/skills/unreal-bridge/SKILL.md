@@ -6,7 +6,7 @@ allowed-tools: Bash Read Write Edit Glob Grep Monitor
 
 # UnrealBridge
 
-Use this checkout's typed operations, durable Jobs and Python client for Unreal Editor work. The maintained workflow is Bridge 3.1 on UE 5.8; 3.0 baseline evidence used 5.8.1 and scoped 3.1 evidence used 5.8.2. Verify the live project, plugin, manifest and operation schema; this is not certification of every engine patch or API.
+Use this checkout's typed operations, durable Jobs and Python client for Unreal Editor work. The maintained workflow is Bridge 3.2 on UE 5.8; 3.0 baseline evidence used 5.8.1 and scoped 3.1 evidence used 5.8.2. Verify the live project, plugin, manifest and operation schema; this is not certification of every engine patch or API. The MCP host requires `mcp>=1.6.0,<2`; installation does not reload an already running host.
 
 ## Entry and scope
 
@@ -29,6 +29,7 @@ Follow the target project's AGENTS/authorized scope. Previously granted scope pe
 - CLI setup/discovery, wrappers/preflight, durable Jobs, encoding and host-adapter details: [client guide](references/bridge-client-guide.md).
 - World/Actor identity, project context/impact, compact graphs, owned PIE and background Trace: [reliability workflows](references/bridge-reliability-workflows.md). Synchronous Trace summary APIs are retired.
 - Montage/Notify, BT, audio routing, pointer input, topology/rejoin and fixed-condition scenarios: [scoped upgrade API](references/bridge-scoped-upgrade-api.md).
+- Content recipes, registered VERIFY, FileSandbox, bounded crash recovery and video/audio contracts: [3.2 production](references/bridge-production32.md).
 - API-specific details and semantic traps: [reference index](references/bridge-reference-index.md). Read only the needed topic; player steering requires the gameplay reference because tick timing and input-axis conventions matter.
 
 Report actual validation, saved/unsaved targets, owned-session cleanup and remaining limitations. Persisted state, source availability and old test results do not prove the current DLL, host process, gameplay or human acceptance.

@@ -793,7 +793,10 @@ FBridgeNiagaraCompileStatus UUnrealBridgeNiagaraLibrary::PollNiagaraSystemCompil
 		return Result;
 	}
 	Result.bFound = true;
-	Result.bComplete = System->PollForCompilationComplete(false);
+	// Poll returns whether it consumed a result, not whether the queue is empty.
+	// UE returns false for an already completed system; include pending GPU work.
+	System->PollForCompilationComplete(false);
+	Result.bComplete = !System->HasOutstandingCompilationRequests(true);
 	Result.bReadyToRun = System->IsReadyToRun();
 	Result.bNeedsCompile = System->NeedsRequestCompile();
 	Result.bSuccess = Result.bComplete && Result.bReadyToRun && !Result.bNeedsCompile;

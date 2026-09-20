@@ -112,6 +112,8 @@ namespace BridgeUpgradeImpl
 	bool SupportedAsset(UObject* Asset)
 	{
 		static const TSet<FName> Classes = {
+			TEXT("DataTable"), TEXT("DataAsset"), TEXT("Blueprint"), TEXT("NiagaraSystem"),
+			TEXT("SoundWave"), TEXT("MaterialInstanceConstant"),
 			TEXT("AnimMontage"), TEXT("AnimSequence"), TEXT("BehaviorTree"), TEXT("BlackboardData"),
 			TEXT("SoundCue"), TEXT("SoundClass"), TEXT("SoundMix"), TEXT("SoundSubmixBase"),
 			TEXT("SoundControlBus"), TEXT("SoundControlBusMix")};
@@ -137,7 +139,7 @@ namespace BridgeUpgradeImpl
 		UObject* Asset = Package ? FindObject<UObject>(Package, *FPackageName::GetShortName(Path)) : nullptr;
 		if (!SupportedAsset(Asset))
 		{
-			Failure = TEXT("Target is not a supported animation/AI/audio authoring asset: ") + Path;
+			Failure = TEXT("Target is not a supported bounded authoring asset: ") + Path;
 			return nullptr;
 		}
 		TArray<UObject*> Objects;

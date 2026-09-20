@@ -48,6 +48,15 @@ def last_json_object(response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         candidates.append(job_result.get("output"))
     candidates.append(response.get("output"))
     for candidate in candidates:
+        # Native JSON serializers may emit a single pretty-printed object. Parse
+        # the whole payload first so a nested one-line object cannot be mistaken
+        # for the response envelope.
+        try:
+            value=json.loads(str(candidate or ""))
+            if isinstance(value,dict):
+                return value
+        except json.JSONDecodeError:
+            pass
         for line in reversed(str(candidate or "").splitlines()):
             try:
                 value = json.loads(line)

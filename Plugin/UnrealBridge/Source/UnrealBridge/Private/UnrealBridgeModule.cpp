@@ -4,6 +4,7 @@
 #include "UnrealBridgeServer.h"
 #include "UnrealBridgeUE58Library.h"
 #include "UnrealBridgeWorldLibrary.h"
+#include "UnrealBridgeEvidenceLibrary.h"
 #include "UnrealBridgeSlateInputLibrary.h"
 #include "UnrealBridgeAudioRoutingPrivate.h"
 #include "Interfaces/IMainFrameModule.h"
@@ -341,6 +342,7 @@ void FUnrealBridgeModule::StartupModule()
 
 void FUnrealBridgeModule::ShutdownModule()
 {
+	BridgeEvidenceCapture::Shutdown();
 	BridgeAudioSession::Shutdown();
 	BridgeSlateInput::Shutdown();
 	UnrealBridgeUE58Adapter::Shutdown();

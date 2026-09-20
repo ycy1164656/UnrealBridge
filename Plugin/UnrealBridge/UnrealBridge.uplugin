@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 4,
-	"VersionName": "3.1.0",
+	"Version": 5,
+	"VersionName": "3.2.0",
 	"FriendlyName": "UnrealBridge",
 	"Description": "TCP bridge server that allows external tools (like Claude Code) to execute Python scripts in the Unreal Editor's Python interpreter and receive results.",
 	"Category": "Editor",
@@ -85,6 +85,11 @@
 		},
 		{
 			"Name": "AllToolsets",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
+			"Name": "FileSandbox",
 			"Enabled": true,
 			"Optional": true
 		}

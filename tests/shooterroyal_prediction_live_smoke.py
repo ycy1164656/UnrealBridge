@@ -8,6 +8,7 @@ from network_multiclient_v3_live_smoke import _load_server
 
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--project',required=True); parser.add_argument('--out',required=True)
+    parser.add_argument('--repetitions',type=int,choices=(1,2,3),default=3,help='Use one with three fresh owned sessions to avoid ambient wave income between repetitions')
     args=parser.parse_args(); server=_load_server(); path=Path(args.out); path.parent.mkdir(parents=True,exist_ok=True)
     report={'status':'running','assertions':[],'repetitions':[]}
     def persist(): path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -55,7 +56,7 @@ def main():
         original=view(client,client_player); report['original_client']=original
         authority_context=scenario(authority,host_player,'context',set_enabled=True)
         client_context=scenario(client,client_player,'context')
-        for repetition in range(3):
+        for repetition in range(args.repetitions):
             state=scenario(authority,host_player,'prepare',world_generation=authority_context['world_generation'],player_identity=authority_context['player_identity'],scenario_id='SRSC-PREDICTION-CANCEL',seed=27603)
             check(f'Prepared real LocalPredicted weapon {repetition}',state['success'],state)
             scope=dict(world_generation=authority_context['world_generation'],run_id=state['run_id'])

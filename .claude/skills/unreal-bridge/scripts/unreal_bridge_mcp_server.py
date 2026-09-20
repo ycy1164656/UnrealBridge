@@ -46,6 +46,7 @@ import bridge as bridge_cli  # noqa: E402
 from unreal_bridge_catalog import CatalogCache, CatalogUnavailable, JsonFileCache, digest as catalog_digest, project_identity  # noqa: E402
 from unreal_bridge_domains import OfficialDomainRegistry  # noqa: E402
 from unreal_bridge_project_context import ProjectContextIndex, ContextError, build_context  # noqa: E402
+from unreal_bridge_production import ProductionOrder, normalize_recipe  # noqa: E402
 import unreal_bridge_graph_codec as graph_codec  # noqa: E402
 import unreal_bridge_runtime as runtime_recipes  # noqa: E402
 import unreal_bridge_network_sessions as network_sessions  # noqa: E402
@@ -629,7 +630,7 @@ mcp = FastMCP(
 # FastMCP 1.x does not expose a public server-version constructor argument.
 # The adapter is intentionally pinned below MCP 2, so set the low-level field
 # once to keep initialize/serverInfo aligned with the UnrealBridge release.
-mcp._mcp_server.version = "3.1.0"
+mcp._mcp_server.version = "3.2.0"
 
 
 @mcp.tool()
@@ -955,7 +956,7 @@ def _read_context_assets(paths, *, endpoint=None, project=None, token=None):
     if binding is None or binding.snapshot.stale:
         return {"status": "editor_unavailable", "assets": []}
     code = textwrap.dedent(f"""
-        import json, unreal
+        import json, unreal, re
         _paths = {paths!r}
         def _dirty():
             return set(str(p.get_name()) for p in list(unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages()) + list(unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()))
@@ -977,9 +978,27 @@ def _read_context_assets(paths, *, endpoint=None, project=None, token=None):
                         _summary = {{k: str(getattr(_bp, k)) for k in ('name', 'path', 'parent_class_path', 'blueprint_type')}}
                         _summary.update({{k: int(getattr(_bp, k)) for k in ('variable_count', 'function_count', 'component_count', 'timeline_count', 'macro_count', 'total_node_count')}})
                         _row['blueprint_summary'] = _summary
+                if 'DataTable' in str(_a.class_path):
+                    _columns = unreal.UnrealBridgeDataTableLibrary.get_data_table_column_types(_path)
+                    _ref_columns = [str(c.name) for c in _columns if str(c.type_name) in ('ObjectProperty', 'SoftObjectProperty', 'ClassProperty', 'SoftClassProperty')][:16]
+                    _names = sorted(str(n) for n in unreal.UnrealBridgeDataTableLibrary.get_data_table_row_names(_path))
+                    _field_refs = []
+                    for _name in _names[:4]:
+                        for _column in _ref_columns:
+                            _value = str(unreal.UnrealBridgeDataTableLibrary.get_data_table_row_field(_path, _name, _column))
+                            _match = re.search(r"(/[A-Za-z][A-Za-z0-9_]*/[A-Za-z0-9_/.]+)", _value)
+                            if _match:
+                                _field_refs.append({{'kind': 'row_ref', 'field': _name + '.' + _column, 'to': _match.group(1)}})
+                    _row['field_references'] = _field_refs
+                    _row['row_sampling'] = {{'sampled': _names[:4], 'total': len(_names)}}
+                    _truncated = _truncated or len(_names) > 4
             _rows.append(_row)
         _added = sorted(_dirty() - _before)
-        print(json.dumps({{'status': 'live' if not _added else 'dirty_changed_during_read', 'assets': _rows, 'truncated': _truncated, 'dirty_added': _added}}))
+        _world = json.loads(unreal.UnrealBridgeWorldLibrary.get_world_contexts(1))
+        _sandbox = json.loads(unreal.UnrealBridgeSandboxLibrary.get_sandbox_status()) if hasattr(unreal, 'UnrealBridgeSandboxLibrary') else {{}}
+        _view = {{'editor_session_id': _world.get('editor_session_id'), 'sandbox_id': _sandbox.get('root'),
+                  'sandbox_generation': _sandbox.get('generation'), 'view': 'sandbox' if _sandbox.get('active') else 'main_project'}}
+        print(json.dumps({{'status': 'live' if not _added else 'dirty_changed_during_read', 'assets': _rows, 'truncated': _truncated, 'dirty_added': _added, 'view_identity': _view}}))
     """)
     response = _execute_code(code, endpoint=endpoint, project=project, token=token, timeout=15.0, no_preflight=True)
     result = _last_json_output(response)
@@ -1048,12 +1067,12 @@ def _read_context_semantic(query, *, endpoint=None, project=None, token=None):
 
 
 def _project_context_result(query, target_paths, *, mode, max_items, max_bytes, cursor, include_semantic,
-                            endpoint, project, token):
+                            endpoint, project, token, include_relations=False, resolve_roles=False):
     try:
         index = _context_source_index(project)
         binding = _CATALOG_CONTEXT.get()
         return build_context(index, query, target_paths, mode=mode, max_items=max_items, max_bytes=max_bytes,
-            cursor=cursor, catalog_metadata=binding.snapshot.metadata(),
+            cursor=cursor, catalog_metadata=binding.snapshot.metadata(), include_relations=include_relations, resolve_roles=resolve_roles,
             asset_reader=lambda paths: _read_context_assets(paths, endpoint=endpoint, project=project, token=token),
             semantic_reader=(lambda text: _read_context_semantic(text, endpoint=endpoint, project=project, token=token)) if include_semantic else None)
     except (ContextError, OSError) as exc:
@@ -1065,7 +1084,8 @@ def _project_context_result(query, target_paths, *, mode, max_items, max_bytes, 
 def bridge_project_context(query: str, target_paths: Optional[List[str]] = None,
     max_items: int = 20, max_bytes: int = 32768, cursor: Optional[str] = None,
     include_semantic: bool = False, endpoint: Optional[str] = None,
-    project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    project: Optional[str] = None, token: Optional[str] = None,
+    include_relations: bool = False, resolve_roles: bool = False) -> Dict[str, Any]:
     """Return bounded local source lines/symbols and live package/BP references.
 
     target_paths accepts project source files/directories and Unreal asset paths.
@@ -1076,7 +1096,7 @@ def bridge_project_context(query: str, target_paths: Optional[List[str]] = None,
     """
     return _project_context_result(query, target_paths, mode="context", max_items=max_items,
         max_bytes=max_bytes, cursor=cursor, include_semantic=include_semantic,
-        endpoint=endpoint, project=project, token=token)
+        endpoint=endpoint, project=project, token=token, include_relations=include_relations, resolve_roles=resolve_roles)
 
 
 @mcp.tool()
@@ -1191,7 +1211,7 @@ _rt_result.update(has_begun_play=_rt_world['has_begun_play'], controller_availab
     try:
         # Idempotency identifies this dispatch only. A timed-out mutation is never
         # resubmitted; known jobs are queried and unknown dispatches are reported.
-        submitted = bridge_submit_job(code=code, idempotency_key=run.run_id + ':' + str(len(run.report['jobs'])),
+        submitted = bridge_submit_job(code=code, idempotency_key=getattr(run,'dispatch_namespace',run.run_id) + ':' + str(len(run.report['jobs'])),
             run_timeout=20, queue_timeout=10, timeout=5, world_handle=arguments.get('world_handle'),
             endpoint=endpoint, project=project, token=token)
         if not submitted.get('success') or not submitted.get('job_id'):
@@ -1325,6 +1345,142 @@ def bridge_runtime_status(scenario_id: str, endpoint: Optional[str] = None,
 
 
 @mcp.tool()
+@_with_catalog(for_execution=False)
+def bridge_content_recipe(operation: str, work_order_id: str, recipe: Optional[Dict[str, Any]] = None,
+    step_id: str = '', approved_plan_hash: str = '', allow_writes: bool = False,
+    observations: Optional[Dict[str, Any]] = None, acceptance_hash: str = '',
+    adapter_id: str = '', run_id: str = '', world_handle: str = '',
+    endpoint: Optional[str] = None, project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Freeze/inspect/execute/reconcile/verify a bounded content work order.
+
+    Plan and acceptance hashes cannot change during repairs. Each execute call
+    submits exactly one frozen step through durable Bridge Jobs; uncertain effects
+    are reconciled by job ID and never blindly replayed. Permission, saved view,
+    main-project persistence and human acceptance remain distinct.
+    """
+    try:
+        root = _artifact_store_for(endpoint=endpoint, project=project, token=token).root
+        order = ProductionOrder(root, work_order_id)
+        if operation == 'plan':
+            normalized = normalize_recipe(recipe)
+            selected = _context_source_index(project).root
+            if Path(normalized['project_identity']).parent.resolve() != selected:
+                raise ValueError('Recipe project differs from selected route')
+            state = order.freeze(normalized)
+        elif operation == 'status':
+            state = order.get()
+        elif operation == 'execute_step':
+            state = order.get()
+            if not allow_writes or approved_plan_hash != state['plan_hash']:
+                raise ValueError('Explicit task write scope and exact approved plan hash required')
+            step = next((s for s in state['recipe']['steps'] if s['id'] == step_id), None)
+            if step is None:
+                raise ValueError('Unknown frozen step')
+            prior = state['steps'].get(step_id)
+            if prior and prior['phase'] == 'confirmed':
+                return {'success': True, 'deduplicated': True, 'result': prior['result'], 'report_path': str(order.path)}
+            order.checkpoint(step_id, step, 'intent')
+            code = ('import json\nfrom unreal_bridge_content_ops import execute_step\n'
+                    + 'print(json.dumps(execute_step(' + repr(state['recipe']) + ', ' + repr(step_id) + ', ' + repr(state['plan_hash']) + ')))')
+            generation=sum(1 for entry in state.get('reconciliations',[]) if entry['step_id']==step_id)
+            dispatched = bridge_submit_job(code, idempotency_key='content:' + work_order_id + ':' + step_id + ':' + str(generation),
+                                           run_timeout=60, endpoint=endpoint, project=project, token=token)
+            if not dispatched.get('success') or not dispatched.get('job_id'):
+                order.checkpoint(step_id, step, 'outcome_unknown', result=dispatched)
+                return {'success': False, 'status': 'needs_reconciliation', 'dispatch': dispatched}
+            state = order.checkpoint(step_id, step, 'dispatched', job_id=dispatched['job_id'])
+        elif operation == 'reconcile_step':
+            state = order.get()
+            step = next((s for s in state['recipe']['steps'] if s['id'] == step_id), None)
+            receipt = state['steps'].get(step_id, {})
+            if not step or not receipt.get('job_id'):
+                raise ValueError('A persisted actual Job ID is required for reconciliation')
+            job = bridge_get_job(receipt['job_id'], endpoint=endpoint, project=project, token=token)
+            if not job.get('terminal'):
+                return {'success': True, 'status': 'pending', 'job': job, 'report_path': str(order.path)}
+            actual = _last_json_output(job) or {}
+            if job.get('job_state') == 'succeeded' and actual.get('ok'):
+                state = order.checkpoint(step_id, step, 'confirmed', result=actual)
+            else:
+                state = order.checkpoint(step_id, step, 'outcome_unknown', result=job)
+        elif operation == 'reconcile_unchanged':
+            state=order.get()
+            if not allow_writes or approved_plan_hash!=state['plan_hash']:raise ValueError('Exact task scope required to permit a new attempt')
+            step=next(s for s in state['recipe']['steps'] if s['id']==step_id)
+            if state['steps'].get(step_id,{}).get('phase')!='outcome_unknown':raise ValueError('First reconcile the terminal failed Job')
+            code='import json\nfrom unreal_bridge_content_ops import reconcile_unchanged_step\nprint(json.dumps(reconcile_unchanged_step('+repr(state['recipe'])+','+repr(step_id)+','+repr(state['plan_hash'])+')))'
+            dispatched=bridge_submit_job(code,run_timeout=30,endpoint=endpoint,project=project,token=token)
+            if not dispatched.get('job_id'):return dispatched
+            job=bridge_wait_job(dispatched['job_id'],wait_timeout=15,endpoint=endpoint,project=project,token=token)
+            actual=_last_json_output(job) or {}
+            if job.get('job_state')!='succeeded' or not actual.get('ok'):return {'success':False,'job':job,'status':'needs_reconciliation'}
+            state=order.checkpoint(step_id,step,'reconciled_not_applied',result=actual)
+        elif operation == 'verify_live':
+            state=order.get()
+            if approved_plan_hash!=state['plan_hash'] or acceptance_hash!=state['acceptance_hash']:
+                raise ValueError('Frozen plan and acceptance hashes required')
+            if observations is not None:raise ValueError('Live verification does not accept caller observations')
+            from unreal_bridge_production import identifier
+            identifier(adapter_id);identifier(run_id)
+            selected=_context_source_index(project).root
+            registry=selected/'Tools/UnrealBridge/verification_adapters.json'
+            config=json.loads(registry.read_text(encoding='utf-8'))
+            adapter=config['adapters'][adapter_id]
+            module=identifier(adapter['module'])
+            source=registry.parent/(module+'.py')
+            if source.is_symlink() or source.resolve().parent!=registry.parent.resolve():raise ValueError('Adapter escaped project')
+            source_hash=hashlib.sha256(source.read_bytes()).hexdigest()
+            code='import json\nfrom unreal_bridge_verification_runtime import collect\nprint(json.dumps(collect('+','.join(repr(v) for v in (state['recipe'],state['plan_hash'],adapter_id,source_hash,run_id,world_handle))+')))'
+            dispatched=bridge_submit_job(code,world_handle=world_handle,run_timeout=30,endpoint=endpoint,project=project,token=token)
+            if not dispatched.get('job_id'):return dispatched
+            job=bridge_wait_job(dispatched['job_id'],wait_timeout=15,endpoint=endpoint,project=project,token=token)
+            if job.get('job_state')!='succeeded':return {'success':False,'status':'blocked','job':job}
+            report=order.verify_registered(_last_json_output(job) or {},native_job_id=dispatched['job_id'],source_hash=source_hash)
+            return {'success':True,'verification':report,'report_path':str(order.path)}
+        elif operation == 'verify':
+            state = order.get()
+            # Caller-provided JSON is useful for offline evaluator diagnostics, but is never
+            # promoted to live evidence merely because its values match expected results.
+            observed = dict(observations or {})
+            observed['evidence_trust'] = 'caller_provided_unverified'
+            result = order.verify(observed, acceptance_hash, plan_hash=approved_plan_hash,
+                                  view_identity=observed.get('view_identity'))
+            return {'success': True, 'verification': result, 'report_path': str(order.path)}
+        elif operation == 'begin_repair':
+            state = order.begin_repair(approved_plan_hash, acceptance_hash)
+        else:
+            raise ValueError('Use plan/status/execute_step/reconcile_step/verify')
+        return {'success': True, 'work_order_id': work_order_id, 'status': state['status'],
+                'plan_hash': state['plan_hash'], 'acceptance_hash': state['acceptance_hash'],
+                'steps': state['steps'], 'saved_packages': state['saved_packages'], 'report_path': str(order.path)}
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        return {'success': False, 'phase': 'content_recipe', 'error': str(exc), 'retryable': False}
+
+
+@mcp.tool()
+@_with_catalog(for_execution=True)
+def bridge_sandbox(request: Dict[str, Any], endpoint: Optional[str] = None,
+    project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Bounded FileSandbox status/begin/review/persist/leave/restore; no delete/revert/all-save.
+
+    Native validation checks exact Editor, project, owner/lease, physical baseline,
+    complete changes and approved review hash. Does not make a multi-asset atomicity claim.
+    """
+    try:
+        if request == {'action': 'status'}:
+            code = 'import unreal\nprint(unreal.UnrealBridgeSandboxLibrary.get_sandbox_status())'
+        else:
+            from unreal_bridge_upgrade import canonical_bytes
+            encoded = canonical_bytes(request)
+            if len(encoded) > 32768:
+                raise ValueError('Sandbox request exceeds 32 KiB')
+            code = 'import unreal\nprint(unreal.UnrealBridgeSandboxLibrary.sandbox_request(' + repr(encoded.decode('utf-8')) + '))'
+        return bridge_submit_job(code, run_timeout=60, endpoint=endpoint, project=project, token=token)
+    except (ValueError, TypeError) as exc:
+        return {'success': False, 'phase': 'sandbox', 'error': str(exc)}
+
+
+@mcp.tool()
 def bridge_external_session(request: Dict[str, Any]) -> Dict[str, Any]:
     """Start/control a bounded independent UnrealEditor -game/-server session.
 
@@ -1337,6 +1493,138 @@ def bridge_external_session(request: Dict[str, Any]) -> Dict[str, Any]:
     try: return external_mcp.dispatch(request)
     except (OSError,ValueError,KeyError,TypeError) as exc:
         return {'success':False,'phase':'external_session','error':str(exc)}
+
+
+@mcp.tool()
+@_with_catalog(for_execution=True)
+def bridge_capture(operation: str, capture_id: str, owner_id: str, world_handle: str,
+    request: Optional[Dict[str, Any]] = None, events: Optional[List[Dict[str, Any]]] = None,
+    endpoint: Optional[str] = None, project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Opt-in bounded owned-PIE frames and actual MJPEG/AVI; no desktop or audio capture.
+
+    begin/status/stop submit durable native Jobs. finalize reads native terminal
+    capture state and decodes every encoded frame. Missing frames remain partial.
+    Use the exact owner of an existing runtime/network-session lease.
+    """
+    from unreal_bridge_production import identifier
+    try:
+        identifier(capture_id);identifier(owner_id)
+        if operation == 'begin':
+            if not isinstance(request,dict) or request.get('capture_id')!=capture_id or request.get('owner_id')!=owner_id or request.get('world_handle')!=world_handle:
+                raise ValueError('Capture request and explicit identities must agree')
+            code = ('import json,unreal\n'
+                    "lease=getattr(unreal,'_ubr_runtime_lease_v1',None) or {}\n"
+                    "worlds=json.loads(unreal.UnrealBridgeWorldLibrary.get_world_contexts(128))\n"
+                    f"owned_v1=lease.get('run_id')=={owner_id!r} and lease.get('pie_session_id')==worlds.get('pie_session_id') and bool(worlds.get('pie_session_id'))\n"
+                    f"native={{}} if owned_v1 else json.loads(unreal.UnrealBridgeNetworkSessionLibrary.get_network_session_state({owner_id!r}))\n"
+                    "owned_v2=native.get('ok') and native.get('topology_ready') and native.get('owned_pie_session_id')==worlds.get('pie_session_id') and bool(worlds.get('pie_session_id'))\n"
+                    "assert owned_v1 or owned_v2, 'Owned runtime/network PIE lease required'\n"
+                    'print(unreal.UnrealBridgeEvidenceLibrary.begin_viewport_capture('+repr(json.dumps(request,allow_nan=False))+'))')
+        elif operation in {'status','finalize'}:
+            code='import unreal\nprint(unreal.UnrealBridgeEvidenceLibrary.get_viewport_capture('+repr(capture_id)+'))'
+        elif operation == 'stop':
+            code='import unreal\nprint(unreal.UnrealBridgeEvidenceLibrary.stop_viewport_capture('+repr(capture_id)+','+repr(owner_id)+'))'
+        else:
+            raise ValueError('Use begin/status/stop/finalize')
+        dispatched=bridge_submit_job(code,world_handle=world_handle,run_timeout=20,endpoint=endpoint,project=project,token=token)
+        if operation!='finalize' or not dispatched.get('job_id'):return dispatched
+        job=bridge_wait_job(dispatched['job_id'],wait_timeout=15,endpoint=endpoint,project=project,token=token)
+        if job.get('job_state')!='succeeded':return {'success':False,'job':job,'error':'Native capture is not terminal'}
+        capture=_last_json_output(job)
+        if not capture or capture.get('identity',{}).get('owner_id')!=owner_id or capture['identity'].get('world_handle')!=world_handle:
+            raise ValueError('Native capture owner/World mismatch')
+        from unreal_bridge_video import finalize_capture
+        result=finalize_capture(capture,artifact_root=_artifact_store_for(endpoint=endpoint,project=project,token=token).root,events=events or [])
+        return {'success':True,'capture_id':capture_id,'video_path':result['video_path'],
+                'manifest_path':str(Path(result['root'])/'capture_manifest.json'),'decode':result['decode'],
+                'partial':result['partial'],'native_job_id':dispatched['job_id'],'human_accepted':False}
+    except (ValueError,KeyError,TypeError,OSError) as exc:
+        return {'success':False,'phase':'capture','error':str(exc)}
+
+
+@mcp.tool()
+def bridge_recovery(operation: str, work_order_id: str, project: str,
+    policy: Optional[Dict[str, Any]] = None, allow_monitor: bool = False) -> Dict[str, Any]:
+    """Explicit bounded external recovery companion: register/start/status/stop/pause.
+
+    Binds PID/creation/executable/project/session; no build, force-kill, replay,
+    desktop activation or permanent service. Unknown effects require reconciliation.
+    """
+    from unreal_bridge_production import atomic_json,identifier
+    from unreal_bridge_recovery import RecoverySupervisor, ProjectRecoveryLock
+    from unreal_bridge_sessions import safe_path,process_identity,same_process
+    import subprocess
+    try:
+        identifier(work_order_id)
+        project_path=safe_path(project)
+        if project_path.suffix.lower()!='.uproject':raise ValueError('Exact project required')
+        root=project_path.parent/'Saved/UnrealBridge/Artifacts/recovery'
+        state_path=root/(work_order_id+'.json')
+        policy_path=root/(work_order_id+'-policy.json')
+        if operation=='register':
+            if not policy or policy.get('work_order_id')!=work_order_id or Path(policy.get('project','')).resolve()!=project_path:
+                raise ValueError('Policy project/work order mismatch')
+            supervisor=RecoverySupervisor(policy)
+            code=("import json,os,unreal\ns=json.loads(unreal.UnrealBridgeSandboxLibrary.get_sandbox_status())\n"
+                  "print(json.dumps({'pid':os.getpid(),'session':s['editor_session_id'],'project':s['project_identity']}))")
+            actual=_last_json_output(bridge_exec(code,project=str(project_path))) or {}
+            if actual.get('pid')!=policy['editor_identity']['pid'] or actual.get('session')!=policy['editor_session_id'] or Path(actual.get('project','')).resolve()!=project_path:
+                raise ValueError('Selected Editor process/project/session does not match policy')
+            with ProjectRecoveryLock(root/'project-recovery.lock'):
+                state=supervisor.initialize();atomic_json(policy_path,supervisor.policy)
+        elif operation=='start':
+            if not allow_monitor or not policy_path.exists():raise ValueError('Registered policy and explicit monitoring permission required')
+            state=json.loads(state_path.read_text(encoding='utf-8'))
+            if state['status']!='registered_not_monitoring':raise ValueError('Existing recovery ledger must be reconciled; no duplicate monitor')
+            companion_path=root/(work_order_id+'-companion.json')
+            with ProjectRecoveryLock(root/'project-recovery.lock'):
+                if companion_path.exists():raise ValueError('Companion dispatch already recorded; inspect status instead of relaunching')
+                atomic_json(companion_path,{'phase':'launch_intent'})
+            startup=subprocess.STARTUPINFO();startup.dwFlags|=subprocess.STARTF_USESHOWWINDOW;startup.wShowWindow=0
+            child=subprocess.Popen([sys.executable,str(Path(SCRIPT_DIR)/'unreal_bridge_recovery.py'),'--policy',str(policy_path),'--watch'],
+                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,startupinfo=startup,shell=False)
+            atomic_json(companion_path,{'phase':'dispatched','identity':process_identity(child.pid)})
+            return {'success':True,'status':'companion_dispatched','report_path':str(state_path)}
+        elif operation in {'stop','pause'}:
+            if not state_path.exists():raise ValueError('Unknown registered recovery owner')
+            atomic_json(root/(work_order_id+'-control.json'),{'operation':operation})
+            return {'success':True,'status':'control_requested','report_path':str(state_path)}
+        elif operation=='status':
+            state=json.loads(state_path.read_text(encoding='utf-8'))
+        else:raise ValueError('Use register/start/status/stop/pause')
+        return {'success':True,'status':state['status'],'restarts':state['restarts'],
+                'reason':state.get('reason'),'old_handles_valid':False,'report_path':str(state_path)}
+    except (ValueError,OSError,KeyError,TypeError) as exc:
+        return {'success':False,'phase':'recovery','error':str(exc)}
+
+
+@mcp.tool()
+def bridge_audio_provider(operation: str, work_order_id: str, project: str,
+    request: Optional[Dict[str, Any]] = None, approved_payload_hash: str = '',
+    local_files: Optional[List[str]] = None, approved_staging_roots: Optional[List[str]] = None,
+    rights_reference: str = '') -> Dict[str, Any]:
+    """SFX Provider capabilities/prepare/status and explicit local PCM validation.
+
+    No remote provider is preselected. Unconfigured online submit is blocked.
+    Validated local files feed an approved import_audio content recipe; this tool
+    never imports/saves assets by itself or calls local files online generation.
+    """
+    from unreal_bridge_audio_provider import AudioProviderOrder
+    from unreal_bridge_sessions import safe_path
+    try:
+        project_path=safe_path(project)
+        if project_path.suffix.lower()!='.uproject':raise ValueError('Exact project path required')
+        order=AudioProviderOrder(project_path.parent/'Saved/UnrealBridge/Artifacts',work_order_id)
+        if operation=='capabilities':state=order.capabilities()
+        elif operation=='prepare':state=order.prepare(request)
+        elif operation=='status':state=json.loads(order.path.read_text(encoding='utf-8'))
+        elif operation=='submit':state=order.submit(approved_payload_hash)
+        elif operation=='cancel':state=order.cancel()
+        elif operation=='import_local':state=order.import_local(local_files or [],approved_roots=approved_staging_roots or [],rights_reference=rights_reference)
+        else:raise ValueError('Use capabilities/prepare/status/submit/cancel/import_local')
+        return {'success':True,'result':state,'report_path':str(order.path)}
+    except (ValueError,OSError,KeyError,TypeError) as exc:
+        return {'success':False,'phase':'audio_provider','error':str(exc),'online_generated':False}
 
 
 @mcp.tool()
