@@ -630,7 +630,7 @@ mcp = FastMCP(
 # FastMCP 1.x does not expose a public server-version constructor argument.
 # The adapter is intentionally pinned below MCP 2, so set the low-level field
 # once to keep initialize/serverInfo aligned with the UnrealBridge release.
-mcp._mcp_server.version = "3.2.0"
+mcp._mcp_server.version = "3.2.1"
 
 
 @mcp.tool()
@@ -5636,6 +5636,27 @@ def blueprint_op(
 
 
 @mcp.tool()
+def blueprint_fragment_op(
+    op: str,
+    kwargs: Optional[Dict[str, Any]] = None,
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    no_preflight: bool = False,
+) -> Dict[str, Any]:
+    """Export, inspect, preflight, import or read back a native K2 graph fragment.
+
+    K2 event/function graphs only. Material, Niagara, AnimGraph, StateTree,
+    BehaviorTree and UMG WidgetTree are NOT covered by clipboard text. Import
+    mutates the target graph and never saves the package.
+    """
+    return _group_tool(
+        "blueprint_fragment", op, kwargs, endpoint, project, token, timeout, no_preflight
+    )
+
+
+@mcp.tool()
 def editor_op(
     op: str,
     kwargs: Optional[Dict[str, Any]] = None,
@@ -5766,6 +5787,9 @@ def _register_manifest_group_tools() -> None:
         "editor_op", "gas_op", "gameplaytag_op", "level_op", "niagara_op",
         "sequencer_op", "umg_op", "data_table_op", "gameplay_ability_op",
         "gameplay_tag_op",
+        # Hand-written above so its docstring can carry the K2-only scope
+        # boundary and the never-saves contract.
+        "blueprint_fragment_op",
     }
     for full_name in sorted(BRIDGE_MANIFEST.get("libraries", {})):
         if not (full_name.startswith("UnrealBridge") and full_name.endswith("Library")):
@@ -5796,6 +5820,208 @@ def _make_manifest_group_tool(group: str):
         )
 
     return generated_group_tool
+
+
+
+# ── Audit / organize / knowledge (P1) ─────────────────────────
+#
+# The orchestration lives in unreal_bridge_audit and unreal_bridge_knowledge,
+# which import neither MCP nor Unreal so they stay unit-testable offline. This
+# section is only the transport binding.
+
+import pathlib as _pathlib  # noqa: E402
+
+import unreal_bridge_audit as _audit  # noqa: E402
+import unreal_bridge_knowledge as _knowledge  # noqa: E402
+
+
+def _knowledge_root() -> _pathlib.Path:
+    override = os.environ.get("UNREALBRIDGE_KNOWLEDGE_ROOT")
+    if override:
+        return _pathlib.Path(override)
+    return _pathlib.Path(SCRIPT_DIR).parents[3] / ".tmp" / "knowledge"
+
+
+def _official_transport(endpoint, project, token, timeout):
+    """Route an audited official call to its correct execution plane."""
+
+    def call(*, toolset, tool, arguments):
+        if tool == "move":
+            # TransactionalSync: explicit target packages are mandatory.
+            targets = [arguments.get("source_path"), arguments.get("destination_path")]
+            response = bridge_call_official_transactional(
+                toolset=toolset, tool=tool, arguments=arguments,
+                target_packages=[t for t in targets if t],
+                apply=True,
+                endpoint=endpoint, project=project, token=token, timeout=timeout,
+            )
+        else:
+            response = bridge_submit_official_toolset_job(
+                toolset=toolset, tool=tool, arguments=arguments,
+                endpoint=endpoint, project=project, token=token, timeout=timeout,
+            )
+        if isinstance(response, dict) and response.get("success") is False:
+            return response
+        payload = _last_json_output(response)
+        if payload is None:
+            return response
+        # Unwrap the common {"ok": true, "result": ...} envelope.
+        if isinstance(payload, dict) and "result" in payload:
+            return payload["result"]
+        return payload
+
+    return call
+
+
+@mcp.tool()
+def bridge_audit(
+    scope_paths: List[str],
+    mode: str = "project",
+    max_assets: int = 2000,
+    naming_rules: Optional[Dict[str, str]] = None,
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> Dict[str, Any]:
+    """Read-only project/level audit aggregation.
+
+    mode="project" returns classified findings (gameplay_fault /
+    performance_lead / organization_suggestion) with the evidence each came
+    from; mode="naming" returns only naming-convention violations. Nothing is
+    modified, optimized, baked or moved. Truncation is always reported.
+    """
+    call = _official_transport(endpoint, project, token, timeout)
+    try:
+        if mode == "naming":
+            return _audit.naming_audit(
+                call, scope_paths, naming_rules=naming_rules, max_assets=max_assets
+            )
+        if mode == "project":
+            return _audit.audit_project(
+                call, scope_paths, max_assets=max_assets, naming_rules=naming_rules
+            )
+        return {"success": False, "error": "unknown mode '" + str(mode) + "' (use project or naming)"}
+    except _audit.AuditError as exc:
+        return {"success": False, "phase": "audit", "error": str(exc)}
+
+
+@mcp.tool()
+def bridge_content_organize(
+    op: str,
+    moves: Optional[List[Dict[str, str]]] = None,
+    plan: Optional[Dict[str, Any]] = None,
+    plan_digest: Optional[str] = None,
+    confirm: bool = False,
+    allow_roots: Optional[List[str]] = None,
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> Dict[str, Any]:
+    """Plan and apply controlled asset moves.
+
+    op="plan_moves" builds a reviewable plan from read-only evidence.
+    op="apply_moves" executes one, and requires both the plan's digest and
+    confirm=True; a plan whose referencer evidence changed is refused rather
+    than silently re-planned. Redirectors remain wherever referencers existed,
+    and packages are never saved here. Asset deletion is not offered.
+    """
+    call = _official_transport(endpoint, project, token, timeout)
+    try:
+        if op == "plan_moves":
+            return _audit.plan_moves(
+                call, moves or [], allow_roots=tuple(allow_roots or ("/Game",))
+            )
+        if op == "apply_moves":
+            if not plan or not plan_digest:
+                return {"success": False, "error": "apply_moves requires plan and plan_digest"}
+            return _audit.apply_moves(call, plan, plan_digest, confirm=confirm)
+        return {"success": False, "error": "unknown op '" + str(op) + "' (use plan_moves or apply_moves)"}
+    except _audit.AuditError as exc:
+        return {"success": False, "phase": "organize", "error": str(exc)}
+
+
+@mcp.tool()
+def bridge_fragment_catalog(
+    op: str,
+    name: Optional[str] = None,
+    fragment_text: Optional[str] = None,
+    source_blueprint: str = "",
+    source_graph: str = "",
+    status: str = "unverified",
+    evidence: Optional[Dict[str, Any]] = None,
+    external_dependencies: Optional[List[str]] = None,
+    adapts_to: Optional[List[str]] = None,
+    query: str = "",
+    require_verified: bool = False,
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = 15.0,
+) -> Dict[str, Any]:
+    """Local catalog of reusable K2 fragments.
+
+    op="add" | "query" | "rebuild_index". A stored "verified_in_scope" status is
+    bound to the exact engine/plugin/manifest it was verified against: queried
+    from a different environment the entry reports "stale". The entry files are
+    the truth; index.json is derived and can be rebuilt from them.
+    """
+    catalog = _knowledge.FragmentCatalog(_knowledge_root() / "fragments-catalog")
+    ping = bridge_ping(endpoint=endpoint, project=project, token=token, timeout=timeout)
+    env = _knowledge.Environment(
+        engine_version=str(ping.get("ue_version") or ping.get("engine_version") or ""),
+        plugin_version=str(ping.get("plugin_version") or ""),
+        manifest_hash=str(ping.get("manifest_hash") or ""),
+    )
+    try:
+        if op == "add":
+            if not name or not fragment_text:
+                return {"success": False, "error": "add requires name and fragment_text"}
+            return catalog.add(
+                name, fragment_text,
+                source_blueprint=source_blueprint, source_graph=source_graph,
+                environment=env, status=status, evidence=evidence,
+                external_dependencies=external_dependencies or [],
+                adapts_to=adapts_to or [],
+            )
+        if op == "query":
+            return catalog.query(env, text=query, require_verified=require_verified)
+        if op == "rebuild_index":
+            return catalog.rebuild_index()
+        return {"success": False, "error": "unknown op '" + str(op) + "'"}
+    except _knowledge.KnowledgeError as exc:
+        return {"success": False, "phase": "catalog", "error": str(exc)}
+
+
+@mcp.tool()
+def bridge_friction(
+    op: str,
+    kind: str = "",
+    summary: str = "",
+    attempted: str = "",
+    evidence: str = "",
+    resolved_by: str = "",
+    min_occurrences: int = 1,
+) -> Dict[str, Any]:
+    """Record and report agent friction: tool gaps, dead ends and their fixes.
+
+    op="record" | "report". Records are deduplicated by signature (a repeat
+    increments a count), capped, and scrubbed of absolute user paths before
+    being written. Frequency is evidence of friction, not of a correct fix.
+    """
+    log = _knowledge.FrictionLog(_knowledge_root())
+    try:
+        if op == "record":
+            return log.record(
+                kind or "unspecified", summary,
+                attempted=attempted, evidence=evidence, resolved_by=resolved_by,
+            )
+        if op == "report":
+            return log.report(min_occurrences=min_occurrences)
+        return {"success": False, "error": "unknown op '" + str(op) + "'"}
+    except _knowledge.KnowledgeError as exc:
+        return {"success": False, "phase": "friction", "error": str(exc)}
 
 
 _register_manifest_group_tools()

@@ -22,7 +22,7 @@
 
 UnrealBridge 是一个面向 AI Agent 的 Unreal Engine 编辑器桥接层，围绕动画资产内省、Reactive 事件订阅、资产搜索与引用分析、蓝图图谱自动布局等核心场景，提供一套类型化的操作接口。Agent 在本地正在运行的编辑器实例中发起查询与修改，所有变更实时生效，并受事务系统约束、可被撤销。
 
-> **当前开发版本：3.2.0，Protocol v2。** 新增固定合同的内容配方、注册验证器、FileSandbox 归属与审查持久化、进程外有限恢复、短视频证据和本地音频/VFX 制作。已在 UE 5.8.2 普通构建并完成专项运行验证；各流程的通过与缺口分别报告，不表示所有验收完成。见 [3.2 实施与限制](docs/unrealbridge-3.2-release-notes.md)、[日常工作流](.claude/skills/unreal-bridge/references/bridge-production32.md)及历史 [3.1 说明](docs/unrealbridge-3.1-release-notes.md)。
+> **当前开发版本：3.2.1，Protocol v2。** 在 3.2.0 基础上新增原生 K2 蓝图片段导出、导入与回读，受控贴图导入，项目及命名审计，资产移动计划，以及本地片段与开发阻碍目录。已在 UE 5.8.2 普通构建并完成部分专项运行验证；各流程的通过与缺口分别报告，不表示所有验收完成。见 [3.2.1 实施与限制](docs/unrealbridge-3.2.1-release-notes.md)、[日常工作流](.claude/skills/unreal-bridge/references/bridge-production32.md)及历史 [3.2 说明](docs/unrealbridge-3.2-release-notes.md)。
 
 ## 亮点
 

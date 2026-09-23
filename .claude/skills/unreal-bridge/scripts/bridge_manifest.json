@@ -43,7 +43,7 @@
       "TIMER"
     ]
   },
-  "generated_at": "2026-09-19T10:26:14+00:00",
+  "generated_at": "2026-09-21T08:59:35+00:00",
   "libraries": {
     "UnrealBridgeAILibrary": {
       "functions": {
@@ -9595,6 +9595,400 @@
           "save_behavior": "Never",
           "supports_dry_run": false,
           "supports_idempotency": false
+        }
+      }
+    },
+    "UnrealBridgeBlueprintFragmentLibrary": {
+      "functions": {
+        "export_fragment": {
+          "description": "Export selected nodes of one K2 graph as a native fragment.\n\nNodeGuids may be empty to export every node in the graph. Returns JSON:\n{ ok, fragment_text, fragment_sha256, node_count, nodes[], blueprint, graph,\n  external_dependencies[], skipped_non_duplicable[] }. Each node carries its\n  full pins[] plus a pin_signature_sha256; comparing that signature against a\n  post-import readback is what proves dynamic pins and internal wiring survived.",
+          "doc": "X.export_fragment(blueprint_path, graph_name, node_guids) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "blueprint_path": {
+                "type": "string"
+              },
+              "graph_name": {
+                "type": "string"
+              },
+              "node_guids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "blueprint_path",
+              "graph_name",
+              "node_guids"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.1",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "blueprint_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "graph_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "TArray",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": "array",
+              "name": "node_guids",
+              "type": "list[str]"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": true
+        },
+        "import_fragment": {
+          "description": "Import a fragment into one target K2 graph.\n\nMarks the Blueprint structurally modified and optionally compiles it. The\npackage is left dirty and is NEVER saved here. Returns JSON including the\nnew node GUIDs so the caller can reconcile or undo a partial result.",
+          "doc": "X.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile=True) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "b_compile": {
+                "type": "boolean"
+              },
+              "fragment_text": {
+                "type": "string"
+              },
+              "target_blueprint_path": {
+                "type": "string"
+              },
+              "target_graph_name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "target_blueprint_path",
+              "target_graph_name",
+              "fragment_text"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.1",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "target_blueprint_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "target_graph_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "fragment_text",
+              "type": "str"
+            },
+            {
+              "cpp_type": "",
+              "default": "True",
+              "has_default": true,
+              "json_schema": {},
+              "kind": "unknown",
+              "name": "compile",
+              "type": "Any"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "inspect_fragment": {
+          "description": "Parse a fragment without importing it. Read-only; never touches a graph.\n\nReturns JSON: { ok, fragment_sha256, fragment_length, unresolved_classes[], basis }.",
+          "doc": "X.inspect_fragment(fragment_text) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "fragment_text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "fragment_text"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.1",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "fragment_text",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": true
+        },
+        "list_fragment_graphs": {
+          "description": "List the K2 graphs of one Blueprint, for choosing an export source or import target.",
+          "doc": "X.list_fragment_graphs(blueprint_path) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "blueprint_path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "blueprint_path"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.1",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "blueprint_path",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": true
+        },
+        "prepare_import": {
+          "description": "Preflight one fragment against one target graph. Read-only.\n\nReports engine acceptance (CanImportNodesFromText), unresolved classes and\nexternal dependencies that the target cannot currently bind. A pass here is\na precondition, never an authorization or a completion.",
+          "doc": "X.prepare_import(target_blueprint_path, target_graph_name, fragment_text) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "fragment_text": {
+                "type": "string"
+              },
+              "target_blueprint_path": {
+                "type": "string"
+              },
+              "target_graph_name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "target_blueprint_path",
+              "target_graph_name",
+              "fragment_text"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.1",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "target_blueprint_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "target_graph_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "fragment_text",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": true
+        },
+        "readback_fragment": {
+          "description": "Structural readback of nodes in a graph, for comparing an import against\nits source fragment. NodeGuids may be empty to read the whole graph.",
+          "doc": "X.readback_fragment(blueprint_path, graph_name, node_guids) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "blueprint_path": {
+                "type": "string"
+              },
+              "graph_name": {
+                "type": "string"
+              },
+              "node_guids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "blueprint_path",
+              "graph_name",
+              "node_guids"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.2.1",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "blueprint_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "graph_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "TArray",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "kind": "array",
+              "name": "node_guids",
+              "type": "list[str]"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": true
         }
       }
     },
@@ -79613,11 +80007,11 @@
       }
     }
   },
-  "manifest_hash": "cf15342113f44ac34b8bd166584a97e2f59b2f6d4b10d8b60f8cd0c86d39c46f",
-  "plugin_version": "3.2.0",
+  "manifest_hash": "73a4c30a7d3326435e27354248e05af86d9d5bddb37049d628766c4205f9d542",
+  "plugin_version": "3.2.1",
   "project_path": "C:/dev/ShooterRoyal_5_8_DirectUpgrade/ShooterRoyal.uproject",
   "protocol_version": 2,
-  "registry_hash": "c464e184d0ce700199149450a92e30fd",
+  "registry_hash": "ebf56d9790a1ea96c630b79ef9ac93bd",
   "registry_version": 1,
   "structs": {
     "BridgeAbilityCooldownInfo": [

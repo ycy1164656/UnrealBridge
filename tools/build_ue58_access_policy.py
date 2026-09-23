@@ -164,6 +164,23 @@ EXACT_INTERNAL_ASSET_MUTATIONS = {
     "animation_toolset.toolsets.import_export.SequencerImportExportTools|export_anim_sequence",
 }
 
+# Tools that DO read one external source file and write declared Unreal assets.
+#
+# This is a separate category from EXACT_INTERNAL_ASSET_MUTATIONS on purpose:
+# that set's invariant is "touches no external path", which these violate.  Each
+# entry names the argument carrying the on-disk path.  The native adapter
+# (UE58_AuthorizeExternalSourcePath) requires that argument to resolve to an
+# existing file under an authorized root, rejecting traversal, UNC, device
+# namespaces and reserved names.  Availability of a backend is not permission to
+# read arbitrary disk, so widening this set is a deliberate, per-tool decision.
+EXACT_EXTERNAL_SOURCE_IMPORTS = {
+    "editor_toolset.toolsets.texture.TextureTools|import_file": (
+        "source_file",
+        "Imports one declared image file into one declared texture package; "
+        "the source path is constrained to an authorized root by the native adapter.",
+    ),
+}
+
 DISK_SAVE_CALL_TERMINALS = {
     "save_actor",
     "save_asset",
@@ -315,6 +332,8 @@ def _access_for(
         return "ReadOnly", "Exact UE 5.8.1 implementation was source-audited as inspection-only."
     if operation_id in EXACT_RUNTIME_OPERATIONS:
         return "RuntimeInteraction", EXACT_RUNTIME_OPERATIONS[operation_id]
+    if operation_id in EXACT_EXTERNAL_SOURCE_IMPORTS:
+        return "TransactionalSync", EXACT_EXTERNAL_SOURCE_IMPORTS[operation_id][1]
     if (
         operation_id not in EXACT_INTERNAL_ASSET_MUTATIONS
         and _is_external_or_path_mutation(tool)
@@ -353,6 +372,19 @@ def build_policy(
                 "requires_runtime_opt_in": access == "RuntimeInteraction",
                 "reason": reason,
             }
+            if key in EXACT_EXTERNAL_SOURCE_IMPORTS:
+                source_arg = EXACT_EXTERNAL_SOURCE_IMPORTS[key][0]
+                # Fail loudly rather than emit a policy whose guard silently
+                # matches nothing: a renamed argument must be re-reviewed, not
+                # quietly downgraded to "no external path declared".
+                properties = (tool.get("input_schema") or {}).get("properties") or {}
+                if source_arg not in properties:
+                    raise SystemExit(
+                        f"{key}: declared external source argument '{source_arg}' is absent "
+                        f"from the audited input schema (have: {sorted(properties)}). "
+                        "Re-review the tool before regenerating the policy."
+                    )
+                entry["external_source_arg"] = source_arg
             entries[key] = entry
             counts[access] += 1
             compact_tools.append(

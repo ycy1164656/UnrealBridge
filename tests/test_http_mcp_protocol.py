@@ -130,7 +130,7 @@ class UnrealBridgeHttpMcpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(response["result"]["protocolVersion"], "2025-11-25")
         self.assertEqual(response["result"]["serverInfo"]["name"], "UnrealBridge")
-        self.assertEqual(response["result"]["serverInfo"]["version"], "3.2.0")
+        self.assertEqual(response["result"]["serverInfo"]["version"], "3.2.1")
 
         notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         self.assertEqual(

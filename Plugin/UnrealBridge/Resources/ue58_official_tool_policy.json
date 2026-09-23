@@ -1,9 +1,9 @@
 {
   "access_counts": {
     "ReadOnly": 387,
-    "Rejected": 70,
+    "Rejected": 69,
     "RuntimeInteraction": 49,
-    "TransactionalSync": 326
+    "TransactionalSync": 327
   },
   "deny_by_default": true,
   "engine_min": "5.8.0",
@@ -10708,14 +10708,15 @@
       "toolset": "editor_toolset.toolsets.texture.TextureTools"
     },
     "editor_toolset.toolsets.texture.TextureTools|import_file": {
-      "access": "Rejected",
+      "access": "TransactionalSync",
+      "external_source_arg": "source_file",
       "module": "EditorToolset",
-      "reason": "External file/source-control or asset-path mutations require a dedicated typed workflow.",
-      "requires_explicit_targets": false,
-      "requires_immediate_completion": false,
+      "reason": "Imports one declared image file into one declared texture package; the source path is constrained to an authorized root by the native adapter.",
+      "requires_explicit_targets": true,
+      "requires_immediate_completion": true,
       "requires_runtime_opt_in": false,
       "risk": "Unknown",
-      "save_behavior": "Rejected",
+      "save_behavior": "Never",
       "schema_sha256": "1b17139e907acc7fb37519e0bb6fb0466f62983f7292439d7a737ab35b2a6b11",
       "tool": "import_file",
       "toolset": "editor_toolset.toolsets.texture.TextureTools"

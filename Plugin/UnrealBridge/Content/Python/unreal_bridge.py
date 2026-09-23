@@ -16,12 +16,12 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-09-19T10:26:14+00:00'
+_GENERATED_AT = '2026-09-21T08:59:35+00:00'
 _UE_VERSION = '5.8.2-56702186+++UE5+Release-5.8'
 _PROTOCOL_VERSION = 2
-_PLUGIN_VERSION = '3.2.0'
-_REGISTRY_HASH = 'c464e184d0ce700199149450a92e30fd'
-_MANIFEST_HASH = 'cf15342113f44ac34b8bd166584a97e2f59b2f6d4b10d8b60f8cd0c86d39c46f'
+_PLUGIN_VERSION = '3.2.1'
+_REGISTRY_HASH = 'ebf56d9790a1ea96c630b79ef9ac93bd'
+_MANIFEST_HASH = '73a4c30a7d3326435e27354248e05af86d9d5bddb37049d628766c4205f9d542'
 
 def verify_runtime_compatibility():
     """Fail fast when the generated wrapper no longer matches the loaded plugin."""
@@ -797,6 +797,40 @@ class Audio:
     def validate_sound_cue_asset(*, sound_cue_path):
         """X.validate_sound_cue_asset(sound_cue_path) -> str"""
         return unreal.UnrealBridgeAudioLibrary.validate_sound_cue_asset(sound_cue_path)
+
+
+class BlueprintFragment:
+    """Wraps unreal.UnrealBridgeBlueprintFragmentLibrary (kwargs-only)."""
+
+    @staticmethod
+    def export_fragment(*, blueprint_path, graph_name, node_guids):
+        """X.export_fragment(blueprint_path, graph_name, node_guids) -> str"""
+        return unreal.UnrealBridgeBlueprintFragmentLibrary.export_fragment(blueprint_path, graph_name, node_guids)
+
+    @staticmethod
+    def import_fragment(*, target_blueprint_path, target_graph_name, fragment_text, compile=True):
+        """X.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile=True) -> str"""
+        return unreal.UnrealBridgeBlueprintFragmentLibrary.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile)
+
+    @staticmethod
+    def inspect_fragment(*, fragment_text):
+        """X.inspect_fragment(fragment_text) -> str"""
+        return unreal.UnrealBridgeBlueprintFragmentLibrary.inspect_fragment(fragment_text)
+
+    @staticmethod
+    def list_fragment_graphs(*, blueprint_path):
+        """X.list_fragment_graphs(blueprint_path) -> str"""
+        return unreal.UnrealBridgeBlueprintFragmentLibrary.list_fragment_graphs(blueprint_path)
+
+    @staticmethod
+    def prepare_import(*, target_blueprint_path, target_graph_name, fragment_text):
+        """X.prepare_import(target_blueprint_path, target_graph_name, fragment_text) -> str"""
+        return unreal.UnrealBridgeBlueprintFragmentLibrary.prepare_import(target_blueprint_path, target_graph_name, fragment_text)
+
+    @staticmethod
+    def readback_fragment(*, blueprint_path, graph_name, node_guids):
+        """X.readback_fragment(blueprint_path, graph_name, node_guids) -> str"""
+        return unreal.UnrealBridgeBlueprintFragmentLibrary.readback_fragment(blueprint_path, graph_name, node_guids)
 
 
 class Blueprint:

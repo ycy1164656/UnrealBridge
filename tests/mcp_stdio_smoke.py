@@ -60,7 +60,7 @@ async def _run(project: str | None) -> dict[str, Any]:
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "unreal-bridge"
-            assert initialized.serverInfo.version == "3.2.0"
+            assert initialized.serverInfo.version == "3.2.1"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}

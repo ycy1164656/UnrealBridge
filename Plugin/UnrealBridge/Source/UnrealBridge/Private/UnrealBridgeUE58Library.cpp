@@ -231,6 +231,12 @@ namespace
 		FString SchemaSha256;
 		FString Risk;
 		FString SaveBehavior;
+		// Name of the argument carrying an external (on-disk) source path, for
+		// tools that read one declared source file and write declared assets.
+		// Empty for every tool that touches no external path; when set, the
+		// argument must resolve under an authorized root (see
+		// UE58_AuthorizeExternalSourcePath).
+		FString ExternalSourceArg;
 	};
 
 	struct FUE58PendingCall
@@ -423,6 +429,7 @@ namespace
 			EntryObject->TryGetStringField(TEXT("schema_sha256"), Entry.SchemaSha256);
 			EntryObject->TryGetStringField(TEXT("risk"), Entry.Risk);
 			EntryObject->TryGetStringField(TEXT("save_behavior"), Entry.SaveBehavior);
+			EntryObject->TryGetStringField(TEXT("external_source_arg"), Entry.ExternalSourceArg);
 			if (!Entry.Access.IsEmpty() && Entry.SchemaSha256.Len() == 64)
 			{
 				GUE58OfficialPolicy.Add(Pair.Key, MoveTemp(Entry));
@@ -538,6 +545,153 @@ namespace
 			return false;
 		}
 		return true;
+	}
+
+	/**
+	 * Authorized roots for external source files, in order of preference:
+	 * an explicit UNREALBRIDGE_SOURCE_ROOTS environment override (';'-separated),
+	 * otherwise the project directory. Engine and plugin directories are NOT
+	 * authorized: importing from them would let a caller launder engine content
+	 * into project assets.
+	 */
+	TArray<FString> UE58_AuthorizedSourceRoots()
+	{
+		TArray<FString> Roots;
+		FString Override = FPlatformMisc::GetEnvironmentVariable(TEXT("UNREALBRIDGE_SOURCE_ROOTS"));
+		if (!Override.IsEmpty())
+		{
+			TArray<FString> Parts;
+			Override.ParseIntoArray(Parts, TEXT(";"), true);
+			for (const FString& Part : Parts)
+			{
+				const FString Trimmed = Part.TrimStartAndEnd();
+				if (!Trimmed.IsEmpty())
+				{
+					Roots.Add(FPaths::ConvertRelativePathToFull(Trimmed));
+				}
+			}
+		}
+		if (Roots.Num() == 0)
+		{
+			Roots.Add(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+		}
+		return Roots;
+	}
+
+	/**
+	 * Gate for a tool that reads one declared external source file.
+	 *
+	 * Availability of an import backend is not permission to read arbitrary
+	 * disk. The declared argument must resolve to an existing regular file
+	 * beneath an authorized root, with no traversal, UNC path, device/reserved
+	 * name, or drive-relative form surviving normalization.
+	 *
+	 * This deliberately runs on the native side: a Python-side wrapper cannot
+	 * constrain a caller that reaches the native entry point directly.
+	 */
+	bool UE58_AuthorizeExternalSourcePath(
+		const FUE58OfficialPolicyEntry& Entry,
+		const TSharedPtr<FJsonObject>& Arguments,
+		FString& OutResolvedPath,
+		FString& OutError)
+	{
+		OutResolvedPath.Reset();
+		if (Entry.ExternalSourceArg.IsEmpty())
+		{
+			return true; // Tool declares no external source path.
+		}
+		if (!Arguments.IsValid())
+		{
+			OutError = TEXT("External-source tool requires an arguments object");
+			return false;
+		}
+		FString Raw;
+		if (!Arguments->TryGetStringField(Entry.ExternalSourceArg, Raw) || Raw.TrimStartAndEnd().IsEmpty())
+		{
+			OutError = FString::Printf(
+				TEXT("Argument '%s' must carry an explicit source file path"), *Entry.ExternalSourceArg);
+			return false;
+		}
+		Raw = Raw.TrimStartAndEnd();
+
+		// Reject forms that normalization cannot be trusted to settle.
+		if (Raw.StartsWith(TEXT("\\\\")) || Raw.StartsWith(TEXT("//")))
+		{
+			OutError = TEXT("UNC source paths are not authorized");
+			return false;
+		}
+		if (Raw.Contains(TEXT("\\\\?\\")) || Raw.Contains(TEXT("\\\\.\\")))
+		{
+			OutError = TEXT("Device-namespace source paths are not authorized");
+			return false;
+		}
+		if (!FPaths::IsRelative(Raw) && Raw.Len() >= 2 && Raw[1] == TEXT(':') && Raw.Len() == 2)
+		{
+			OutError = TEXT("Drive-relative source paths are not authorized");
+			return false;
+		}
+
+		FString Full = FPaths::ConvertRelativePathToFull(Raw);
+		FPaths::NormalizeFilename(Full);
+		if (Full.Contains(TEXT("..")))
+		{
+			OutError = TEXT("Source path did not normalize free of traversal segments");
+			return false;
+		}
+
+		// Reserved Windows device names in any component.
+		static const TCHAR* Reserved[] = {
+			TEXT("CON"), TEXT("PRN"), TEXT("AUX"), TEXT("NUL"),
+			TEXT("COM1"), TEXT("COM2"), TEXT("COM3"), TEXT("COM4"), TEXT("COM5"),
+			TEXT("COM6"), TEXT("COM7"), TEXT("COM8"), TEXT("COM9"),
+			TEXT("LPT1"), TEXT("LPT2"), TEXT("LPT3"), TEXT("LPT4"), TEXT("LPT5"),
+			TEXT("LPT6"), TEXT("LPT7"), TEXT("LPT8"), TEXT("LPT9")
+		};
+		TArray<FString> Components;
+		Full.ParseIntoArray(Components, TEXT("/"), true);
+		for (const FString& Component : Components)
+		{
+			FString Stem = Component;
+			int32 Dot = INDEX_NONE;
+			if (Stem.FindChar(TEXT('.'), Dot))
+			{
+				Stem = Stem.Left(Dot);
+			}
+			for (const TCHAR* Name : Reserved)
+			{
+				if (Stem.Equals(Name, ESearchCase::IgnoreCase))
+				{
+					OutError = FString::Printf(TEXT("Reserved device name in source path: %s"), *Component);
+					return false;
+				}
+			}
+		}
+
+		if (!FPaths::FileExists(Full))
+		{
+			OutError = FString::Printf(TEXT("Source file does not exist: %s"), *Full);
+			return false;
+		}
+
+		// Containment is checked on the resolved absolute path, case-insensitively
+		// (Windows), with a trailing separator so "/Root" cannot match "/RootEvil".
+		const TArray<FString> Roots = UE58_AuthorizedSourceRoots();
+		for (const FString& Root : Roots)
+		{
+			FString NormalizedRoot = Root;
+			FPaths::NormalizeDirectoryName(NormalizedRoot);
+			NormalizedRoot += TEXT("/");
+			if (Full.StartsWith(NormalizedRoot, ESearchCase::IgnoreCase))
+			{
+				OutResolvedPath = Full;
+				return true;
+			}
+		}
+
+		OutError = FString::Printf(
+			TEXT("Source path '%s' is outside every authorized root (%s). Set UNREALBRIDGE_SOURCE_ROOTS to widen it deliberately."),
+			*Full, *FString::Join(Roots, TEXT(";")));
+		return false;
 	}
 
 	void UE58_CleanupCalls()
@@ -871,6 +1025,16 @@ FString UUnrealBridgeUE58Library::ExecuteOfficialTransactionalToolsetCall(
 	{
 		return UE58_Error(TEXT("OFFICIAL_TOOL_NOT_APPROVED"), PolicyError);
 	}
+	{
+		const FUE58OfficialPolicyEntry* SourceEntry =
+			GUE58OfficialPolicy.Find(ToolsetName + TEXT("|") + ToolName);
+		FString ResolvedSource;
+		if (SourceEntry
+			&& !UE58_AuthorizeExternalSourcePath(*SourceEntry, InputObject, ResolvedSource, PolicyError))
+		{
+			return UE58_Error(TEXT("SOURCE_PATH_NOT_AUTHORIZED"), PolicyError);
+		}
+	}
 
 	const FString ChangeSetId = UUnrealBridgeChangeSetLibrary::BeginChangeSet(
 		FString::Printf(TEXT("Official %s.%s"), *ToolsetName, *ToolName),
@@ -1133,6 +1297,15 @@ FString UUnrealBridgeUE58Library::ExecuteOfficialTransactionalToolsetBatch(
 			return UE58_Error(
 				TEXT("OFFICIAL_TOOL_NOT_APPROVED"),
 				FString::Printf(TEXT("json_calls[%d]: %s"), Index, *PolicyError));
+		}
+		{
+			FString ResolvedSource;
+			if (!UE58_AuthorizeExternalSourcePath(*PolicyEntry, *Arguments, ResolvedSource, PolicyError))
+			{
+				return UE58_Error(
+					TEXT("SOURCE_PATH_NOT_AUTHORIZED"),
+					FString::Printf(TEXT("json_calls[%d]: %s"), Index, *PolicyError));
+			}
 		}
 		bHasMutation |= Call.Access == TEXT("TransactionalSync");
 		Prepared.Add(MoveTemp(Call));
