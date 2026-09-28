@@ -9,7 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/unreal-bridge/scripts'))
 from unreal_bridge_catalog import (CatalogCache, CatalogUnavailable, JsonFileCache,
                                   compact_schema, digest, intersect_catalog, project_identity)
 

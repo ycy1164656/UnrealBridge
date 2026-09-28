@@ -9,7 +9,7 @@
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/-Python-3776AB?logo=python&logoColor=white" alt="Python"></a>
     <img src="https://img.shields.io/badge/-C%2B%2B-00599C?logo=cplusplus&logoColor=white" alt="C++">
     <img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows" alt="Windows">
-    <a href="https://claude.ai/code"><img src="https://img.shields.io/badge/Claude%20Code-skill-D97757" alt="Claude Code"></a>
+    <img src="https://img.shields.io/badge/Codex-skill-blue" alt="Codex skill">
     <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/lang-%E4%B8%AD%E6%96%87-red" alt="中文"></a>
   </p>
 </p>
@@ -22,7 +22,7 @@
 
 UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It provides a typed operation surface for core scenarios such as animation-asset introspection, reactive event subscription, asset search and reference analysis, and automatic layout of Blueprint graphs. The Agent issues queries and modifications against a locally running editor instance; every change takes effect in real time, is bounded by the transaction system, and is undoable.
 
-> **Current development version: 3.2.1, protocol v2.** Adds native K2 Blueprint fragment export/import and readback, guarded texture import, project and naming audits, controlled asset-move plans, and a local fragment/friction catalog on top of the 3.2.0 foundation. Built and selectively tested on UE 5.8.2; this is not blanket acceptance of every workflow. See [3.2.1 implementation and limitations](docs/unrealbridge-3.2.1-release-notes.md), [daily workflow](.claude/skills/unreal-bridge/references/bridge-production32.md), and the historical [3.2 notes](docs/unrealbridge-3.2-release-notes.md).
+> **Current development version: 3.3.0, protocol v2.** Scope is the planned P0/P1 workflows needed by ShooterRoyal: native K2 fragments, contracted PNG/FBX/PBR import and reimport, audit, controlled moves, trusted catalog and friction records. Verification is per workflow on UE 5.8.2. See [P0/P1 delivery and limits](docs/unrealbridge-3.3.0-p0p1-notes.md) and the [maintained workflow](skills/unreal-bridge/references/bridge-production33.md). The canonical skill is `skills/unreal-bridge`; `.claude` is an unmaintained historical copy.
 
 ## Highlights
 
@@ -98,13 +98,13 @@ cd UnrealBridge
 
 **Required for Codex / Gemini CLI / OpenCode / Cursor.** Skip if you only use Claude Code.
 
-The skill source of truth lives at `.claude/skills/`. This script creates an NTFS junction at `.agents/skills/` so every Agent runtime following the [Agent Skills open standard](https://www.agensi.io/learn/agent-skills-open-standard) sees the same content. Junctions can't be committed (Windows git limitation), so each clone has to materialize it locally — **once**.
+The maintained skill source lives at `skills/unreal-bridge/`. The legacy `.claude/` copy is no longer maintained. `link_agents_skills.bat` can expose `skills/` through `.agents/skills/` for clients that use that directory.
 
 ```bat
 link_agents_skills.bat
 ```
 
-Mac / Linux equivalent: `ln -sfn .claude/skills .agents/skills` (run from repo root).
+Mac / Linux equivalent: `ln -sfn ../skills .agents/skills` (run from repo root).
 
 ### 3. Install the plugin
 
@@ -123,19 +123,18 @@ Open the `.uproject` and let UE rebuild the plugin automatically, or run the pro
 ### 5. Verify
 
 ```bash
-python .claude/skills/unreal-bridge/scripts/bridge.py ping
+python skills/unreal-bridge/scripts/bridge.py ping
 # → pong
-python .claude/skills/unreal-bridge/scripts/bridge.py exec \
+python skills/unreal-bridge/scripts/bridge.py exec \
   "import unreal; print(unreal.UnrealBridgeLevelLibrary.get_level_summary())"
 ```
 
-### Claude Code integration (optional)
+### Codex integration
 
-Copy the skill somewhere Claude Code can discover it:
+Install the lightweight Codex router; it points to the maintained checkout:
 
 ```bash
-cp -r .claude/skills/unreal-bridge ~/.claude/skills/            # user-wide
-# or into the target project's own .claude/skills/
+python tools/install_codex_skill.py --apply
 ```
 
 For `rebuild_relaunch.py` to auto-relaunch the editor, set one of:
@@ -147,7 +146,7 @@ setx UE_ROOT            "C:\Program Files\Epic Games\UE_5.7"
 
 ### Quick usage
 
-Once the skill is installed, drop any of these into a Claude Code session:
+Once the skill is installed, use requests such as:
 
 - *"List every PointLight in the current level."*
 - *"Move the PlayerStart up by 200 units."*
@@ -172,7 +171,7 @@ For Codex or other clients that prefer MCP tools over shelling out to
 
 ```bat
 pip install -r requirements-mcp.txt
-python .claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
+python skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
 ```
 
 The adapter currently targets the FastMCP API shipped by `mcp>=1.6.0,<2`.
@@ -196,7 +195,7 @@ checkout is:
 ```toml
 [mcp_servers.unreal_bridge]
 command = "uv"
-args = ["--directory", 'C:\dev\UnrealBridge', "run", "--with", "mcp>=1.6.0,<2", "python", '.claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py']
+args = ["--directory", 'C:\dev\UnrealBridge', "run", "--with", "mcp>=1.6.0,<2", "python", 'skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py']
 startup_timeout_sec = 120
 ```
 
@@ -236,8 +235,8 @@ print(len(lights), "point lights")
 ### Two reload loops
 
 ```bash
-python .claude/skills/unreal-bridge/scripts/hot_reload.py        # body-only edits
-python .claude/skills/unreal-bridge/scripts/rebuild_relaunch.py  # reflection changes
+python skills/unreal-bridge/scripts/hot_reload.py        # body-only edits
+python skills/unreal-bridge/scripts/rebuild_relaunch.py  # reflection changes
 ```
 
 ## Bridge libraries
@@ -312,7 +311,7 @@ UnrealBridge/
 ├── Plugin/UnrealBridge/         # UE 5.8.1 Editor plugin (C++)
 │   ├── Source/UnrealBridge/     #   TCP server + bridge libraries
 │   └── Content/Python/          #   Helpers auto-loaded into UE's Python env
-├── .claude/skills/unreal-bridge/
+├── skills/unreal-bridge/
 │   ├── scripts/                 # bridge.py, hot_reload.py, rebuild_relaunch.py
 │   └── references/              # Per-library API docs
 ├── docs/                        # Design notes and plans

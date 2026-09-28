@@ -3,7 +3,7 @@ import sys
 import tempfile
 import unittest
 from PIL import Image
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'skills/unreal-bridge/scripts'))
 from unreal_bridge_video import mux_avi, decode_avi, finalize_capture
 from unreal_bridge_workflows import last_json_object
 

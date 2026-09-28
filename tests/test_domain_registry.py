@@ -10,7 +10,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 MODULE_PATH = (
     REPO
-    / ".claude"
     / "skills"
     / "unreal-bridge"
     / "scripts"
@@ -26,7 +25,6 @@ spec.loader.exec_module(domains)
 CATALOG = json.loads(
     (
         REPO
-        / ".claude"
         / "skills"
         / "unreal-bridge"
         / "scripts"

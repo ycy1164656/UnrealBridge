@@ -85,13 +85,14 @@ public:
 		ToolRisk = "Mutating",
 		ToolExecution = "GameThreadShort",
 		ToolSaveBehavior = "Never",
-		ToolSupportsIdempotency = "false",
+		ToolSupportsIdempotency = "true",
 		ToolIntroducedVersion = "3.2.1"))
 	static FString ImportFragment(
 		const FString& TargetBlueprintPath,
 		const FString& TargetGraphName,
 		const FString& FragmentText,
-		bool bCompile = true);
+		bool bCompile = true,
+		const FString& RequestId = TEXT(""));
 
 	/**
 	 * Structural readback of nodes in a graph, for comparing an import against

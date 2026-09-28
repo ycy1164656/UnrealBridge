@@ -5,6 +5,8 @@ public class UnrealBridge : ModuleRules
 	public UnrealBridge(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+		// Bounded FBX source inspection before a typed import touches any package.
+		AddEngineThirdPartyPrivateStaticDependencies(Target, "FBX");
 
 		PublicDependencyModuleNames.AddRange(new string[]
 		{

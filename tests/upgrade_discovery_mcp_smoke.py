@@ -11,7 +11,7 @@ from mcp.client.stdio import stdio_client
 async def main():
     p=argparse.ArgumentParser(); p.add_argument('--out',required=True); a=p.parse_args()
     root=Path(__file__).resolve().parents[1]
-    params=StdioServerParameters(command=sys.executable,args=[str(root/'.claude/skills/unreal-bridge/scripts/unreal_bridge_mcp_server.py')],cwd=str(root))
+    params=StdioServerParameters(command=sys.executable,args=[str(root/'skills/unreal-bridge/scripts/unreal_bridge_mcp_server.py')],cwd=str(root))
     async with asyncio.timeout(45):
         async with stdio_client(params) as (reader,writer):
             async with ClientSession(reader,writer) as session:

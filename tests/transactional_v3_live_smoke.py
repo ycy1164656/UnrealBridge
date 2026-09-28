@@ -18,7 +18,6 @@ from typing import Any, Callable
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SERVER_PATH = (
     REPO_ROOT
-    / ".claude"
     / "skills"
     / "unreal-bridge"
     / "scripts"

@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / ".claude" / "skills" / "unreal-bridge" / "scripts"))
+sys.path.insert(0, str(REPO / "skills" / "unreal-bridge" / "scripts"))
 
 import unreal_bridge_audit as audit  # noqa: E402
 import unreal_bridge_knowledge as knowledge  # noqa: E402
@@ -32,10 +32,21 @@ class FakeEditor:
         self.classes = classes or {}
         self.moves = []
         self.fail_move_for = set()
+        self.revisions = {}
+        self.destinations = set()
+
+    def snapshot(self, packages):
+        return {'editor_session_id': 'fixture-session', 'view': {'active': False}, 'dirty_packages': [],
+                'targets': {p: {'exists': p in self.referencers or p in self.destinations,
+                                'dirty': False, 'revision': self.revisions.get(p, 'revision' if p in self.referencers or p in self.destinations else 'absent'),
+                                'class_name': 'Blueprint'} for p in packages}}
+
+    def move_readback(self, entry):
+        return {'ok':True,'source_registry_class':'ObjectRedirector','referencers':entry['referencers']}
 
     def __call__(self, *, toolset, tool, arguments):
         if tool == "find_assets":
-            return list(self.assets.get(arguments["path"], []))
+            return list(self.assets.get(arguments["folder_path"], []))
         if tool == "get_referencers":
             return list(self.referencers.get(arguments["asset_path"], []))
         if tool == "get_dependencies":
@@ -45,9 +56,10 @@ class FakeEditor:
         if tool == "get_asset_class":
             return self.classes.get(arguments["asset_path"], "Blueprint")
         if tool == "move":
-            if arguments["source_path"] in self.fail_move_for:
+            if arguments["path"] in self.fail_move_for:
                 return {"success": False, "error": "editor refused the move"}
-            self.moves.append((arguments["source_path"], arguments["destination_path"]))
+            self.moves.append((arguments["path"], arguments["new_path"]))
+            self.destinations.add(arguments['new_path'])
             return {"success": True}
         raise AssertionError(f"unexpected tool {tool}")
 
@@ -90,14 +102,15 @@ class AuditTests(unittest.TestCase):
         )
         result = audit.audit_project(editor, ["/Game/X"])
         orphan = [f for f in result["findings"] if f["evidence"].get("referencer_count") == 0][0]
-        self.assertIn("outside the scope", orphan["evidence"]["basis"])
+        self.assertIn("dynamically constructed soft paths", orphan["evidence"]["basis"])
+        self.assertIn("not a deletion proof", orphan["evidence"]["basis"])
 
     def test_naming_audit_uses_supplied_rules(self):
         editor = FakeEditor(
             assets={"/Game/X": ["/Game/X/BadName", "/Game/X/BP_Good"]},
             classes={"/Game/X/BadName": "Blueprint", "/Game/X/BP_Good": "Blueprint"},
         )
-        result = audit.naming_audit(editor, ["/Game/X"])
+        result = audit.naming_audit(editor, ["/Game/X"], naming_rules={'Blueprint': 'BP_'})
         self.assertEqual(result["violation_count"], 1)
         self.assertEqual(result["violations"][0]["asset"], "/Game/X/BadName")
         self.assertEqual(result["mutations"], "none")
@@ -178,18 +191,29 @@ class FragmentCatalogTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
+    def verified_fixture(self):
+        manifest = {'manifest_version': '1', 'acceptance_hash': 'acceptance',
+                    'adapter_source_sha256': 'adapter', 'required_plugins_hash': 'plugins',
+                    'dependency_hash': 'dependencies', 'graph_type': 'K2'}
+        proof = {}
+        catalog = knowledge.FragmentCatalog(self.root, verification_reader=lambda ref: proof)
+        record = catalog.add('Sprint Combo', 'BEGIN OBJECT...', source_blueprint='/Game/GA_Sprint',
+                             source_graph='EventGraph', environment=self.env, manifest=manifest)
+        entry = catalog.load_all()[0]
+        binding = knowledge._binding(entry)
+        proof.update(evidence_trust='registered_native_job', native_job_id='test-fixture-job',
+                     binding=binding, environment=self.env.to_dict(),
+                     verification={key: 'pass' for key in ('roundtrip', 'compile', 'behavior', 'persisted', 'cold_loaded')})
+        catalog.promote(entry['fragment_id'], '1', {'fixture': True}, self.env)
+        return catalog, binding
+
     def test_verified_entry_goes_stale_when_environment_changes(self):
-        catalog = knowledge.FragmentCatalog(self.root)
-        catalog.add(
-            "Sprint Combo", "BEGIN OBJECT...",
-            source_blueprint="/Game/GA_Sprint", source_graph="EventGraph",
-            environment=self.env, status=knowledge.STATUS_VERIFIED,
-        )
-        same = catalog.query(self.env)
+        catalog, binding = self.verified_fixture()
+        same = catalog.query(self.env, current_binding=binding)
         self.assertEqual(same["results"][0]["effective_status"], knowledge.STATUS_VERIFIED)
 
         upgraded = knowledge.Environment("5.8.3", "3.2.1", "abc123")
-        later = catalog.query(upgraded)
+        later = catalog.query(upgraded, current_binding=binding)
         self.assertEqual(later["results"][0]["effective_status"], knowledge.STATUS_STALE)
         # The stored record keeps saying what was actually verified, and when.
         self.assertEqual(later["results"][0]["stored_status"], knowledge.STATUS_VERIFIED)
@@ -197,18 +221,13 @@ class FragmentCatalogTests(unittest.TestCase):
     def test_incomplete_environment_cannot_claim_verified(self):
         catalog = knowledge.FragmentCatalog(self.root)
         partial = knowledge.Environment("5.8.2", "", "")
-        catalog.add(
-            "Partial", "TEXT",
-            source_blueprint="/Game/BP", source_graph="EventGraph",
-            environment=partial, status=knowledge.STATUS_VERIFIED,
-        )
-        result = catalog.query(partial)
-        self.assertEqual(result["results"][0]["effective_status"], knowledge.STATUS_STALE)
+        with self.assertRaises(knowledge.KnowledgeError):
+            catalog.add("Partial", "TEXT", source_blueprint="/Game/BP", source_graph="EventGraph",
+                        environment=partial, status=knowledge.STATUS_VERIFIED)
+        self.assertEqual(catalog.load_all(), [])
 
     def test_require_verified_filters_stale_entries(self):
-        catalog = knowledge.FragmentCatalog(self.root)
-        catalog.add("A", "T", source_blueprint="/Game/A", source_graph="G",
-                    environment=self.env, status=knowledge.STATUS_VERIFIED)
+        catalog, binding = self.verified_fixture()
         other = knowledge.Environment("5.9.0", "3.2.1", "abc123")
         self.assertEqual(catalog.query(other, require_verified=True)["result_count"], 0)
 

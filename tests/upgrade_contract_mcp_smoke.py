@@ -25,12 +25,12 @@ async def main():
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    script = root / ".claude/skills/unreal-bridge/scripts/unreal_bridge_mcp_server.py"
+    script = root / "skills/unreal-bridge/scripts/unreal_bridge_mcp_server.py"
     parameters = StdioServerParameters(command=sys.executable, args=[str(script)], cwd=str(root))
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             initialized=await session.initialize()
-            assert initialized.serverInfo.version=="3.2.1", initialized.serverInfo
+            assert initialized.serverInfo.version=="3.3.0", initialized.serverInfo
             listing = await session.list_tools()
             names = {tool.name for tool in listing.tools}
             assert "bridge_submit_upgrade_validation" in names

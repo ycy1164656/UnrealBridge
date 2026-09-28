@@ -20,7 +20,7 @@ def install(checkout, destination, *, apply=False, replace_customized=False):
     for ancestor in (destination, *destination.parents):
         if ancestor.is_symlink() or getattr(ancestor, 'is_junction', lambda: False)():
             raise ValueError('Skill destination cannot traverse a link or junction')
-    canonical = checkout / '.claude/skills/unreal-bridge'
+    canonical = checkout / 'skills/unreal-bridge'
     for source in ('SKILL.md', 'scripts/bridge.py', 'scripts/bridge_manifest.json'):
         if not (canonical / source).is_file():
             raise ValueError(f'Missing canonical source: {source}')

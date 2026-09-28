@@ -30,7 +30,7 @@ class BootstrapTests(unittest.TestCase):
         installer = load('install_codex_skill')
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory) / 'checkout'
-            canonical = checkout / '.claude/skills/unreal-bridge'
+            canonical = checkout / 'skills/unreal-bridge'
             (canonical / 'scripts').mkdir(parents=True)
             (canonical / 'SKILL.md').write_text('runtime', encoding='utf-8')
             (canonical / 'scripts/bridge.py').write_text('# runtime', encoding='utf-8')

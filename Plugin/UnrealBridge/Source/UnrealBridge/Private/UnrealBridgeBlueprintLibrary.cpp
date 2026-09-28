@@ -2732,7 +2732,19 @@ bool UUnrealBridgeBlueprintLibrary::SetPinDefaultValue(
 	if (!Schema) return false;
 
 	Node->Modify();
-	Schema->TrySetDefaultValue(*Pin, NewDefaultValue);
+	if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Text)
+	{
+		FText TextValue;
+		if (!FTextStringHelper::ReadFromBuffer(*NewDefaultValue, TextValue)) { return false; }
+		Schema->TrySetDefaultText(*Pin, TextValue);
+	}
+	else if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object || Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class)
+	{
+		UObject* DefaultObject = NewDefaultValue.IsEmpty() || NewDefaultValue == TEXT("None") ? nullptr : LoadObject<UObject>(nullptr, *NewDefaultValue);
+		if (!DefaultObject && !NewDefaultValue.IsEmpty() && NewDefaultValue != TEXT("None")) { return false; }
+		Schema->TrySetDefaultObject(*Pin, DefaultObject);
+	}
+	else { Schema->TrySetDefaultValue(*Pin, NewDefaultValue); }
 	FBlueprintEditorUtils::MarkBlueprintAsModified(BP);
 	return true;
 }

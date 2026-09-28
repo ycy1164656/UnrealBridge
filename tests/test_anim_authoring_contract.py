@@ -4,7 +4,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'skills/unreal-bridge/scripts'))
 import unreal_bridge_authoring as authoring
 
 

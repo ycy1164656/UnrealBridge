@@ -34,7 +34,7 @@ def main():
             x=fingerprint(master/'Content/Python'/name); y=fingerprint(mirror/'Content/Python'/name)
             h.report.setdefault('generated_files',[]).append(dict(master=x,mirror=y))
             h.check(name+' exact master/project mirror matches',x['sha256']==y['sha256'])
-        manifest=json.loads((br/'.claude/skills/unreal-bridge/scripts/bridge_manifest.json').read_text(encoding='utf-8'))
+        manifest=json.loads((br/'skills/unreal-bridge/scripts/bridge_manifest.json').read_text(encoding='utf-8'))
         meta=json.loads((mirror/'Content/Python/bridge_manifest_meta.json').read_text(encoding='utf-8'))
         h.report['manifest']=dict(hash=manifest['manifest_hash'],registry_hash=meta['registry_hash'],plugin_version=meta['plugin_version'])
         h.check('Native registry, loaded wrapper and manifest agree',actual['wrapper_compatible'] and actual['registry_hash']==meta['registry_hash'] and actual['wrapper_manifest_hash']==manifest['manifest_hash']==meta['manifest_hash'],h.report['manifest'])

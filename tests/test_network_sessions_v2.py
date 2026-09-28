@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'skills/unreal-bridge/scripts'))
 import unreal_bridge_network_sessions as sessions
 import unreal_bridge_runtime as runtime
 

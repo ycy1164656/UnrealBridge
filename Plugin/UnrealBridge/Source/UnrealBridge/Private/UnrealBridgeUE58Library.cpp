@@ -4,6 +4,7 @@
 #include "UnrealBridgeNiagaraLibrary.h"
 #include "UnrealBridgeRegistryLibrary.h"
 #include "UnrealBridgeVersion.h"
+#include "UnrealBridgeSourcePaths.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -22,6 +23,10 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+
+#if PLATFORM_WINDOWS
+#include "Windows/WindowsHWrapper.h"
+#endif
 
 #if UNREALBRIDGE_WITH_UE58_TOOLSET_REGISTRY
 #include "ToolsetRegistry/ToolCallAsyncResultString.h"
@@ -550,7 +555,7 @@ namespace
 	/**
 	 * Authorized roots for external source files, in order of preference:
 	 * an explicit UNREALBRIDGE_SOURCE_ROOTS environment override (';'-separated),
-	 * otherwise the project directory. Engine and plugin directories are NOT
+	 * otherwise SourceArt and .tmp/authorized-imports. Engine and plugin directories are NOT
 	 * authorized: importing from them would let a caller launder engine content
 	 * into project assets.
 	 */
@@ -573,9 +578,51 @@ namespace
 		}
 		if (Roots.Num() == 0)
 		{
-			Roots.Add(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+			Roots.Add(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("SourceArt")));
+			Roots.Add(FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT(".tmp/authorized-imports")));
 		}
 		return Roots;
+	}
+
+	// Resolve the actual filesystem object, including every junction/symlink.
+	bool UE58_FinalSourcePath(const FString& Path, bool bDirectory, FString& Out, FString& Error)
+	{
+#if PLATFORM_WINDOWS
+		HANDLE Handle = ::CreateFileW(*Path, FILE_READ_ATTRIBUTES,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+			bDirectory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (Handle == INVALID_HANDLE_VALUE)
+		{
+			Error = FString::Printf(TEXT("Cannot open source/root for identity check (Win32 %lu)"), ::GetLastError());
+			return false;
+		}
+		BY_HANDLE_FILE_INFORMATION Info{};
+		const bool bKindMatches = ::GetFileInformationByHandle(Handle, &Info)
+			&& ((Info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) == bDirectory
+			&& ::GetFileType(Handle) == FILE_TYPE_DISK;
+		const DWORD Length = ::GetFinalPathNameByHandleW(Handle, nullptr, 0, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+		TArray<WCHAR> Buffer;
+		Buffer.SetNumZeroed(Length + 1);
+		const DWORD Written = Length ? ::GetFinalPathNameByHandleW(Handle, Buffer.GetData(), Buffer.Num(), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS) : 0;
+		::CloseHandle(Handle);
+		if (!bKindMatches || !Written || Written >= static_cast<DWORD>(Buffer.Num()))
+		{
+			Error = TEXT("Source/root is not an observable regular disk file/directory");
+			return false;
+		}
+		Out = FString(Buffer.GetData());
+		if (Out.StartsWith(TEXT("\\\\?\\UNC\\")))
+		{
+			Error = TEXT("Resolved source/root is a remote UNC path");
+			return false;
+		}
+		Out.RemoveFromStart(TEXT("\\\\?\\"));
+		FPaths::NormalizeFilename(Out);
+		return true;
+#else
+		Error = TEXT("External-source realpath validation is currently implemented for Windows only");
+		return false;
+#endif
 	}
 
 	/**
@@ -625,7 +672,8 @@ namespace
 			OutError = TEXT("Device-namespace source paths are not authorized");
 			return false;
 		}
-		if (!FPaths::IsRelative(Raw) && Raw.Len() >= 2 && Raw[1] == TEXT(':') && Raw.Len() == 2)
+		if (FPaths::IsRelative(Raw) || (Raw.Len() >= 2 && Raw[1] == TEXT(':')
+			&& (Raw.Len() < 3 || (Raw[2] != TEXT('/') && Raw[2] != TEXT('\\')))))
 		{
 			OutError = TEXT("Drive-relative source paths are not authorized");
 			return false;
@@ -651,6 +699,12 @@ namespace
 		Full.ParseIntoArray(Components, TEXT("/"), true);
 		for (const FString& Component : Components)
 		{
+			if (Component == TEXT("..") || Component.EndsWith(TEXT(".")) || Component.EndsWith(TEXT(" "))
+				|| (Component.Contains(TEXT(":")) && Component != Components[0]))
+			{
+				OutError = TEXT("Ambiguous/traversal/alternate-stream source path component");
+				return false;
+			}
 			FString Stem = Component;
 			int32 Dot = INDEX_NONE;
 			if (Stem.FindChar(TEXT('.'), Dot))
@@ -672,18 +726,25 @@ namespace
 			OutError = FString::Printf(TEXT("Source file does not exist: %s"), *Full);
 			return false;
 		}
+		FString RealFile;
+		if (!UE58_FinalSourcePath(Full, false, RealFile, OutError))
+		{
+			return false;
+		}
 
 		// Containment is checked on the resolved absolute path, case-insensitively
 		// (Windows), with a trailing separator so "/Root" cannot match "/RootEvil".
 		const TArray<FString> Roots = UE58_AuthorizedSourceRoots();
 		for (const FString& Root : Roots)
 		{
-			FString NormalizedRoot = Root;
+			FString NormalizedRoot;
+			FString RootError;
+			if (!UE58_FinalSourcePath(Root, true, NormalizedRoot, RootError)) { continue; }
 			FPaths::NormalizeDirectoryName(NormalizedRoot);
 			NormalizedRoot += TEXT("/");
-			if (Full.StartsWith(NormalizedRoot, ESearchCase::IgnoreCase))
+			if (RealFile.StartsWith(NormalizedRoot, ESearchCase::IgnoreCase))
 			{
-				OutResolvedPath = Full;
+				OutResolvedPath = RealFile;
 				return true;
 			}
 		}
@@ -1880,6 +1941,20 @@ bool UnrealBridgeUE58Adapter::IsRegistryAvailable()
 #if UNREALBRIDGE_WITH_UE58_TOOLSET_REGISTRY
 	return GUE58BridgeToolset.IsValid();
 #else
+	return false;
+#endif
+}
+
+bool UnrealBridgeAuthorizeSourceFile(const FString& Source, FString& Resolved, FString& Error)
+{
+#if UNREALBRIDGE_WITH_UE58_TOOLSET_REGISTRY
+	FUE58OfficialPolicyEntry Entry;
+	Entry.ExternalSourceArg = TEXT("source_file");
+	const TSharedRef<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	Arguments->SetStringField(TEXT("source_file"), Source);
+	return UE58_AuthorizeExternalSourcePath(Entry, Arguments, Resolved, Error);
+#else
+	Error = TEXT("Native source path guard requires the UE 5.8 toolset adapter");
 	return false;
 #endif
 }

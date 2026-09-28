@@ -3,6 +3,8 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Editor.h"
+#include "Engine/Blueprint.h"
+#include "UObject/MetaData.h"
 #include "Editor/TransBuffer.h"
 #include "FileHelpers.h"
 #include "Misc/Guid.h"
@@ -680,6 +682,27 @@ namespace BridgeChangeSetImpl
 			return RollbackActive(Active->Info.bRetainOnFailure
 				? TEXT("Unexpected dirty packages require reconciliation")
 				: TEXT("Unexpected dirty packages caused automatic rollback"));
+		}
+		if (bSave)
+		{
+			for (const FString& PackageName : Result.DirtyPackagesForJob)
+			{
+				if (UPackage* Package = FindPackage(nullptr, *PackageName))
+				{
+					TArray<UObject*> Objects;
+					GetObjectsWithOuter(Package, Objects, EGetObjectsFlags::None);
+					for (UObject* Object : Objects)
+					{
+						if (!Package->GetMetaData().GetValue(Object, TEXT("UnrealBridge.Import.SaveBlocked")).IsEmpty())
+						{ return RetainFailedActive(TEXT("Content import validation blocks Save/Persist: ") + Object->GetPathName()); }
+						if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
+						{
+							if (Blueprint->Status == BS_Error || !Package->GetMetaData().GetValue(Blueprint, TEXT("UnrealBridge.Fragment.SaveBlocked")).IsEmpty())
+							{ return RetainFailedActive(TEXT("Blueprint compilation/fragment validation blocks Save/Persist: ") + Blueprint->GetPathName()); }
+						}
+					}
+				}
+			}
 		}
 
 		EndTransaction(*Active);

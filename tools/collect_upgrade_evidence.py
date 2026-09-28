@@ -37,7 +37,7 @@ def main():
         body=path.read_text(encoding='utf-8-sig')
         if any(term in body for term in ('SRAutomation','SRAnimationAuthoring','SRBehaviorTreeAuthoring','SRInputAutomation')) or path.name in ('SRGameMode.h','SRGameMode.cpp','SRMinimapPanelWidgetBase.cpp','ShooterRoyalRuntime.Build.cs'):
             source.append(dict(fingerprint(path),kind='shooterroyal_related_source',relative=path.relative_to(runtime).as_posix()))
-    scripts=br/'.claude/skills/unreal-bridge/scripts'
+    scripts=br/'skills/unreal-bridge/scripts'
     for name in ('unreal_bridge_upgrade.py','unreal_bridge_authoring.py','unreal_bridge_pointer_input.py','unreal_bridge_audio_sessions.py',
                  'unreal_bridge_sessions.py','unreal_bridge_external_mcp.py','unreal_bridge_network_sessions.py','unreal_bridge_mcp_server.py',
                  'project_adapters/shooterroyal_scenarios.py'):

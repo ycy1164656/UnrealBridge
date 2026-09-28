@@ -16,12 +16,12 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-09-21T08:59:35+00:00'
+_GENERATED_AT = '2026-09-23T03:09:19+00:00'
 _UE_VERSION = '5.8.2-56702186+++UE5+Release-5.8'
 _PROTOCOL_VERSION = 2
-_PLUGIN_VERSION = '3.2.1'
-_REGISTRY_HASH = 'ebf56d9790a1ea96c630b79ef9ac93bd'
-_MANIFEST_HASH = '73a4c30a7d3326435e27354248e05af86d9d5bddb37049d628766c4205f9d542'
+_PLUGIN_VERSION = '3.3.0'
+_REGISTRY_HASH = 'b0d1cf7617d9cc8547ecd13c51100556'
+_MANIFEST_HASH = 'ae863fe49ae2b448cc3582855d0546b28af5b53f5e539357b0636b1d31c0121c'
 
 def verify_runtime_compatibility():
     """Fail fast when the generated wrapper no longer matches the loaded plugin."""
@@ -808,9 +808,9 @@ class BlueprintFragment:
         return unreal.UnrealBridgeBlueprintFragmentLibrary.export_fragment(blueprint_path, graph_name, node_guids)
 
     @staticmethod
-    def import_fragment(*, target_blueprint_path, target_graph_name, fragment_text, compile=True):
-        """X.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile=True) -> str"""
-        return unreal.UnrealBridgeBlueprintFragmentLibrary.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile)
+    def import_fragment(*, target_blueprint_path, target_graph_name, fragment_text, compile=True, request_id=""):
+        """X.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile=True, request_id="") -> str"""
+        return unreal.UnrealBridgeBlueprintFragmentLibrary.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile, request_id)
 
     @staticmethod
     def inspect_fragment(*, fragment_text):
@@ -1833,6 +1833,25 @@ class Chooser:
     def set_chooser_row_result_evaluate_chooser(*, chooser_table_path, row_index, sub_chooser_path):
         """X.set_chooser_row_result_evaluate_chooser(chooser_table_path, row_index, sub_chooser_path) -> bool"""
         return unreal.UnrealBridgeChooserLibrary.set_chooser_row_result_evaluate_chooser(chooser_table_path, row_index, sub_chooser_path)
+
+
+class ContentImport:
+    """Wraps unreal.UnrealBridgeContentImportLibrary (kwargs-only)."""
+
+    @staticmethod
+    def execute_import(*, contract_json):
+        """X.execute_import(contract_json) -> str"""
+        return unreal.UnrealBridgeContentImportLibrary.execute_import(contract_json)
+
+    @staticmethod
+    def prepare_import(*, request_json):
+        """X.prepare_import(request_json) -> str"""
+        return unreal.UnrealBridgeContentImportLibrary.prepare_import(request_json)
+
+    @staticmethod
+    def readback_import(*, contract_json):
+        """X.readback_import(contract_json) -> str"""
+        return unreal.UnrealBridgeContentImportLibrary.readback_import(contract_json)
 
 
 class Curve:

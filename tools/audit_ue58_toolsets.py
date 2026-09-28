@@ -33,7 +33,7 @@ DEFAULT_ACCESS_POLICY = (
     / "ue58_official_tool_policy.json"
 )
 DEFAULT_BRIDGE = (
-    REPO / ".claude" / "skills" / "unreal-bridge" / "scripts" / "bridge.py"
+    REPO / "skills" / "unreal-bridge" / "scripts" / "bridge.py"
 )
 
 

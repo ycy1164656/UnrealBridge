@@ -20,7 +20,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_DIR = REPO_ROOT / ".claude" / "skills" / "unreal-bridge" / "scripts"
+SCRIPT_DIR = REPO_ROOT / "skills" / "unreal-bridge" / "scripts"
 SERVER_PATH = SCRIPT_DIR / "unreal_bridge_mcp_server.py"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))

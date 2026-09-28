@@ -29,7 +29,6 @@ DEFAULT_POLICY = (
 )
 DEFAULT_CATALOG = (
     REPO
-    / ".claude"
     / "skills"
     / "unreal-bridge"
     / "scripts"

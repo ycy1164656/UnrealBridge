@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/unreal-bridge/scripts'))
 from unreal_bridge_project_context import ProjectContextIndex, ContextError, build_context, encoded, asset_path
 
 

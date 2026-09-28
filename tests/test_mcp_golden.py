@@ -12,7 +12,6 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[1]
 MODULE_PATH = (
     REPO
-    / ".claude"
     / "skills"
     / "unreal-bridge"
     / "scripts"

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-rem Expose .claude/skills as the cross-tool .agents/skills via an NTFS junction.
+rem Expose maintained skills as the cross-tool .agents/skills via an NTFS junction.
 rem
 rem Several agent runtimes (Gemini CLI, OpenCode, Cursor, ...) follow the
 rem "Agent Skills open standard" and read .agents/skills/<name>/SKILL.md
@@ -16,7 +16,7 @@ rem   - are .gitignored so they don't end up in commits as duplicate content
 rem
 rem Re-runnable: existing junction is removed first, then re-created.
 
-set "SRC=%~dp0.claude\skills"
+set "SRC=%~dp0skills"
 set "DST=%~dp0.agents\skills"
 
 if not exist "%SRC%" (
@@ -48,6 +48,6 @@ echo   %DST%
 echo     --^> %SRC%
 echo.
 echo Gemini CLI / OpenCode / Cursor that read .agents/skills will now see
-echo the same content as .claude/skills (single source of truth).
+echo the maintained content in skills (single source of truth).
 
 endlocal

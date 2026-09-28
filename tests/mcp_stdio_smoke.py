@@ -23,7 +23,6 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SERVER_PATH = (
     REPO_ROOT
-    / ".claude"
     / "skills"
     / "unreal-bridge"
     / "scripts"
@@ -60,7 +59,7 @@ async def _run(project: str | None) -> dict[str, Any]:
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "unreal-bridge"
-            assert initialized.serverInfo.version == "3.2.1"
+            assert initialized.serverInfo.version == "3.3.0"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}

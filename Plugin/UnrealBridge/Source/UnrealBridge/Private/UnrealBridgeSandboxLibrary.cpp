@@ -11,6 +11,8 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "UObject/Package.h"
+#include "UObject/MetaData.h"
+#include "Engine/Blueprint.h"
 #include "UObject/UObjectIterator.h"
 #include "ShaderCompiler.h"
 #include "AssetCompilingManager.h"
@@ -327,6 +329,15 @@ FString UUnrealBridgeSandboxLibrary::SandboxRequest(const FString& RequestJson)
 		if (!Baselines->HasField(Path) || Row->GetIntegerField(TEXT("action")) == static_cast<int32>(ESandboxFileChange::Removed))
 			return SandboxError(TEXT("ScopeViolation"), TEXT("Unknown or deleted asset blocks persistence"));
 		if (Get(Baselines, *Path) != Get(Row, TEXT("main_sha1"))) return SandboxError(TEXT("TargetRevisionMismatch"), TEXT("Main-project file changed externally"));
+		FString Package;
+		if (!FPackageName::TryConvertFilenameToLongPackageName(Path, Package)) return SandboxError(TEXT("ValidationFailed"), TEXT("Invalid target package"));
+		UObject* Asset = LoadObject<UObject>(nullptr, *(Package + TEXT(".") + FPackageName::GetShortName(Package)));
+		if (!Asset) return SandboxError(TEXT("ValidationFailed"), TEXT("Target could not be loaded for persist validation"));
+		UBlueprint* Blueprint = Cast<UBlueprint>(Asset);
+		if ((Blueprint && Blueprint->Status == BS_Error)
+			|| !Asset->GetOutermost()->GetMetaData().GetValue(Asset, TEXT("UnrealBridge.Fragment.SaveBlocked")).IsEmpty()
+			|| !Asset->GetOutermost()->GetMetaData().GetValue(Asset, TEXT("UnrealBridge.Import.SaveBlocked")).IsEmpty())
+			return SandboxError(TEXT("ValidationFailed"), TEXT("Failed fragment/import or Blueprint compile blocks sandbox persistence"));
 	}
 	if (Action == TEXT("record_saved"))
 	{

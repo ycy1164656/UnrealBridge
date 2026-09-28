@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'skills/unreal-bridge/scripts'))
 from unreal_bridge_sessions import ExternalSession, SCHEMA, process_identity
 
 

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/unreal-bridge/scripts'))
 from project_adapters import shooterroyal_scenarios as scenario
 
 

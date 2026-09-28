@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".claude/skills/unreal-bridge/scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/unreal-bridge/scripts"))
 import unreal_bridge_upgrade as upgrade
 
 

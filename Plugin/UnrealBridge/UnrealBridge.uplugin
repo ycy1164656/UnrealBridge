@@ -1,9 +1,9 @@
 {
 	"FileVersion": 3,
-	"Version": 5,
-	"VersionName": "3.2.1",
+	"Version": 6,
+	"VersionName": "3.3.0",
 	"FriendlyName": "UnrealBridge",
-	"Description": "TCP bridge server that allows external tools (like Claude Code) to execute Python scripts in the Unreal Editor's Python interpreter and receive results.",
+	"Description": "Typed Unreal Editor automation with durable jobs, scoped content contracts and verified readback.",
 	"Category": "Editor",
 	"CreatedBy": "Claude Code",
 	"EnabledByDefault": true,

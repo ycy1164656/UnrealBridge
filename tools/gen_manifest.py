@@ -9,7 +9,7 @@ Two run modes (auto-detected by whether `import unreal` succeeds):
       python tools/gen_manifest.py [--out PATH] [--bridge PATH]
       Drives a running UE editor via bridge.py to execute the in-UE half,
       captures the JSON output, and writes it to
-      .claude/skills/unreal-bridge/scripts/bridge_manifest.json by default.
+      skills/unreal-bridge/scripts/bridge_manifest.json by default.
 
   In-UE reflection:
       bridge.py exec-file tools/gen_manifest.py
@@ -444,7 +444,7 @@ def _cli() -> int:
     parser = argparse.ArgumentParser(
         description="Generate bridge_manifest.json by introspecting a running UE editor."
     )
-    parser.add_argument("--out", help="Output path (default: <repo>/.claude/skills/unreal-bridge/scripts/bridge_manifest.json)")
+    parser.add_argument("--out", help="Output path (default: <repo>/skills/unreal-bridge/scripts/bridge_manifest.json)")
     parser.add_argument("--wrapper-out", help="Wrapper module output path (default: <repo>/Plugin/UnrealBridge/Content/Python/unreal_bridge.py)")
     parser.add_argument("--no-wrapper", action="store_true", help="Skip generating the kwargs-only wrapper module")
     parser.add_argument("--bridge", help="Path to bridge.py (default: auto-detect relative to this script)")
@@ -457,10 +457,10 @@ def _cli() -> int:
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.dirname(here)  # tools/ → repo root
     bridge = args.bridge or os.path.join(
-        repo, ".claude", "skills", "unreal-bridge", "scripts", "bridge.py"
+        repo, "skills", "unreal-bridge", "scripts", "bridge.py"
     )
     out = args.out or os.path.join(
-        repo, ".claude", "skills", "unreal-bridge", "scripts", "bridge_manifest.json"
+        repo, "skills", "unreal-bridge", "scripts", "bridge_manifest.json"
     )
 
     if not os.path.isfile(bridge):

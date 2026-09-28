@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPT_DIR = REPO / ".claude" / "skills" / "unreal-bridge" / "scripts"
+SCRIPT_DIR = REPO / "skills" / "unreal-bridge" / "scripts"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 

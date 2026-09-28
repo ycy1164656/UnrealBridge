@@ -214,12 +214,16 @@ def execute_step(recipe, step_id, plan_hash):
             obj = unreal.EditorAssetLibrary.load_asset(target)
             if isinstance(obj, unreal.Blueprint):
                 unreal.BlueprintEditorLibrary.compile_blueprint(obj)
-                if str(obj.get_editor_property('status')).endswith('ERROR'):
+                if obj.get_editor_property('status')==unreal.BlueprintStatus.BS_ERROR:
                     raise RuntimeError('Blueprint compile failed')
             if unreal.UnrealBridgeEditorLibrary.get_asset_compile_job_count():
                 raise RuntimeError('Compilation pending; reconcile and poll before saving')
         elif operation == 'save':
             obj = unreal.EditorAssetLibrary.load_asset(target)
+            if obj and (unreal.EditorAssetLibrary.get_metadata_tag(obj,'UnrealBridge.Fragment.SaveBlocked') or
+                        unreal.EditorAssetLibrary.get_metadata_tag(obj,'UnrealBridge.Import.SaveBlocked') or
+                        (isinstance(obj,unreal.Blueprint) and obj.get_editor_property('status')==unreal.BlueprintStatus.BS_ERROR)):
+                raise ValueError('Failed fragment/import or Blueprint compile blocks saving')
             if not obj or not unreal.EditorAssetLibrary.save_loaded_asset(obj, only_if_is_dirty=False):
                 raise RuntimeError('Exact target save failed')
             state['saved'] = sorted(set(state['saved'] + [target]))

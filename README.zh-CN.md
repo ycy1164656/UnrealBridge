@@ -9,7 +9,7 @@
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/-Python-3776AB?logo=python&logoColor=white" alt="Python"></a>
     <img src="https://img.shields.io/badge/-C%2B%2B-00599C?logo=cplusplus&logoColor=white" alt="C++">
     <img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows" alt="Windows">
-    <a href="https://claude.ai/code"><img src="https://img.shields.io/badge/Claude%20Code-skill-D97757" alt="Claude Code"></a>
+    <img src="https://img.shields.io/badge/Codex-skill-blue" alt="Codex skill">
     <a href="README.md"><img src="https://img.shields.io/badge/lang-English-blue" alt="English"></a>
   </p>
 </p>
@@ -22,7 +22,7 @@
 
 UnrealBridge 是一个面向 AI Agent 的 Unreal Engine 编辑器桥接层，围绕动画资产内省、Reactive 事件订阅、资产搜索与引用分析、蓝图图谱自动布局等核心场景，提供一套类型化的操作接口。Agent 在本地正在运行的编辑器实例中发起查询与修改，所有变更实时生效，并受事务系统约束、可被撤销。
 
-> **当前开发版本：3.2.1，Protocol v2。** 在 3.2.0 基础上新增原生 K2 蓝图片段导出、导入与回读，受控贴图导入，项目及命名审计，资产移动计划，以及本地片段与开发阻碍目录。已在 UE 5.8.2 普通构建并完成部分专项运行验证；各流程的通过与缺口分别报告，不表示所有验收完成。见 [3.2.1 实施与限制](docs/unrealbridge-3.2.1-release-notes.md)、[日常工作流](.claude/skills/unreal-bridge/references/bridge-production32.md)及历史 [3.2 说明](docs/unrealbridge-3.2-release-notes.md)。
+> **当前开发版本：3.3.0，Protocol v2。** 本轮按 ShooterRoyal 开发需要收尾既定 P0/P1：原生 K2 片段、受控 PNG/FBX/PBR 导入与重导入、审计、移动、可信目录及实际问题记录。能力按 UE 5.8.2 专项证据报告。见 [P0/P1 交付与限制](docs/unrealbridge-3.3.0-p0p1-notes.md)和[日常工作流](skills/unreal-bridge/references/bridge-production33.md)。唯一维护入口为 `skills/unreal-bridge`，`.claude` 保留为停止维护的历史副本。
 
 ## 亮点
 
@@ -94,17 +94,18 @@ git clone https://github.com/<your-fork>/UnrealBridge.git
 cd UnrealBridge
 ```
 
-### 2. 🚨 跑一次 `link_agents_skills.bat`(一次性)
+### 2. 安装 Codex 路由
 
-**使用 Codex / Gemini CLI / OpenCode / Cursor 时必需。** 只用 Claude Code 可以跳过。
+先预览，再安装指向当前 checkout 的路由；不会另建脚本副本。
 
-Skill 真源在 `.claude/skills/`,这个脚本会创建一个 NTFS junction `.agents/skills/`,让所有遵循 [Agent Skills 开放标准](https://www.agensi.io/learn/agent-skills-open-standard) 的 Agent 客户端都能看到同一份内容。Junction 在 Windows 下无法 commit 进 git,所以每次 clone 都需要在本地物化一次 —— **只需要一次**。
+Skill 真源在 `skills/unreal-bridge/`。其它使用 `.agents/skills/` 的客户端可用 `link_agents_skills.bat` 创建链接；不要覆盖已有自定义路径。
 
 ```bat
-link_agents_skills.bat
+python tools/install_codex_skill.py
+python tools/install_codex_skill.py --apply
 ```
 
-Mac / Linux 等价命令:`ln -sfn .claude/skills .agents/skills`(在 repo 根目录跑)。
+安装后使用当前 checkout 的脚本和 manifest。
 
 ### 3. 安装插件
 
@@ -123,31 +124,24 @@ set "DST=D:\Path\To\YourProject\Plugins\UnrealBridge"
 ### 5. 验证
 
 ```bash
-python .claude/skills/unreal-bridge/scripts/bridge.py ping
+python skills/unreal-bridge/scripts/bridge.py ping
 # → pong
-python .claude/skills/unreal-bridge/scripts/bridge.py exec \
+python skills/unreal-bridge/scripts/bridge.py exec \
   "import unreal; print(unreal.UnrealBridgeLevelLibrary.get_level_summary())"
 ```
 
-### Claude Code 集成（可选）
-
-把 skill 拷到 Claude Code 能发现的位置：
-
-```bash
-cp -r .claude/skills/unreal-bridge ~/.claude/skills/            # 用户级
-# 或拷进目标项目自己的 .claude/skills/
-```
+### Editor 路径（按实际安装配置）
 
 想让 `rebuild_relaunch.py` 自动重启编辑器，需设置其中之一：
 
 ```bash
-setx UNREAL_EDITOR_EXE "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe"
-setx UE_ROOT            "C:\Program Files\Epic Games\UE_5.7"
+setx UNREAL_EDITOR_EXE "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe"
+setx UE_ROOT            "C:\Program Files\Epic Games\UE_5.8"
 ```
 
 ### 快速使用
 
-skill 装好之后，把下面任意一句丢进 Claude Code 对话：
+skill 装好之后，可在 Codex 中提出以下任务：
 
 - *「列出当前关卡里所有的 PointLight。」*
 - *「把 PlayerStart 向上移动 200 单位。」*
@@ -171,7 +165,7 @@ install_codex_skill.bat
 
 ```bat
 pip install -r requirements-mcp.txt
-python .claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
+python skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
 ```
 
 该 adapter 暴露 grouped tools，避免一次性常驻数百个 `UFUNCTION` schema。3.0 还提供统一 domain/search/describe、Artifact、Scenario、Automation、typed domain workflow 与官方 Toolset adapter。官方调用依据精确 schema-hash 策略执行：只读任务走 durable Job，运行态交互要求显式 opt-in，事务修改要求显式目标与 ChangeSet rollback，三个执行面均不保存。
@@ -181,7 +175,7 @@ python .claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
 ```toml
 [mcp_servers.unreal_bridge]
 command = "uv"
-args = ["--directory", 'C:\dev\UnrealBridge', "run", "--with", "mcp>=1.6.0,<2", "python", '.claude\skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py']
+args = ["--directory", 'C:\dev\UnrealBridge', "run", "--with", "mcp>=1.6.0,<2", "python", 'skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py']
 startup_timeout_sec = 120
 ```
 
@@ -221,8 +215,8 @@ print(len(lights), "个点光源")
 ### 两种重载方式
 
 ```bash
-python .claude/skills/unreal-bridge/scripts/hot_reload.py        # 只改函数体
-python .claude/skills/unreal-bridge/scripts/rebuild_relaunch.py  # 动到反射
+python skills/unreal-bridge/scripts/hot_reload.py        # 只改函数体
+python skills/unreal-bridge/scripts/rebuild_relaunch.py  # 动到反射
 ```
 
 ## 桥接库
@@ -297,7 +291,7 @@ UnrealBridge/
 ├── Plugin/UnrealBridge/         # UE 5.8.1 编辑器插件(C++)
 │   ├── Source/UnrealBridge/     #   TCP 服务器 + 桥接库
 │   └── Content/Python/          #   UE Python 环境自动载入的辅助脚本
-├── .claude/skills/unreal-bridge/
+├── skills/unreal-bridge/
 │   ├── scripts/                 # bridge.py、hot_reload.py、rebuild_relaunch.py
 │   └── references/              # 各库 API 文档
 ├── docs/                        # 设计文档与规划
@@ -311,7 +305,7 @@ UnrealBridge/
 - **Windows 10/11** —— 插件本身可移植,但辅助脚本里的路径按 Windows 风格写死
 - **Python 3.9+**,已加入 PATH
 - **Visual Studio 2022** + UE 工作负载 —— 用于编译插件。**UE 5.8 源码自编引擎**（不是 Launcher 安装）如果缺少 `Setup.bat` 通常下发的 `UbaDetours.dll`，需要关闭 UBA。在 `engines.local.json` 对应引擎条目中加入 `"env": { "UnrealBuildTool_BuildConfiguration__bAllowUBAExecutor": "false" }`，UBT 会回落到本地 ParallelExecutor。
-- **Claude Code CLI** —— 可选,只有使用自带 skill 时才需要
+- **Codex** —— 通过安装的 skill 路由或 grouped MCP 使用当前 checkout。
 
 ## 安全
 

@@ -8,7 +8,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '.claude/skills/unreal-bridge/scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'skills/unreal-bridge/scripts'))
 from unreal_bridge_runtime import RuntimeRun, RuntimeFault, normalize, recovery_view
 from unreal_bridge_workflows import ScenarioManager
 

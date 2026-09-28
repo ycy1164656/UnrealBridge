@@ -8,6 +8,14 @@ import sys
 import unreal
 
 
+def _fragment_environment():
+    meta=json.loads((Path(__file__).resolve().parent/'bridge_manifest_meta.json').read_text(encoding='utf-8'))
+    if meta['registry_hash']!=unreal.UnrealBridgeRegistryLibrary.get_tool_registry_hash():
+        raise ValueError('Manifest does not describe the loaded native registry')
+    return {'engine_version':unreal.UnrealBridgeEditorLibrary.get_engine_version(),
+            'plugin_version':meta['plugin_version'],'manifest_hash':meta['manifest_hash']}
+
+
 def collect(recipe, plan_hash, adapter_id, source_hash, run_id, world_handle):
     from unreal_bridge_content_ops import _content_hash, _content_snapshot
     if _content_hash(recipe)!=plan_hash:raise ValueError('Frozen plan changed')
@@ -70,6 +78,9 @@ def collect(recipe, plan_hash, adapter_id, source_hash, run_id, world_handle):
     if observed.get('observer_source_sha256')!=source_hash:raise ValueError('Observer implementation changed since the actual run began')
     if observed.get('editor_session_id')!=worlds['editor_session_id'] or observed.get('world_path')!=world['world_path']:
         raise ValueError('Registered observation identity mismatch')
+    if 'fragment_verification' in observed.get('values',{}):
+        observed['values']['fragment_verification']['persisted']='pass' if proof['mode']=='persisted_main_sha1_verified' else 'not_run'
+        observed['values']['fragment_verification']['cold_loaded']='pass' if proof['mode']=='persisted_main_sha1_verified' and worlds['editor_session_id']!=recipe['view_identity']['editor_session_id'] else 'not_run'
     observed['values']['saved_variants']=len(native['saved'])
     observed.update(view_identity=view,view_proof=proof,plan_hash=plan_hash,
                     acceptance_hash=_content_hash(recipe['acceptance_profile']),adapter_id=adapter_id,adapter_source_sha256=source_hash)

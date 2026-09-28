@@ -11,6 +11,9 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/MemoryWriter.h"
 #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
+#include "Serialization/CustomVersion.h"
+#include "UObject/ObjectVersion.h"
+#include "UObject/MetaData.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectGlobals.h"
@@ -98,7 +101,9 @@ namespace BridgeUpgradeImpl
 	class FLimitedWriter final : public FMemoryWriter
 	{
 	public:
-		explicit FLimitedWriter(TArray<uint8>& Buffer) : FMemoryWriter(Buffer, true) {}
+		// Persistence enables save-time FText key generation for anonymous
+		// localized pin labels. A read-only fingerprint must not mint new keys.
+		explicit FLimitedWriter(TArray<uint8>& Buffer) : FMemoryWriter(Buffer, false) {}
 		virtual void Serialize(void* Data, int64 Num) override
 		{
 			if (IsError() || Num < 0 || Num > MaxSnapshotBytes || Tell() > MaxSnapshotBytes - Num)
@@ -113,7 +118,7 @@ namespace BridgeUpgradeImpl
 	{
 		static const TSet<FName> Classes = {
 			TEXT("DataTable"), TEXT("DataAsset"), TEXT("Blueprint"), TEXT("NiagaraSystem"),
-			TEXT("SoundWave"), TEXT("MaterialInstanceConstant"),
+			TEXT("SoundWave"), TEXT("MaterialInstanceConstant"), TEXT("Texture2D"), TEXT("StaticMesh"), TEXT("SkeletalMesh"),
 			TEXT("AnimMontage"), TEXT("AnimSequence"), TEXT("BehaviorTree"), TEXT("BlackboardData"),
 			TEXT("SoundCue"), TEXT("SoundClass"), TEXT("SoundMix"), TEXT("SoundSubmixBase"),
 			TEXT("SoundControlBus"), TEXT("SoundControlBusMix")};
@@ -152,19 +157,43 @@ namespace BridgeUpgradeImpl
 		Objects.Sort([](const UObject& A, const UObject& B) { return A.GetPathName() < B.GetPathName(); });
 		TArray<uint8> Bytes;
 		FLimitedWriter Writer(Bytes);
+		Writer.SetUEVer(GPackageFileUEVersion);
+		Writer.SetEngineVer(FEngineVersion::Current());
+		Writer.SetCustomVersions(FCurrentCustomVersions::GetAll());
 		FObjectAndNameAsStringProxyArchive Archive(Writer, false);
+		// A default memory archive advertises an old package version. Blueprint
+		// Serialize then runs legacy GUID migrations even on a save archive.
+		// Snapshotting must observe current objects, never migrate them.
+		Archive.SetUEVer(GPackageFileUEVersion);
+		Archive.SetEngineVer(FEngineVersion::Current());
+		Archive.SetCustomVersions(FCurrentCustomVersions::GetAll());
+		const bool bDiagnostics = FPlatformMisc::GetEnvironmentVariable(TEXT("UNREALBRIDGE_SNAPSHOT_DIAGNOSTICS")) == TEXT("1");
+		TArray<TSharedPtr<FJsonValue>> ObjectDigests;
 		for (UObject* Object : Objects)
 		{
 			if (!IsValid(Object) || Object->HasAnyFlags(RF_Transient)) continue;
 			FString Name = Object->GetPathName();
 			FString ClassName = Object->GetClass()->GetPathName();
+			const int64 Start = Writer.Tell();
 			Archive << Name;
 			Archive << ClassName;
 			Object->Serialize(Archive);
+			TMap<FName, FString>* Metadata = FMetaData::GetMapForObject(Object);
+			TArray<FString> Keys;
+			if (Metadata) { for (const auto& Pair : *Metadata) Keys.Add(Pair.Key.ToString()); }
+			Keys.Sort(); int32 Count = Keys.Num(); Archive << Count;
+			for (FString& Key : Keys) { FString Value = Metadata->FindChecked(FName(*Key)); Archive << Key; Archive << Value; }
 			if (Writer.IsError())
 			{
 				Failure = TEXT("Target revision exceeds the 8 MiB snapshot budget: ") + Path;
 				return nullptr;
+			}
+			if (bDiagnostics)
+			{
+				uint8 ObjectHash[FSHA1::DigestSize]; FSHA1::HashBuffer(Bytes.GetData() + Start, Writer.Tell() - Start, ObjectHash);
+				auto Item = MakeShared<FJsonObject>(); Item->SetStringField(TEXT("object"), Name); Item->SetStringField(TEXT("class"), ClassName);
+				Item->SetStringField(TEXT("sha1"), BytesToHex(ObjectHash, FSHA1::DigestSize)); Item->SetNumberField(TEXT("bytes"), Writer.Tell() - Start);
+				ObjectDigests.Add(MakeShared<FJsonValueObject>(Item));
 			}
 		}
 		uint8 Digest[FSHA1::DigestSize];
@@ -174,6 +203,7 @@ namespace BridgeUpgradeImpl
 		Out->SetBoolField(TEXT("exists"), true);
 		Out->SetBoolField(TEXT("dirty"), Package->IsDirty());
 		Out->SetNumberField(TEXT("snapshot_bytes"), Bytes.Num());
+		if (bDiagnostics) Out->SetArrayField(TEXT("object_diagnostics"), ObjectDigests);
 		return Out;
 	}
 }

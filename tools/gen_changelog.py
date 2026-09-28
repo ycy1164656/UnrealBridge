@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a Markdown changelog by diffing two snapshots of bridge_manifest.json.
 
-The manifest at `.claude/skills/unreal-bridge/scripts/bridge_manifest.json` is
+The manifest at `skills/unreal-bridge/scripts/bridge_manifest.json` is
 the source of truth for "what UFUNCTIONs / enums / structs the bridge exposes"
 — it's regenerated via `tools/gen_manifest.py` and committed alongside feature
 PRs. This tool reads two git refs of that file, computes the diff, and emits
@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MANIFEST_PATH = ".claude/skills/unreal-bridge/scripts/bridge_manifest.json"
+MANIFEST_PATH = "skills/unreal-bridge/scripts/bridge_manifest.json"
 
 # Windows consoles in non-en locales (e.g. cp936) can't encode emojis used in
 # section headers — reconfigure stdout to UTF-8 with replace fallback.

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BRIDGE_PY = REPO_ROOT / ".claude" / "skills" / "unreal-bridge" / "scripts" / "bridge.py"
+BRIDGE_PY = REPO_ROOT / "skills" / "unreal-bridge" / "scripts" / "bridge.py"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
