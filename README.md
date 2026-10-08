@@ -9,7 +9,7 @@
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/-Python-3776AB?logo=python&logoColor=white" alt="Python"></a>
     <img src="https://img.shields.io/badge/-C%2B%2B-00599C?logo=cplusplus&logoColor=white" alt="C++">
     <img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows" alt="Windows">
-    <img src="https://img.shields.io/badge/Codex-skill-blue" alt="Codex skill">
+    <img src="https://img.shields.io/badge/AI_agents-MCP%20%2B%20CLI-blue" alt="AI agent tools">
     <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/lang-%E4%B8%AD%E6%96%87-red" alt="中文"></a>
   </p>
 </p>
@@ -22,7 +22,7 @@
 
 UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It provides a typed operation surface for core scenarios such as animation-asset introspection, reactive event subscription, asset search and reference analysis, and automatic layout of Blueprint graphs. The Agent issues queries and modifications against a locally running editor instance; every change takes effect in real time, is bounded by the transaction system, and is undoable.
 
-> **Current development version: 3.3.0, protocol v2.** Scope is the planned P0/P1 workflows needed by ShooterRoyal: native K2 fragments, contracted PNG/FBX/PBR import and reimport, audit, controlled moves, trusted catalog and friction records. Verification is per workflow on UE 5.8.2. See [P0/P1 delivery and limits](docs/unrealbridge-3.3.0-p0p1-notes.md) and the [maintained workflow](skills/unreal-bridge/references/bridge-production33.md). The canonical skill is `skills/unreal-bridge`; `.claude` is an unmaintained historical copy.
+> **Current development version: 3.3.1, protocol v2.** The freeze candidate adds a minimal MCP surface, runtime watch, owned PIE frame stepping, UE validation and context budgets. See the [3.3.1 release record](docs/unrealbridge-3.3.1-release-notes.md) for measured status and limitations. The canonical skill is `skills/unreal-bridge`; `.claude` is an unmaintained historical copy.
 
 ## Highlights
 
@@ -94,17 +94,18 @@ git clone https://github.com/<your-fork>/UnrealBridge.git
 cd UnrealBridge
 ```
 
-### 2. 🚨 Run `link_agents_skills.bat` (one-time)
+### 2. Install an AI agent router (optional)
 
-**Required for Codex / Gemini CLI / OpenCode / Cursor.** Skip if you only use Claude Code.
+MCP and CLI access share the maintained runtime; neither requires a vendor-specific skill.
 
 The maintained skill source lives at `skills/unreal-bridge/`. The legacy `.claude/` copy is no longer maintained. `link_agents_skills.bat` can expose `skills/` through `.agents/skills/` for clients that use that directory.
 
 ```bat
-link_agents_skills.bat
+python tools/install_agent_skill.py --destination C:/path/to/client/skills/unreal-bridge
+python tools/install_agent_skill.py --destination C:/path/to/client/skills/unreal-bridge --apply
 ```
 
-Mac / Linux equivalent: `ln -sfn ../skills .agents/skills` (run from repo root).
+The default destination is `~/.agents/skills/unreal-bridge`. Choose a directory supported by your client. The installer previews first, preserves customized routers and installs only a pointer to this checkout. Existing Codex installations can continue using `tools/install_codex_skill.py`.
 
 ### 3. Install the plugin
 
@@ -129,12 +130,12 @@ python skills/unreal-bridge/scripts/bridge.py exec \
   "import unreal; print(unreal.UnrealBridgeLevelLibrary.get_level_summary())"
 ```
 
-### Codex integration
+### AI agent integration
 
-Install the lightweight Codex router; it points to the maintained checkout:
+Install the shared router; it points to the maintained checkout:
 
 ```bash
-python tools/install_codex_skill.py --apply
+python tools/install_agent_skill.py --apply
 ```
 
 For `rebuild_relaunch.py` to auto-relaunch the editor, set one of:
@@ -156,17 +157,11 @@ Once the skill is installed, use requests such as:
 
 The Agent reads `SKILL.md`, picks the right `UnrealBridge*Library` function, calls it through `bridge.py`, and reports back.
 
-### Codex integration (optional)
+### MCP client configuration
 
-This repo also ships a Codex-oriented skill:
+Every MCP client uses the same server, capability IDs, schemas, Jobs and authorization rules. A common stdio configuration is in [examples/mcp-ai-agents.json](examples/mcp-ai-agents.json). It selects the six-tool minimal surface; full mode remains available.
 
-```bat
-install_codex_skill.bat
-```
-
-It copies `.codex/skills/unreal-bridge/` into `%USERPROFILE%\.codex\skills\unreal-bridge\`.
-
-For Codex or other clients that prefer MCP tools over shelling out to
+For AI agent clients that prefer MCP tools over shelling out to
 `bridge.py`, install the optional dependency and start the grouped adapter:
 
 ```bat
@@ -175,7 +170,7 @@ python skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py
 ```
 
 The adapter currently targets the FastMCP API shipped by `mcp>=1.6.0,<2`.
-Keep that upper bound in Codex's `uv --with` argument as well; MCP 2.x moved
+Keep that upper bound in each client's `uv --with` argument as well; MCP 2.x moved
 the FastMCP import surface and is not wire-compatible with this adapter.
 
 The adapter exposes grouped tools such as `bridge_call`, `asset_op`,
@@ -190,7 +185,7 @@ all three planes are no-save.
 
 Codex Desktop, the Codex CLI, and the IDE extension share the MCP server
 configuration in `~/.codex/config.toml`. A Windows configuration for this
-checkout is:
+checkout is (these TOML keys belong to Codex and remain unchanged):
 
 ```toml
 [mcp_servers.unreal_bridge]
@@ -198,6 +193,8 @@ command = "uv"
 args = ["--directory", 'C:\dev\UnrealBridge', "run", "--with", "mcp>=1.6.0,<2", "python", 'skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py']
 startup_timeout_sec = 120
 ```
+
+Gemini CLI reads `mcpServers` entries from its settings; Claude Code supports `claude mcp add --transport stdio unreal_bridge -- uv --directory C:/dev/UnrealBridge run --with "mcp>=1.6.0,<2" python skills/unreal-bridge/scripts/unreal_bridge_mcp_server.py`. Configure the same environment variable for minimal mode in that client. See the official [Gemini CLI MCP documentation](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md) and [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp). These are configuration examples; real Gemini/Claude acceptance is separate from protocol tests.
 
 ## Usage
 

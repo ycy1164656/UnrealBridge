@@ -43,5 +43,7 @@ namespace BridgeWorldContext
 	void EndExecution();
 	bool HasScope();
 	UWorld* GetScopedWorld();
+	/** C++-only exact handle lookup; never falls back to a path or editor default. */
+	UWorld* ResolveWorldHandle(const FString& WorldHandle);
 	AActor* ResolveActor(const FString& Selector, UWorld* RequiredWorld = nullptr);
 }

@@ -313,6 +313,7 @@ class ProductionOrder:
             report.update(plan_hash=state['plan_hash'],acceptance_hash=state['acceptance_hash'],
                           view_identity=observed['view_identity'],view_proof=proof,native_job_id=native_job_id,
                           adapter_source_sha256=source_hash,work_order_id=self.identity,run_index=len(state['verification_runs']))
+            report['registered_evidence_artifact'] = self.artifacts.put(observed, kind='registered-verification').as_dict()
             state['verification_runs'].append(report);state['status']=report['status']
             atomic_json(self.path,state)
             return report

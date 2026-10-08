@@ -40,6 +40,7 @@ CATEGORY_GAMEPLAY_FAULT = "gameplay_fault"
 CATEGORY_PERFORMANCE_LEAD = "performance_lead"
 CATEGORY_ORGANIZATION = "organization_suggestion"
 CATEGORIES = (CATEGORY_GAMEPLAY_FAULT, CATEGORY_PERFORMANCE_LEAD, CATEGORY_ORGANIZATION)
+CATEGORIES += ('stability_network', 'unknown_coverage')
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
@@ -64,6 +65,10 @@ DEFAULT_NAMING_RULES: Dict[str, str] = {
 class AuditError(RuntimeError):
     """Raised when audit or organize cannot produce a trustworthy result."""
 
+    def __init__(self, message, evidence=None):
+        super().__init__(message)
+        self.evidence = evidence or {}
+
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(
@@ -74,17 +79,17 @@ def _digest(value: Any) -> str:
 
 def _as_list(value: Any) -> List[Any]:
     if value is None:
-        return []
+        raise AuditError("Missing collection result; empty evidence must be an explicit array")
     if isinstance(value, list):
         return value
     if isinstance(value, dict):
         # Tool results sometimes wrap the payload; accept the common shapes
         # rather than guessing a single one.
-        for key in ("result", "results", "assets", "items", "value"):
+        for key in ("returnValue", "result", "results", "assets", "items", "value"):
             if key in value:
                 return _as_list(value[key])
-        return [value]
-    return [value]
+        raise AuditError("Unrecognized collection result", value)
+    raise AuditError("Expected an explicit collection, got " + type(value).__name__)
 
 
 @dataclass
@@ -116,8 +121,10 @@ class Finding:
 def _call_readonly(call: Callable[..., Any], tool: Tuple[str, str], arguments: Dict[str, Any]) -> Any:
     toolset, name = tool
     response = call(toolset=toolset, tool=name, arguments=arguments)
-    if isinstance(response, dict) and response.get("success") is False:
-        raise AuditError(f"{toolset}.{name} failed: {response.get('error') or response}")
+    if isinstance(response, dict) and (response.get("success") is False or response.get("result_complete") is False):
+        raise AuditError(f"{toolset}.{name} failed: {response.get('error') or response}", response)
+    if isinstance(response, dict) and response.get("result_complete") is True:
+        return response["result"]
     return response
 
 
@@ -134,16 +141,20 @@ def collect_assets(
     """
     if not scope_paths:
         raise AuditError("scope_paths must name at least one content path")
+    if not 1 <= max_assets <= 10000:
+        raise AuditError("max_assets must be between 1 and 10000")
     seen: List[str] = []
     known: set[str] = set()
     truncated = False
     for path in scope_paths:
         if not str(path).startswith("/"):
             raise AuditError(f"scope path must be a /Game-style content path: {path}")
-        found = _as_list(_call_readonly(call, T_FIND_ASSETS, {"path": path, "recursive": True}))
+        found = _as_list(_call_readonly(call, T_FIND_ASSETS, {"folder_path": path, "name": "", "recursive": True}))
         for item in found:
             asset = item if isinstance(item, str) else (item or {}).get("path") or (item or {}).get("asset")
-            if not asset or asset in known:
+            if not asset:
+                raise AuditError("Asset enumeration contained an unrecognized record", {"record": item})
+            if asset in known:
                 continue
             if len(seen) >= max_assets:
                 truncated = True
@@ -167,16 +178,21 @@ def audit_project(
     Only orchestration: every number here comes from an existing ReadOnly tool.
     Nothing is modified, and no optimization is applied.
     """
-    rules = dict(DEFAULT_NAMING_RULES if naming_rules is None else naming_rules)
+    rules = dict(naming_rules or {})
     assets, truncated = collect_assets(call, scope_paths, max_assets=max_assets)
 
     findings: List[Finding] = []
     orphan_count = 0
     heavy_dependency_count = 0
+    rows = []
 
     for asset in assets:
         referencers = _as_list(_call_readonly(call, T_GET_REFERENCERS, {"asset_path": asset}))
         dependencies = _as_list(_call_readonly(call, T_GET_DEPENDENCIES, {"asset_path": asset}))
+        asset_class = _call_readonly(call, T_GET_ASSET_CLASS, {'asset_path': asset})
+        tags = _call_readonly(call, T_GET_ASSET_TAGS, {'asset_path': asset})
+        rows.append({'asset': asset, 'class': asset_class, 'tags': tags,
+                     'direct_referencers': sorted(set(referencers)), 'direct_dependencies': sorted(set(dependencies))})
 
         if not referencers:
             orphan_count += 1
@@ -227,8 +243,54 @@ def audit_project(
             "heavy_dependency_assets": heavy_dependency_count,
         },
         "findings": [f.to_dict() for f in findings],
+        "assets": rows,
+        "coverage": {'enumeration_complete': not truncated, 'observed': len(assets),
+                     'unknown': ['runtime_frame_timing', 'resident_memory', 'soft_string_references', 'compile_lint_not_run']},
+        "runtime_performance": {'status': 'not_sampled', 'gt_ms': None, 'rt_ms': None, 'gpu_ms': None},
+        "rule_status": "supplied_policy" if naming_rules else "project_rule_missing",
+        "measurement_source": 'UE official AssetRegistry tools; dependency counts are not runtime cost',
         "mutations": "none; this aggregation is read-only by construction",
     }
+
+
+def audit_content_package(call, scope_paths, *, max_assets=DEFAULT_MAX_ASSETS, max_depth=8):
+    report = audit_project(call, scope_paths, max_assets=max_assets)
+    seeds = [row['asset'] for row in report['assets']]
+    closure, pending, truncated = set(seeds), [(p, 0) for p in seeds], report['truncated']
+    direct = {row['asset']: row['direct_dependencies'] for row in report['assets']}
+    while pending:
+        asset, depth = pending.pop(0)
+        dependencies = direct.get(asset)
+        if dependencies is None:
+            dependencies = _as_list(_call_readonly(call, T_GET_DEPENDENCIES, {'asset_path': asset}))
+        for dependency in dependencies:
+            if dependency in closure:
+                continue
+            if depth >= max_depth or len(closure) >= max_assets:
+                truncated = True
+                continue
+            closure.add(dependency)
+            pending.append((dependency, depth + 1))
+    report.update(mode='content_package', reference_closure=sorted(closure),
+                  closure_depth_limit=max_depth, closure_truncated=truncated,
+                  closure_count=len(closure), source_art_bytes=None,
+                  related_fragments='query project fragment catalog by external_dependencies')
+    return report
+
+
+def audit_level(call, *, max_assets=DEFAULT_MAX_ASSETS):
+    if not hasattr(call, 'level_snapshot'):
+        raise AuditError('Level snapshot capability unavailable')
+    observed = call.level_snapshot(max_assets)
+    instances = observed.get('mesh_instances')
+    if not isinstance(instances, dict):
+        raise AuditError('Level snapshot missing mesh instance evidence', observed)
+    return {'ok': True, 'mode': 'level', **observed,
+            'unique_mesh_count': len(instances), 'total_mesh_instances': sum(instances.values()),
+            'runtime_performance': {'status': 'not_sampled', 'gt_ms': None, 'rt_ms': None, 'gpu_ms': None},
+            'resident_memory_bytes': None, 'mutations': 'none',
+            'measurement_source': 'Editor actor/component enumeration; shared resources deduplicated by asset path',
+            'coverage': {'unknown': ['WorldPartition_unloaded_cells', 'streaming_unloaded_levels', 'runtime_residency', 'GPU_cost']}}
 
 
 def _asset_leaf(asset_path: str) -> str:
@@ -274,7 +336,7 @@ def naming_audit(
     max_assets: int = DEFAULT_MAX_ASSETS,
 ) -> Dict[str, Any]:
     """Read-only naming audit. E-01 requires this before any move is planned."""
-    rules = dict(DEFAULT_NAMING_RULES if naming_rules is None else naming_rules)
+    rules = dict(naming_rules or {})
     assets, truncated = collect_assets(call, scope_paths, max_assets=max_assets)
     findings = _naming_findings(call, assets, rules)
     return {
@@ -283,6 +345,8 @@ def naming_audit(
         "asset_count": len(assets),
         "truncated": truncated,
         "violation_count": len(findings),
+        "rule_status": "supplied_policy" if naming_rules else "project_rule_missing",
+        "suggested_prefixes": {} if naming_rules else DEFAULT_NAMING_RULES,
         "violations": [f.to_dict() for f in findings],
         "mutations": "none",
     }
@@ -300,8 +364,14 @@ def plan_moves(
     referencer-count) tuples it was built from. apply_moves refuses a plan
     whose digest no longer matches the live evidence.
     """
-    if not moves:
-        raise AuditError("moves must contain at least one {source, destination} entry")
+    if not 1 <= len(moves) <= 8:
+        raise AuditError("moves must contain between 1 and 8 explicit entries")
+    normalized = [{k: str(m.get(k, '')).strip() for k in ('source', 'destination')} for m in moves]
+    sources = [m['source'].casefold() for m in normalized]
+    destinations = [m['destination'].casefold() for m in normalized]
+    if len(set(sources)) != len(sources) or len(set(destinations)) != len(destinations) or set(sources) & set(destinations):
+        raise AuditError('Duplicate, case-only, cyclic or chained move plans are unsupported')
+    context = None
 
     entries: List[Dict[str, Any]] = []
     blocked: List[Dict[str, Any]] = []
@@ -314,17 +384,37 @@ def plan_moves(
         if reason:
             blocked.append({"source": source, "destination": destination, "reason": reason})
             continue
+        if context is None:
+            if not hasattr(call, 'snapshot'):
+                raise AuditError('Move requires trusted native revision/session/view snapshot transport')
+            context = call.snapshot([p for m in normalized for p in m.values()])
+        source_state = context['targets'][source]
+        destination_state = context['targets'][destination]
+        if not source_state.get('exists') or destination_state.get('exists') or source_state.get('dirty'):
+            blocked.append({'source': source, 'destination': destination, 'reason': 'source_missing_dirty_or_destination_exists'})
+            continue
+        if any(kind in source_state.get('class_name', '') for kind in ('World', 'Level', 'Redirector')):
+            blocked.append({'source': source, 'destination': destination, 'reason': 'special_asset_unsupported'})
+            continue
         referencers = _as_list(_call_readonly(call, T_GET_REFERENCERS, {"asset_path": source}))
+        dependencies = _as_list(_call_readonly(call, T_GET_DEPENDENCIES, {"asset_path": source}))
         entries.append({
             "source": source,
             "destination": destination,
             "referencer_count": len(referencers),
             "redirector_expected": len(referencers) > 0,
+            "referencers": sorted(set(referencers)),
+            "dependencies": sorted(set(dependencies)),
+            "referencers_hash": _digest(sorted(set(referencers))),
+            "dependencies_hash": _digest(sorted(set(dependencies))),
+            "source_state": source_state,
+            "destination_state": destination_state,
         })
 
     plan = {
         "entries": entries,
         "allow_roots": list(allow_roots),
+        "context": {k: v for k, v in (context or {}).items() if k != 'targets'},
     }
     return {
         "ok": len(blocked) == 0,
@@ -343,11 +433,15 @@ def _move_block_reason(source: str, destination: str, allow_roots: Sequence[str]
         return "both source and destination must be /Game-style content paths"
     if source == destination:
         return "source and destination are identical"
+    if source.split('/')[1].casefold() != destination.split('/')[1].casefold():
+        return 'cross-plugin/root moves are unsupported'
     for path in (source, destination):
         if not any(path == root or path.startswith(root.rstrip("/") + "/") for root in allow_roots):
             return f"path '{path}' is outside the authorized roots {list(allow_roots)}"
         if ".." in path:
             return f"path '{path}' contains a traversal segment"
+        if not re.fullmatch(r'/[A-Za-z][A-Za-z0-9_]*/[A-Za-z0-9_/]+', path) or any(p in path for p in ('__ExternalActors__', '__ExternalObjects__')):
+            return 'Canonical package paths only; World Partition/OFPA unsupported'
     return None
 
 
@@ -370,20 +464,12 @@ def apply_moves(
     if not entries:
         raise AuditError("plan contains no entries")
 
-    revalidated = {
-        "entries": [],
-        "allow_roots": list((plan or {}).get("allow_roots") or ["/Game"]),
-    }
-    for entry in entries:
-        referencers = _as_list(_call_readonly(call, T_GET_REFERENCERS, {"asset_path": entry["source"]}))
-        revalidated["entries"].append({
-            "source": entry["source"],
-            "destination": entry["destination"],
-            "referencer_count": len(referencers),
-            "redirector_expected": len(referencers) > 0,
-        })
+    if _digest(plan) != plan_digest:
+        raise AuditError('Move plan digest mismatch')
+    current = plan_moves(call, entries, allow_roots=plan['allow_roots'])
+    revalidated = current['plan']
     live_digest = _digest(revalidated)
-    if live_digest != plan_digest:
+    if not current['ok'] or live_digest != plan_digest:
         return {
             "ok": False,
             "error": "plan_stale",
@@ -398,14 +484,21 @@ def apply_moves(
     failed: List[Dict[str, Any]] = []
     for entry in revalidated["entries"]:
         try:
-            _call_readonly(call, T_MOVE, {
-                "source_path": entry["source"],
-                "destination_path": entry["destination"],
+            actual = _call_readonly(call, T_MOVE, {
+                "path": entry["source"],
+                "new_path": entry["destination"],
             })
+            if actual is False or (isinstance(actual, dict) and actual.get('returnValue') is False):
+                raise AuditError('Native move returned false')
+            after = call.snapshot([entry['destination']])
+            target = after['targets'][entry['destination']]
+            unexpected_dirty = set(after.get('dirty_packages', [])) - set(plan['context'].get('dirty_packages', [])) - {p for e in entries for p in (e['source'], e['destination'])} - {p for e in entries for p in e['referencers']}
+            if not target.get('exists') or target.get('class_name') != entry['source_state']['class_name'] or unexpected_dirty:
+                raise AuditError('Move readback/Dirty mismatch; needs_reconciliation', after)
         except AuditError as exc:
             # Stop at the first failure: continuing would leave a half-applied
             # plan whose remaining entries were never re-validated.
-            failed.append({"source": entry["source"], "error": str(exc)})
+            failed.append({"source": entry["source"], "error": str(exc), 'evidence': exc.evidence})
             break
         moved.append(entry)
 
@@ -416,6 +509,8 @@ def apply_moves(
         "failed": failed,
         "remaining": len(revalidated["entries"]) - len(moved) - len(failed),
         "packages_saved": False,
+        "side_effect_state": 'needs_reconciliation' if failed else 'complete',
+        "not_attempted": entries[len(moved) + len(failed):],
         "note": "Moves are transactional in the editor but unsaved; saving belongs "
                 "to the caller's ChangeSet. Redirectors remain where referencers existed.",
     }

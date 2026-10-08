@@ -3,7 +3,7 @@ name: unreal-bridge
 description: Inspect or automate a running Unreal Editor through UnrealBridge using the current project's live schema.
 ---
 
-# UnrealBridge for Codex
+# UnrealBridge for AI agents
 
 This is the Bridge 3.3 P0/P1 documentation router. The canonical checkout is `{{CHECKOUT}}`.
 Use `{{SKILL}}/scripts/bridge.py` and its adjacent manifest, or the configured grouped MCP tools. Do not use an installed legacy `scripts/` snapshot. Missing canonical files are a dependency to resolve, never a reason to silently fall back.

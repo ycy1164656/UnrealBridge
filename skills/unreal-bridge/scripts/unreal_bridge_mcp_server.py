@@ -4,13 +4,14 @@ Grouped MCP adapter for UnrealBridge.
 
 This is intentionally thin: it reuses bridge.py discovery, token handling,
 transport, and preflight instead of introducing a second bridge protocol. The
-adapter exposes a small set of grouped MCP tools so Codex-style clients do not
+adapter exposes a small set of grouped MCP tools so AI agent clients do not
 need to load hundreds of individual UnrealBridge UFUNCTIONs as separate tools.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import copy
 import contextvars
@@ -49,6 +50,7 @@ from unreal_bridge_project_context import ProjectContextIndex, ContextError, bui
 from unreal_bridge_production import ProductionOrder, normalize_recipe  # noqa: E402
 import unreal_bridge_graph_codec as graph_codec  # noqa: E402
 import unreal_bridge_runtime as runtime_recipes  # noqa: E402
+import unreal_bridge_runtime_watch as runtime_watch  # noqa: E402
 import unreal_bridge_network_sessions as network_sessions  # noqa: E402
 import unreal_bridge_external_mcp as external_mcp  # noqa: E402
 import unreal_bridge_pointer_input as pointer_input  # noqa: E402
@@ -83,6 +85,7 @@ from unreal_bridge_workflows import (  # noqa: E402
     last_json_object,
     shape_result,
 )
+from unreal_bridge_capabilities import HostCapability, HostCapabilityRegistry, digest as capability_digest  # noqa: E402
 
 
 DEFAULT_TIMEOUT = 60.0
@@ -636,7 +639,7 @@ mcp = FastMCP(
 # FastMCP 1.x does not expose a public server-version constructor argument.
 # The adapter is intentionally pinned below MCP 2, so set the low-level field
 # once to keep initialize/serverInfo aligned with the UnrealBridge release.
-mcp._mcp_server.version = "3.3.0"
+mcp._mcp_server.version = "3.3.1"
 
 
 @mcp.tool()
@@ -6302,6 +6305,446 @@ def bridge_friction(
 
 
 _register_manifest_group_tools()
+
+
+_RUNTIME_WATCHES: Dict[str, runtime_watch.RuntimeWatch] = {}
+_RUNTIME_WATCH_LOCK = threading.RLock()
+
+
+@mcp.tool()
+def bridge_runtime_watch(operation: str, request: Optional[Dict[str, Any]] = None,
+                         watch_id: str = "", endpoint: Optional[str] = None,
+                         project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Start/status/cancel/result of a bounded read-only multi-world PIE watch."""
+    if operation == "start":
+        try:
+            spec = runtime_watch.validate(request or {})
+            store = _artifact_store_for(endpoint=endpoint, project=project, token=token)
+            with _RUNTIME_WATCH_LOCK:
+                if sum(item.thread is not None and item.thread.is_alive() for item in _RUNTIME_WATCHES.values()) >= 4:
+                    raise ValueError("At most four concurrent watches")
+                def sample(payload, sequence):
+                    native = {key: payload[key] for key in ("pie_session_id", "world_handles",
+                              "actor_name", "class_path", "fields")}
+                    code = "import unreal\nprint(unreal.UnrealBridgeRuntimeWatchLibrary.get_multi_world_watch_snapshot(" + repr(json.dumps(native, ensure_ascii=False)) + "))"
+                    submitted = bridge_submit_job(code, run_timeout=5.0,
+                                  endpoint=endpoint, project=project, token=token)
+                    if not submitted.get("success") or not submitted.get("job_id"):
+                        return {"ok": False, "error": "snapshot_submit_failed", "response": submitted}
+                    completed = bridge_wait_job(submitted["job_id"], wait_timeout=5.0,
+                                  endpoint=endpoint, project=project, token=token)
+                    observed = _last_json_output(completed)
+                    return observed if isinstance(observed, dict) else {"ok": False,
+                        "error": "snapshot_timeout_needs_reconciliation", "job_id": submitted["job_id"]}
+                watch = runtime_watch.RuntimeWatch(spec, sample, store)
+                _RUNTIME_WATCHES[watch.id] = watch
+                watch.start()
+                return watch.view()
+        except (ValueError, OSError) as exc:
+            return {"success": False, "phase": "runtime_watch", "error": str(exc)}
+    with _RUNTIME_WATCH_LOCK:
+        watch = _RUNTIME_WATCHES.get(watch_id)
+    if not watch:
+        return {"success": False, "phase": "runtime_watch", "error": "unknown watch_id"}
+    if operation == "cancel":
+        watch.cancelled.set()
+        return {**watch.view(), "cancel_requested": True}
+    if operation in {"status", "result"}:
+        return watch.view()
+    return {"success": False, "phase": "runtime_watch", "error": "Use start/status/cancel/result"}
+
+
+def _watch_start(request: Dict[str, Any], endpoint: Optional[str] = None,
+                 project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    return bridge_runtime_watch("start", request, endpoint=endpoint, project=project, token=token)
+
+
+def _watch_status(watch_id: str, endpoint: Optional[str] = None,
+                  project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    return bridge_runtime_watch("status", watch_id=watch_id, endpoint=endpoint, project=project, token=token)
+
+
+def _watch_cancel(watch_id: str, endpoint: Optional[str] = None,
+                  project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    return bridge_runtime_watch("cancel", watch_id=watch_id, endpoint=endpoint, project=project, token=token)
+
+
+def _native_331_call(library: str, function: str, arguments: List[Any], *,
+                     endpoint=None, project=None, token=None, idempotency_key=None) -> Dict[str, Any]:
+    # Only internal callers provide these two fixed libraries/function names.
+    allowed = {"UnrealBridgeDeterministicPIELibrary": {"begin", "request_one_frame", "status", "end"},
+               "UnrealBridgeValidationLibrary": {"validate_assets_json", "map_check_json"}}
+    if function not in allowed.get(library, set()):
+        return {"success": False, "error": "unregistered native 3.3.1 call"}
+    code = "import unreal\nprint(unreal." + library + "." + function + "(" + ",".join(repr(item) for item in arguments) + "))"
+    submitted = bridge_submit_job(code, idempotency_key=idempotency_key, run_timeout=30,
+                    endpoint=endpoint, project=project, token=token, no_preflight=True)
+    if not submitted.get("success") or not submitted.get("job_id"):
+        return {"success": False, "status": "needs_reconciliation", "side_effect_state": "unknown",
+                "response": submitted}
+    completed = bridge_wait_job(submitted["job_id"], wait_timeout=30,
+                    endpoint=endpoint, project=project, token=token)
+    observed = _last_json_output(completed)
+    if not isinstance(observed, dict):
+        return {"success": False, "status": "needs_reconciliation", "side_effect_state": "unknown",
+                "job_id": submitted["job_id"], "response": completed}
+    return {"success": bool(observed.get("ok")), "job_id": submitted["job_id"], **observed}
+
+
+@mcp.tool()
+def bridge_deterministic_pie(operation: str, owner_id: str, controller_id: str = "",
+                             run_id: str = "", pie_session_id: str = "",
+                             fixed_delta_seconds: float = 1 / 60, frames: int = 1,
+                             request_id: str = "", endpoint: Optional[str] = None,
+                             project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Begin/step/status/end an owned PIE lease; exact N is checked per World."""
+    if not owner_id or len(owner_id) > 128:
+        return {"success": False, "error": "bounded owner_id required"}
+    common = {"endpoint": endpoint, "project": project, "token": token}
+    library = "UnrealBridgeDeterministicPIELibrary"
+    if operation == "begin":
+        if not run_id or not pie_session_id:
+            return {"success": False, "error": "exact run_id and pie_session_id required"}
+        return _native_331_call(library, "begin", [run_id, pie_session_id, owner_id, fixed_delta_seconds],
+                                idempotency_key="pie-begin:" + run_id + ":" + owner_id, **common)
+    if not controller_id:
+        return {"success": False, "error": "controller_id required"}
+    if operation in {"status", "end"}:
+        return _native_331_call(library, operation, [controller_id, owner_id], **common)
+    if operation != "step" or type(frames) is not int or not 1 <= frames <= 120 or not request_id:
+        return {"success": False, "error": "step needs frames 1..120 and a unique request_id"}
+    before = _native_331_call(library, "status", [controller_id, owner_id], **common)
+    if not before.get("success") or before.get("status") != "ready":
+        return {"success": False, "error": "controller is not ready; reconcile status first", "before": before}
+    initial = {item["world_handle"]: item["ticks"] for item in before.get("worlds", [])}
+    for index in range(frames):
+        requested = _native_331_call(library, "request_one_frame", [controller_id, owner_id],
+                     idempotency_key="pie-step:" + controller_id + ":" + request_id + ":" + str(index), **common)
+        if not requested.get("success"):
+            return {"success": False, "status": "needs_reconciliation", "completed_frames": index,
+                    "last_request": requested}
+        deadline = time.monotonic() + 5.0
+        while True:
+            state = _native_331_call(library, "status", [controller_id, owner_id], **common)
+            if state.get("status") == "step_complete":
+                break
+            if state.get("status") in {"stale", "known_limited"} or not state.get("success"):
+                return {"success": False, "status": state.get("status", "needs_reconciliation"),
+                        "completed_frames": index, "last_status": state}
+            if time.monotonic() >= deadline:
+                return {"success": False, "status": "needs_reconciliation", "completed_frames": index,
+                        "last_status": state, "error": "Frame status timeout; inspect tick counter before retry"}
+            time.sleep(0.05)  # host thread only, never the Editor GameThread
+    after = _native_331_call(library, "status", [controller_id, owner_id], **common)
+    deltas = {item["world_handle"]: item["ticks"] - initial.get(item["world_handle"], -1000000)
+              for item in after.get("worlds", [])}
+    exact = bool(initial) and len(deltas) == len(initial) and all(value == frames for value in deltas.values())
+    return {"success": exact and after.get("paused_after", False), "status": "exact" if exact else "known_limited",
+            "requested_frames": frames, "world_tick_deltas": deltas, "paused_after": after.get("paused_after"),
+            "controller_id": controller_id, "last_status": after}
+
+
+@mcp.tool()
+def bridge_validation(operation: str, asset_paths: Optional[List[str]] = None,
+                      max_assets: int = 64, endpoint: Optional[str] = None,
+                      project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Run bounded UE Data Validation or silent current-map Map Check; NeverSave."""
+    common = {"endpoint": endpoint, "project": project, "token": token}
+    if operation == "assets":
+        if (not isinstance(asset_paths, list) or not asset_paths or not 1 <= max_assets <= 256
+                or len(asset_paths) > 256 or not all(isinstance(item, str) and item.startswith("/")
+                                                   and "." in item for item in asset_paths)):
+            return {"success": False, "phase": "validation", "error": "Exact bounded asset_paths and max_assets required"}
+        payload = json.dumps({"asset_paths": asset_paths, "max_assets": max_assets}, ensure_ascii=False)
+        return _native_331_call("UnrealBridgeValidationLibrary", "validate_assets_json", [payload], **common)
+    if operation == "map_check":
+        return _native_331_call("UnrealBridgeValidationLibrary", "map_check_json", [], **common)
+    return {"success": False, "phase": "validation", "error": "Use assets or map_check"}
+
+
+def _validation_assets(asset_paths: List[str], max_assets: int = 64, endpoint: Optional[str] = None,
+                       project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    return bridge_validation("assets", asset_paths, max_assets, endpoint, project, token)
+
+
+def _validation_map_check(endpoint: Optional[str] = None, project: Optional[str] = None,
+                          token: Optional[str] = None) -> Dict[str, Any]:
+    return bridge_validation("map_check", endpoint=endpoint, project=project, token=token)
+
+
+def _import_prepare(request_id: str, request: Dict[str, Any],
+                    endpoint: Optional[str] = None, project: Optional[str] = None,
+                    token: Optional[str] = None, timeout: float = 30.0) -> Dict[str, Any]:
+    return bridge_content_import("prepare", request_id, request=request,
+                                 endpoint=endpoint, project=project, token=token, timeout=timeout)
+
+
+def _import_execute(request_id: str, approved_contract_hash: str, allow_writes: bool = False,
+                    endpoint: Optional[str] = None, project: Optional[str] = None,
+                    token: Optional[str] = None, timeout: float = 30.0) -> Dict[str, Any]:
+    return bridge_content_import("execute", request_id,
+                                 approved_contract_hash=approved_contract_hash,
+                                 allow_writes=allow_writes, endpoint=endpoint, project=project,
+                                 token=token, timeout=timeout)
+
+
+# The gateway is deliberately a closed registry.  It forwards to the same
+# handlers as full mode; none of the transport, policy, or ChangeSet checks are
+# reimplemented here.  Adding a workflow requires an explicit reviewed entry.
+HOST_CAPABILITIES = HostCapabilityRegistry([
+    HostCapability("workflow:audit.project", bridge_audit, "audit", "ReadOnly", "Host",
+                   "Never", "Bounded project, level, or content package audit"),
+    HostCapability("workflow:content_import.prepare", _import_prepare, "content_import",
+                   "Preparation", "DurableJob", "Never", "Prepare a typed import contract"),
+    HostCapability("workflow:content_import.execute", _import_execute, "content_import",
+                   "Transactional", "DurableJob", "Contract", "Execute an approved import contract"),
+    HostCapability("workflow:runtime.run", bridge_runtime_run, "runtime", "RuntimeInteraction",
+                   "Scenario", "Never", "Run an owned PIE or observe-only runtime recipe"),
+    HostCapability("workflow:project.context", bridge_project_context, "project", "ReadOnly",
+                   "Host", "Never", "Bounded project source and asset context"),
+    HostCapability("workflow:runtime_watch.start", _watch_start, "runtime_watch", "ReadOnly",
+                   "HostScheduler", "Never", "Start bounded multi-world read-only sampling"),
+    HostCapability("workflow:runtime_watch.status", _watch_status, "runtime_watch", "ReadOnly",
+                   "Host", "Never", "Read runtime watch status and summary"),
+    HostCapability("workflow:runtime_watch.cancel", _watch_cancel, "runtime_watch", "ReadOnly",
+                   "Host", "Never", "Stop a runtime watch without restarting it"),
+    HostCapability("workflow:deterministic_pie", bridge_deterministic_pie, "deterministic_pie",
+                   "RuntimeInteraction", "HostScheduler", "Never", "Step owned PIE with exact World tick readback"),
+    HostCapability("workflow:validation.assets", _validation_assets, "validation", "ReadOnly",
+                   "DurableJob", "Never", "UE Data Validation for exact asset paths"),
+    HostCapability("workflow:validation.map_check", _validation_map_check, "validation", "ReadOnly",
+                   "DurableJob", "Never", "Silent Map Check for current Editor World"),
+])
+
+
+def _capability_records(query="", domain=None, provider=None, risk=None, capability_kind=None):
+    terms = query.casefold().split()
+    records = []
+    snapshot = _current_catalog()
+    for record in snapshot.tool_index.records:
+        if record["id"].startswith("epic:"):
+            continue  # official records below use the executable policy registry
+        capability_id = "native:" + record["library"] + "." + record["function"]
+        records.append({"id": capability_id, "name": record["function"], "domain": record["domain"],
+                        "provider": "native", "kind": "native", "risk": record["risk"],
+                        "execution": record["execution"], "save_behavior": record["save_behavior"],
+                        "short_description": str(record.get("description") or "")[:160],
+                        "schema_hash": capability_digest(record["schema"])})
+    for operation in snapshot.domain_registry.operations:
+        records.append({"id": "official:" + operation.id[len("epic:"):], "name": operation.tool,
+                        "domain": operation.domains[0], "provider": "official", "kind": "official",
+                        "risk": operation.access, "execution": operation.access,
+                        "save_behavior": operation.record.get("save_behavior", "Never"),
+                        "short_description": str(operation.record.get("description") or "")[:160],
+                        "schema_hash": operation.schema_sha256})
+    for capability in HOST_CAPABILITIES.by_id.values():
+        item = capability.describe()
+        item.pop("input_schema")
+        records.append(item)
+    return [item for item in records
+            if (not domain or item["domain"].casefold() == domain.casefold())
+            and (not provider or item["provider"].casefold() == provider.casefold())
+            and (not risk or item["risk"].casefold() == risk.casefold())
+            and (not capability_kind or item["kind"].casefold() == capability_kind.casefold())
+            and all(term in (item["id"] + " " + item["short_description"]).casefold() for term in terms)]
+
+
+def _capability_description(capability_id):
+    snapshot = _current_catalog()
+    if capability_id.startswith("workflow:"):
+        item = HOST_CAPABILITIES.by_id.get(capability_id)
+        return item.describe() if item else None
+    if capability_id.startswith("native:"):
+        exact = capability_id[len("native:"):]
+        record = next((record for record in snapshot.tool_index.records
+                       if record["id"].startswith("bridge:")
+                       and record["library"] + "." + record["function"] == exact), None)
+        if record:
+            summary = next(item for item in _capability_records()
+                           if item["id"] == capability_id)
+            return {**summary, "input_schema": record["schema"], "scope_limits": "Strict reflected manifest"}
+    if capability_id.startswith("official:"):
+        operation = snapshot.domain_registry.by_id.get(("epic:" + capability_id[len("official:"):]).lower())
+        if operation:
+            summary = next(item for item in _capability_records()
+                           if item["id"] == capability_id)
+            return {**summary, "input_schema": operation.record.get("input_schema") or {},
+                    "output_schema": operation.record.get("output_schema") or {},
+                    "scope_limits": "Exact audited UE Toolset policy"}
+    return None
+
+
+@mcp.tool()
+@_with_catalog(for_execution=False)
+def bridge_search(query: str = "", domain: Optional[str] = None, provider: Optional[str] = None,
+                  risk: Optional[str] = None, capability_kind: Optional[str] = None,
+                  max_items: int = 10, cursor: Optional[str] = None,
+                  endpoint: Optional[str] = None, project: Optional[str] = None,
+                  token: Optional[str] = None) -> Dict[str, Any]:
+    """Search compact native, official and explicitly registered host capabilities."""
+    try:
+        if not 1 <= max_items <= 50:
+            raise ValueError("max_items must be 1..50")
+        found = _capability_records(query, domain, provider, risk, capability_kind)
+        result = _shape_response(found, max_items=max_items, cursor=cursor,
+                                 query_hash=_query_hash({"kind": "capabilities", "query": query,
+                                     "domain": domain, "provider": provider, "risk": risk,
+                                     "capability_kind": capability_kind}),
+                                 artifact_threshold_bytes=32768)
+        return {**result, "catalog_fingerprint": _current_catalog().fingerprint,
+                "registry_hash": HOST_CAPABILITIES.hash}
+    except ValueError as exc:
+        return {"success": False, "phase": "search", "error": str(exc)}
+
+
+@mcp.tool()
+@_with_catalog(for_execution=False)
+def bridge_describe_capabilities(capability_ids: List[str], endpoint: Optional[str] = None,
+                                 project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Describe exact capability IDs, input schemas and current catalog identity."""
+    if not capability_ids or len(capability_ids) > 20:
+        return {"success": False, "phase": "schema", "error": "Provide 1..20 exact IDs"}
+    records = [_capability_description(item) for item in capability_ids]
+    result = _shape_response({"capabilities": [item for item in records if item],
+                              "missing": [item for item, record in zip(capability_ids, records) if not record]},
+                             artifact_threshold_bytes=32768,
+                             query_hash=_query_hash({"kind": "capability_describe", "ids": capability_ids}))
+    return {**result, "catalog_fingerprint": _current_catalog().fingerprint,
+            "registry_hash": HOST_CAPABILITIES.hash}
+
+
+@mcp.tool()
+@_with_catalog(for_execution=True)
+def bridge_execute(capability_id: str, arguments: Dict[str, Any], schema_hash: str,
+                   catalog_fingerprint: str, registry_hash: str,
+                   target_packages: Optional[List[str]] = None, apply: bool = False,
+                   allow_runtime_side_effects: bool = False,
+                   endpoint: Optional[str] = None, project: Optional[str] = None,
+                   token: Optional[str] = None) -> Dict[str, Any]:
+    """Run one exact discovered capability through its existing guarded handler."""
+    snapshot = _current_catalog()
+    description = _capability_description(capability_id)
+    if (snapshot.stale or not description or snapshot.fingerprint != catalog_fingerprint
+            or HOST_CAPABILITIES.hash != registry_hash or description["schema_hash"] != schema_hash):
+        return {"success": False, "phase": "catalog", "error_code": "stale_capability",
+                "error": "Refresh search and describe before execution"}
+    if not isinstance(arguments, dict):
+        return {"success": False, "phase": "schema", "error": "arguments must be an object"}
+    if capability_id.startswith("native:"):
+        exact = capability_id[len("native:"):]
+        library, function = exact.rsplit(".", 1)
+        return bridge_call(library, function, arguments, endpoint=endpoint, project=project, token=token)
+    if capability_id.startswith("official:"):
+        operation = snapshot.domain_registry.by_id["epic:" + capability_id[len("official:"):].lower()]
+        return bridge_call_domain_operation(operation.domains[0], operation.id, arguments,
+                    target_packages=target_packages, apply=apply,
+                    allow_runtime_side_effects=allow_runtime_side_effects,
+                    endpoint=endpoint, project=project, token=token)
+    if target_packages or apply or allow_runtime_side_effects:
+        return {"success": False, "phase": "schema", "error": "Workflow controls belong in its exact input schema"}
+    return HOST_CAPABILITIES.by_id[capability_id].call(arguments)
+
+
+@mcp.tool()
+def bridge_task(operation: str, task_kind: str, task_id: str = "",
+                owner_id: str = "", wait_timeout: float = 30.0,
+                endpoint: Optional[str] = None, project: Optional[str] = None,
+                token: Optional[str] = None) -> Dict[str, Any]:
+    """Get, wait, cancel or list supported task kinds while retaining native identity."""
+    if not 0 <= wait_timeout <= 30:
+        return {"success": False, "phase": "task", "error": "wait_timeout must be 0..30 seconds"}
+    if task_kind == "job":
+        routes = {"get": lambda: bridge_get_job(task_id, endpoint, project, token),
+                  "wait": lambda: bridge_wait_job(task_id, 30.0, endpoint, project, token),
+                  "cancel": lambda: bridge_cancel_job(task_id, endpoint, project, token),
+                  "list": lambda: bridge_list_jobs(endpoint=endpoint, project=project, token=token)}
+    elif task_kind == "scenario":
+        if operation == "list":
+            with _SCENARIO_MANAGER_LOCK:
+                ids = list(_SCENARIO_MANAGERS)[-64:]
+            return {"success": True, "task_kind": task_kind, "task_ids": ids,
+                    "list_scope": "current_host_process"}
+        if operation == "wait" and task_id:
+            try:
+                manager = _resolve_scenario_manager(task_id, endpoint=endpoint,
+                                                    project=project, token=token)
+                deadline = time.monotonic() + wait_timeout
+                while True:
+                    state = manager.get(task_id)
+                    if state.get("status") in {"succeeded", "failed", "cancelled"}:
+                        break
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+                return {"success": True, "task_kind": task_kind,
+                        "native_identity": task_id, "status": state.get("status"),
+                        "terminal": state.get("status") in {"succeeded", "failed", "cancelled"},
+                        "cancel_supported": True, "side_effect_state": "unknown"}
+            except (ValueError, FileNotFoundError, OSError) as exc:
+                return {"success": False, "phase": "task", "error": str(exc)}
+        routes = {"get": lambda: bridge_get_scenario(task_id, endpoint, project, token),
+                  "cancel": lambda: bridge_cancel_scenario(task_id, endpoint, project, token)}
+    elif task_kind == "runtime":
+        routes = {"get": lambda: bridge_runtime_status(task_id, endpoint, project, token),
+                  "cancel": lambda: bridge_runtime_cancel(task_id, endpoint, project, token)}
+    elif task_kind == "runtime_watch":
+        if operation == "list":
+            with _RUNTIME_WATCH_LOCK:
+                rows = [watch.view() for watch in list(_RUNTIME_WATCHES.values())[-64:]]
+            return {"success": True, "task_kind": task_kind, "tasks": rows,
+                    "list_scope": "current_host_process"}
+        if operation == "wait" and task_id:
+            with _RUNTIME_WATCH_LOCK:
+                watch = _RUNTIME_WATCHES.get(task_id)
+            if not watch:
+                return {"success": False, "phase": "task", "error": "unknown watch_id"}
+            if watch.thread:
+                watch.thread.join(timeout=wait_timeout)
+            return {"task_kind": task_kind, "native_identity": task_id, **watch.view()}
+        routes = {"get": lambda: bridge_runtime_watch("status", watch_id=task_id,
+                                                       endpoint=endpoint, project=project, token=token),
+                  "cancel": lambda: bridge_runtime_watch("cancel", watch_id=task_id,
+                                                          endpoint=endpoint, project=project, token=token)}
+    elif task_kind == "deterministic_pie":
+        if not owner_id:
+            return {"success": False, "phase": "task", "error": "exact owner_id required"}
+        routes = {"get": lambda: bridge_deterministic_pie("status", owner_id, task_id,
+                                                             endpoint=endpoint, project=project, token=token),
+                  "cancel": lambda: bridge_deterministic_pie("end", owner_id, task_id,
+                                                                endpoint=endpoint, project=project, token=token)}
+    else:
+        return {"success": False, "phase": "task", "error": "unknown task_kind"}
+    if operation not in routes or (operation != "list" and not task_id):
+        return {"success": False, "phase": "task", "error": "unsupported operation or missing task_id"}
+    return {"task_kind": task_kind, "native_identity": task_id, **routes[operation]()}
+
+
+@mcp.tool()
+def bridge_artifact(artifact_id: str, operation: str = "read", offset: int = 0,
+                    max_bytes: int = 65536, endpoint: Optional[str] = None,
+                    project: Optional[str] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    """Read only an ArtifactStore ID; no local path input or file execution."""
+    if operation not in {"read", "metadata"}:
+        return {"success": False, "phase": "artifact", "error": "Use read or metadata"}
+    result = bridge_read_artifact(artifact_id, offset if operation == "read" else 0,
+                                  max_bytes if operation == "read" else 1,
+                                  endpoint, project, token)
+    if operation == "metadata" and result.get("success"):
+        result.pop("content", None)
+    return result
+
+
+SURFACE = os.environ.get("UNREALBRIDGE_MCP_SURFACE", "full").lower()
+if SURFACE not in {"full", "minimal"}:
+    raise ValueError("UNREALBRIDGE_MCP_SURFACE must be full or minimal")
+if SURFACE == "minimal":
+    _minimal_names = {"bridge_ping", "bridge_search",
+                      "bridge_execute", "bridge_task", "bridge_artifact"}
+    # remove_tool is the public FastMCP API; no private tool manager mutation.
+    for _tool_name in [item.name for item in asyncio.run(mcp.list_tools())]:
+        if _tool_name not in _minimal_names:
+            mcp.remove_tool(_tool_name)
+    mcp.tool(name="bridge_describe")(bridge_describe_capabilities)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@
       "TIMER"
     ]
   },
-  "generated_at": "2026-09-21T08:59:35+00:00",
+  "generated_at": "2026-09-23T02:48:30+00:00",
   "libraries": {
     "UnrealBridgeAILibrary": {
       "functions": {
@@ -9679,7 +9679,7 @@
         },
         "import_fragment": {
           "description": "Import a fragment into one target K2 graph.\n\nMarks the Blueprint structurally modified and optionally compiles it. The\npackage is left dirty and is NEVER saved here. Returns JSON including the\nnew node GUIDs so the caller can reconcile or undo a partial result.",
-          "doc": "X.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile=True) -> str",
+          "doc": "X.import_fragment(target_blueprint_path, target_graph_name, fragment_text, compile=True, request_id=\"\") -> str",
           "engine_min": "5.3.0",
           "execution": "GameThreadShort",
           "input_schema": {
@@ -9689,6 +9689,9 @@
                 "type": "boolean"
               },
               "fragment_text": {
+                "type": "string"
+              },
+              "request_id": {
                 "type": "string"
               },
               "target_blueprint_path": {
@@ -9751,6 +9754,17 @@
               "kind": "unknown",
               "name": "compile",
               "type": "Any"
+            },
+            {
+              "cpp_type": "FString",
+              "default": "\"\"",
+              "has_default": true,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "request_id",
+              "type": "str"
             }
           ],
           "provider": "UnrealBridge",
@@ -9758,7 +9772,7 @@
           "risk": "Mutating",
           "save_behavior": "Never",
           "supports_dry_run": false,
-          "supports_idempotency": false
+          "supports_idempotency": true
         },
         "inspect_fragment": {
           "description": "Parse a fragment without importing it. Read-only; never touches a graph.\n\nReturns JSON: { ok, fragment_sha256, fragment_length, unresolved_classes[], basis }.",
@@ -25242,6 +25256,133 @@
           "provider": "UnrealBridge",
           "returns": "bool",
           "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        }
+      }
+    },
+    "UnrealBridgeContentImportLibrary": {
+      "functions": {
+        "execute_import": {
+          "description": "Requires the exact prepared contract, active owned sandbox and unchanged preimages. Never saves.",
+          "doc": "X.execute_import(contract_json) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "contract_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.3.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "contract_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ExplicitOptIn",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": true
+        },
+        "prepare_import": {
+          "description": "Prepare Import",
+          "doc": "X.prepare_import(request_json) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "request_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.3.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "request_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "readback_import": {
+          "description": "Readback Import",
+          "doc": "X.readback_import(contract_json) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "contract_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "3.3.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "contract_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
           "save_behavior": "Never",
           "supports_dry_run": false,
           "supports_idempotency": false
@@ -80007,11 +80148,11 @@
       }
     }
   },
-  "manifest_hash": "73a4c30a7d3326435e27354248e05af86d9d5bddb37049d628766c4205f9d542",
+  "manifest_hash": "0db1011a01cffab3f79553c019aea6d5d1ac1f71664c5d8dc8da15638726f15f",
   "plugin_version": "3.2.1",
   "project_path": "C:/dev/ShooterRoyal_5_8_DirectUpgrade/ShooterRoyal.uproject",
   "protocol_version": 2,
-  "registry_hash": "ebf56d9790a1ea96c630b79ef9ac93bd",
+  "registry_hash": "a9e33f2a2d5df23f1d27e8c58b7f25ba",
   "registry_version": 1,
   "structs": {
     "BridgeAbilityCooldownInfo": [

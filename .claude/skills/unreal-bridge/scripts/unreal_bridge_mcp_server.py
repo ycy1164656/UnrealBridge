@@ -5833,13 +5833,125 @@ import pathlib as _pathlib  # noqa: E402
 
 import unreal_bridge_audit as _audit  # noqa: E402
 import unreal_bridge_knowledge as _knowledge  # noqa: E402
+from unreal_bridge_readonly import complete_readonly  # noqa: E402
+from unreal_bridge_imports import ImportOrder  # noqa: E402
 
 
-def _knowledge_root() -> _pathlib.Path:
+@mcp.tool()
+def bridge_content_import(
+    operation: str,
+    request_id: str,
+    request: Optional[Dict[str, Any]] = None,
+    approved_contract_hash: str = "",
+    allow_writes: bool = False,
+    endpoint: Optional[str] = None,
+    project: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout: float = 30.0,
+) -> Dict[str, Any]:
+    """Prepare/execute/reconcile/readback one typed PNG/FBX import or reimport.
+
+    The native contract freezes source bytes, exact output, approved existing
+    Skeleton, revision and FileSandbox lease. No implicit overwrite or save.
+    A caller deadline leaves the original durable Job active; reconcile it.
+    """
+    order = None
+    try:
+        order = ImportOrder(_artifact_store_for(endpoint=endpoint, project=project, token=token).root, request_id)
+        if operation == 'prepare':
+            state = order.freeze(request or {})
+            if state.get('contract'):
+                return {'success':True, **state, 'idempotent_noop':True}
+            if state.get('prepare_job_id'):
+                return {'success':False, **state, 'error':'Existing prepare Job must be reconciled'}
+            function, payload = 'prepare_import', state['request']
+        elif operation == 'execute':
+            state = order.get()
+            if not allow_writes or approved_contract_hash != state.get('contract', {}).get('contract_hash'):
+                raise ValueError('allow_writes and exact approved_contract_hash required')
+            if state.get('execute_job_id'):
+                return {'success':True, **state, 'next_action':'reconcile original Job; never repeat dispatch'}
+            order.dispatch_intent()
+            function, payload = 'execute_import', state['contract']
+        elif operation == 'readback':
+            state=order.get()
+            function,payload='readback_import',state['contract']
+        elif operation in {'get','reconcile'}:
+            state=order.get()
+            if operation == 'get':
+                return {'success':True, **state}
+            job_id=state.get('execute_job_id') or state.get('prepare_job_id')
+            if not job_id:
+                return {'success':False, **state, 'error':'Dispatch outcome unknown; inspect native ledger/target, do not resubmit'}
+            response=bridge_wait_job(job_id,wait_timeout=min(30.0,timeout),endpoint=endpoint,project=project,token=token)
+            return _content_import_complete(order,response,'execute' if state.get('execute_job_id') else 'prepare')
+        else:
+            raise ValueError('Use prepare, execute, reconcile, readback or get')
+        code='import unreal\nprint(unreal.UnrealBridgeContentImportLibrary.'+function+'('+repr(json.dumps(payload,ensure_ascii=False))+'))'
+        response=bridge_submit_job(code, idempotency_key='external-import:'+request_id+':'+operation,
+            run_timeout=180,endpoint=endpoint,project=project,token=token,timeout=timeout,no_preflight=True)
+        if not response.get('success') or not response.get('job_id'):
+            return {'success':False, 'status':'needs_reconciliation', 'response':response,
+                    'request_id':request_id, 'side_effect_state':'unknown' if operation=='execute' else 'none'}
+        if operation in {'prepare','execute'}:
+            order.update(**{operation+'_job_id':response['job_id']},phase=operation+'_dispatched')
+        response=bridge_wait_job(response['job_id'],wait_timeout=min(30.0,timeout),endpoint=endpoint,project=project,token=token)
+        return _content_import_complete(order,response,operation)
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        return {'success':False,'phase':'external_import','error':str(exc),'request_id':request_id,
+                'side_effect_state':'unknown' if operation=='execute' else 'none'}
+
+
+def _content_import_complete(order, response, operation):
+    if not response.get('terminal'):
+        return {'success':False,'status':'inconclusive','job_id':response.get('job_id'),
+                'request_id':order.identity,'next_action':'reconcile; caller timeout never authorizes replay',
+                'side_effect_state':'unknown' if operation=='execute' else 'none'}
+    actual=_last_json_output(response)
+    if response.get('job_state')!='succeeded' or not actual or not actual.get('ok'):
+        if operation!='readback':order.update(phase='needs_reconciliation' if operation=='execute' else 'preflight_failed',result=actual or response)
+        return {'success':False,'job_id':response.get('job_id'),'native_result':actual or response,
+                'side_effect_state':'unknown' if operation=='execute' else 'none'}
+    if operation=='prepare':order.update(contract=actual['contract'],phase='prepared',result=actual)
+    elif operation=='execute':order.update(phase='imported_not_saved',result=actual,side_effect_state='complete')
+    return {'success':True,'job_id':response.get('job_id'),'native_result':actual,'request_id':order.identity}
+
+
+def _knowledge_root(project=None) -> _pathlib.Path:
     override = os.environ.get("UNREALBRIDGE_KNOWLEDGE_ROOT")
     if override:
         return _pathlib.Path(override)
-    return _pathlib.Path(SCRIPT_DIR).parents[3] / ".tmp" / "knowledge"
+    return _context_source_index(project).root / 'Tools' / 'UnrealBridge'
+
+
+def _catalog_verification_reader(project, endpoint, token):
+    def read(reference):
+        # Only persisted native verification runs are evidence. JSON supplied to
+        # add/promote cannot mint a run or impersonate the registered adapter.
+        store = _artifact_store_for(project=project, endpoint=endpoint, token=token)
+        state = ProductionOrder(store.root, reference['work_order_id']).get()
+        run = state['verification_runs'][int(reference['run_index'])]
+        if run.get('status') != 'pass' or not run.get('native_job_id'):
+            raise ValueError('Registered native verification has not passed')
+        artifact = run['registered_evidence_artifact']
+        path = store._safe_path(artifact['artifact_id'])
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != artifact['sha256']:
+            raise ValueError('Verification artifact hash mismatch')
+        observed = json.loads(raw)
+        binding = observed.get('values', {}).get('fragment_binding', {})
+        if binding.get('acceptance_hash') != state['acceptance_hash'] or binding.get('adapter_source_sha256') != run['adapter_source_sha256']:
+            raise ValueError('Fragment evidence is not bound to this frozen profile/adapter')
+        # Recompute the adapter source before treating historical evidence as current.
+        root = _context_source_index(project).root / 'Tools/UnrealBridge'
+        registry = json.loads((root / 'verification_adapters.json').read_text(encoding='utf-8'))
+        adapters = [root / (item['module'] + '.py') for item in registry['adapters'].values()]
+        if not any(p.is_file() and p.resolve().parent == root.resolve() and hashlib.sha256(p.read_bytes()).hexdigest() == run['adapter_source_sha256'] for p in adapters):
+            raise ValueError('Registered adapter changed or disappeared')
+        return {'evidence_trust': observed.get('evidence_trust'), 'native_job_id': run['native_job_id'],
+                'binding': binding, 'environment': observed.get('values', {}).get('fragment_environment'),
+                'verification': observed.get('values', {}).get('fragment_verification', {})}
+    return read
 
 
 def _official_transport(endpoint, project, token, timeout):
@@ -5848,7 +5960,7 @@ def _official_transport(endpoint, project, token, timeout):
     def call(*, toolset, tool, arguments):
         if tool == "move":
             # TransactionalSync: explicit target packages are mandatory.
-            targets = [arguments.get("source_path"), arguments.get("destination_path")]
+            targets = [arguments.get("path"), arguments.get("new_path")]
             response = bridge_call_official_transactional(
                 toolset=toolset, tool=tool, arguments=arguments,
                 target_packages=[t for t in targets if t],
@@ -5860,6 +5972,14 @@ def _official_transport(endpoint, project, token, timeout):
                 toolset=toolset, tool=tool, arguments=arguments,
                 endpoint=endpoint, project=project, token=token, timeout=timeout,
             )
+        if tool != "move":
+            return complete_readonly(
+                response, timeout=timeout, toolset=toolset, tool=tool,
+                wait=lambda job_id, seconds: bridge_wait_job(
+                    job_id, wait_timeout=seconds, endpoint=endpoint, project=project, token=token),
+                read_artifact=lambda artifact_id, offset: bridge_read_artifact(
+                    artifact_id, offset=offset, endpoint=endpoint, project=project, token=token),
+            )
         if isinstance(response, dict) and response.get("success") is False:
             return response
         payload = _last_json_output(response)
@@ -5870,6 +5990,49 @@ def _official_transport(endpoint, project, token, timeout):
             return payload["result"]
         return payload
 
+    def snapshot(packages):
+        if not 1 <= len(packages) <= 16:
+            raise _audit.AuditError('Snapshot package count must be between 1 and 16')
+        code = (
+            'import json, unreal\n'
+            '_s=json.loads(unreal.UnrealBridgeUpgradeLibrary.get_authoring_snapshot(' + repr(json.dumps(packages)) + '))\n'
+            '_v=json.loads(unreal.UnrealBridgeSandboxLibrary.get_sandbox_status())\n'
+            "_s['view']={k:_v.get(k) for k in ('active','root','generation')}\n"
+            "_s['view']['lease_id']=(_v.get('lease_record') or {}).get('lease_id')\n"
+            "_s['dirty_packages']=sorted(p.get_name() for p in unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages())\n"
+            "_s['pie']=unreal.UnrealBridgeEditorLibrary.is_in_pie()\n"
+            'print(json.dumps(_s))'
+        )
+        response = bridge_exec(code=code, endpoint=endpoint, project=project, token=token, timeout=timeout)
+        result = _last_json_output(response)
+        if not response.get('success') or not result or not result.get('ok') or result.get('pie'):
+            raise _audit.AuditError('Native authoring snapshot unavailable or PIE active', response)
+        return result
+    call.snapshot = snapshot
+    def level_snapshot(limit):
+        code = '''import unreal,json,collections
+_actors=unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors()
+_classes=collections.Counter();_meshes=collections.Counter();_materials=set();_textures=set();_unknown=[]
+for _a in _actors[:LIMIT]:
+    _classes[_a.get_class().get_path_name()]+=1
+    for _c in _a.get_components_by_class(unreal.MeshComponent):
+        if isinstance(_c,unreal.StaticMeshComponent):
+            _mesh=_c.static_mesh
+        elif isinstance(_c,unreal.SkeletalMeshComponent):
+            _mesh=_c.skeletal_mesh_asset
+        else:
+            _unknown.append(_c.get_class().get_path_name());continue
+        if _mesh:
+            _meshes[_mesh.get_path_name()]+=_c.get_instance_count() if isinstance(_c,unreal.InstancedStaticMeshComponent) else 1
+        for _m in _c.get_materials():
+            if _m:_materials.add(_m.get_path_name())
+print(json.dumps({'actor_count':len(_actors),'scanned_actor_count':min(len(_actors),LIMIT),'truncated':len(_actors)>LIMIT,'actor_classes':dict(_classes),'mesh_instances':dict(_meshes),'unique_materials':sorted(_materials),'unsupported_component_classes':sorted(set(_unknown))}))'''.replace('LIMIT', str(max(1, min(10000, int(limit)))))
+        response = bridge_exec(code=code, endpoint=endpoint, project=project, token=token, timeout=timeout)
+        result = _last_json_output(response)
+        if not response.get('success') or not result:
+            raise _audit.AuditError('Level snapshot failed', response)
+        return result
+    call.level_snapshot = level_snapshot
     return call
 
 
@@ -5901,9 +6064,14 @@ def bridge_audit(
             return _audit.audit_project(
                 call, scope_paths, max_assets=max_assets, naming_rules=naming_rules
             )
-        return {"success": False, "error": "unknown mode '" + str(mode) + "' (use project or naming)"}
+        if mode == 'content_package':
+            return _audit.audit_content_package(call, scope_paths, max_assets=max_assets)
+        if mode == 'level':
+            return _audit.audit_level(call, max_assets=max_assets)
+        return {"success": False, "error": "unknown mode '" + str(mode) + "' (use project, level, content_package or naming)"}
     except _audit.AuditError as exc:
-        return {"success": False, "phase": "audit", "error": str(exc)}
+        return {**exc.evidence, "success": False, "phase": "audit", "error": str(exc),
+                "result_complete": False, "side_effect_state": "none"}
 
 
 @mcp.tool()
@@ -5955,6 +6123,11 @@ def bridge_fragment_catalog(
     adapts_to: Optional[List[str]] = None,
     query: str = "",
     require_verified: bool = False,
+    fragment_id: Optional[str] = None,
+    revision: str = "1",
+    manifest: Optional[Dict[str, Any]] = None,
+    verification_reference: Optional[Dict[str, Any]] = None,
+    current_binding: Optional[Dict[str, Any]] = None,
     endpoint: Optional[str] = None,
     project: Optional[str] = None,
     token: Optional[str] = None,
@@ -5967,13 +6140,20 @@ def bridge_fragment_catalog(
     from a different environment the entry reports "stale". The entry files are
     the truth; index.json is derived and can be rebuilt from them.
     """
-    catalog = _knowledge.FragmentCatalog(_knowledge_root() / "fragments-catalog")
+    catalog = _knowledge.FragmentCatalog(_knowledge_root(project),
+        verification_reader=_catalog_verification_reader(project, endpoint, token))
     ping = bridge_ping(endpoint=endpoint, project=project, token=token, timeout=timeout)
     env = _knowledge.Environment(
         engine_version=str(ping.get("ue_version") or ping.get("engine_version") or ""),
         plugin_version=str(ping.get("plugin_version") or ""),
         manifest_hash=str(ping.get("manifest_hash") or ""),
     )
+    if not env.engine_version and ping.get('success'):
+        response = bridge_exec(code="import unreal\nprint(unreal.UnrealBridgeUpgradeLibrary.get_authoring_snapshot('[]'))",
+                               endpoint=endpoint,project=project,token=token,timeout=timeout)
+        observed = _last_json_output(response) or {}
+        env = _knowledge.Environment(engine_version=str(observed.get('engine_version') or ''),
+                                     plugin_version=env.plugin_version,manifest_hash=env.manifest_hash)
     try:
         if op == "add":
             if not name or not fragment_text:
@@ -5984,13 +6164,18 @@ def bridge_fragment_catalog(
                 environment=env, status=status, evidence=evidence,
                 external_dependencies=external_dependencies or [],
                 adapts_to=adapts_to or [],
+                fragment_id=fragment_id, revision=revision, manifest=manifest,
             )
+        if op == "promote":
+            if not fragment_id or not verification_reference:
+                raise _knowledge.KnowledgeError('promote requires fragment_id and a registered verification_reference')
+            return catalog.promote(fragment_id, revision, verification_reference, env)
         if op == "query":
-            return catalog.query(env, text=query, require_verified=require_verified)
+            return catalog.query(env, text=query, require_verified=require_verified, current_binding=current_binding)
         if op == "rebuild_index":
             return catalog.rebuild_index()
         return {"success": False, "error": "unknown op '" + str(op) + "'"}
-    except _knowledge.KnowledgeError as exc:
+    except (_knowledge.KnowledgeError, ValueError, OSError, TypeError) as exc:
         return {"success": False, "phase": "catalog", "error": str(exc)}
 
 
@@ -6003,6 +6188,7 @@ def bridge_friction(
     evidence: str = "",
     resolved_by: str = "",
     min_occurrences: int = 1,
+    project: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Record and report agent friction: tool gaps, dead ends and their fixes.
 
@@ -6010,7 +6196,7 @@ def bridge_friction(
     increments a count), capped, and scrubbed of absolute user paths before
     being written. Frequency is evidence of friction, not of a correct fix.
     """
-    log = _knowledge.FrictionLog(_knowledge_root())
+    log = _knowledge.FrictionLog(_knowledge_root(project))
     try:
         if op == "record":
             return log.record(

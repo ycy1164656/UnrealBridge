@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "unreal_bridge": {
+      "command": "uv",
+      "args": ["--directory", "C:/dev/UnrealBridge", "run", "--with", "mcp>=1.6.0,<2", "python", "skills/unreal-bridge/scripts/unreal_bridge_mcp_server.py"],
+      "env": {"UNREALBRIDGE_MCP_SURFACE": "minimal"}
+    }
+  }
+}

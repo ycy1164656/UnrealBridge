@@ -116,7 +116,7 @@ class ProjectContextIndex:
         return sorted(set(sources)), sorted(set(assets))
 
     def default_roots(self):
-        roots = [self.root / name for name in ('Source', 'Config', 'Plugins')]
+        roots = [self.root / name for name in ('Source', 'Config', 'Plugins', 'Tools/UnrealBridge')]
         return [path for path in roots if path.is_dir()] + sorted(self.root.glob('*.uproject'))
 
     def candidates(self, roots, coverage):

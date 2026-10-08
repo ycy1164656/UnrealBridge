@@ -1,6 +1,14 @@
 # UnrealBridge 3.3 内容与审计约定
 
-维护入口为 `skills/unreal-bridge/`，Codex 路由指向此目录。`.claude/` 是停止维护的历史副本。3.3.0 保持 Protocol 2；版本号不能代替专项验收。
+维护入口为 `skills/unreal-bridge/`，Codex 路由指向此目录。`.claude/` 是停止维护的历史副本。3.3.1 保持 Protocol 2；版本号不能代替专项验收。
+
+## 3.3.1 五项能力
+
+- 默认 `UNREALBRIDGE_MCP_SURFACE=full`；设为 `minimal` 才缩为六个网关工具。先 `bridge_search`，用精确 capability ID `bridge_describe`，传回 schema hash、catalog fingerprint、registry hash 给 `bridge_execute`。陈旧描述必须重新发现，不绕过原有 Rejected/ChangeSet/Sandbox/target 规则。`workflow:content_import.prepare` 与 `.execute` 分开，不将任意操作字段透传给 prepare。
+- `bridge_runtime_watch` 用当前 PIE session、1–4 个 World handle、精确 Actor 名和类、1–32 个字段。只读采样为 1–20 Hz、0.1–30 秒；Host 最多保持两个快照在途，时间线落 Artifact，摘要区分真实差异、恢复、原生采集间隔及 dropped samples。10 秒 / 10 Hz / 三端 / 10 字段实测 97/100，不能把请求频率当作保证频率。Actor 不唯一、World/PIE 过期或重启时失败/对账，不猜同名对象，也不调用任意函数。
+- `bridge_deterministic_pie` 只接管本 Bridge 持有的 ready network PIE；Listen Server 可用 0–4 个远端 Client，Dedicated Server 至少 1 个。`begin` 保留原 pause/fixed delta；`step` 只在每个 PIE World 都严格 +N 并仍暂停时返回 exact；未知结果读 `status`，不要盲重发。`end` 精确 owner/controller 并恢复状态；若 PIE 结束，原生 EndPIE 回调恢复。该控制器不用于普通性能基线。
+- `bridge_validation('assets', ...)` 需要精确对象路径和最多 256 个资产；`map_check` 只检查当前 Editor World。结果明确 missing/unable、错误/警告、限制及 Dirty；NeverSave，不把只读验证当实际游戏体验验收。
+- `tools/check_mcp_context_budget.py` 用真实 MCP stdio 测 full/minimal `tools/list` 与固定 search/describe；基线在 `tests/fixtures/mcp_context_budget.json`。超门槛退出失败。完整证据与保留限制见 [3.3.1 交付记录](../../../docs/unrealbridge-3.3.1-release-notes.md)。
 
 ## Blueprint Fragment
 

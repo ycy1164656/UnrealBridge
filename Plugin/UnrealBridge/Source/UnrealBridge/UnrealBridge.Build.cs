@@ -39,6 +39,7 @@ public class UnrealBridge : ModuleRules
 			"UMGEditor",
 			"AnimGraph",
 			"UnrealEd",
+			"MessageLog",
 			"EditorSubsystem",
 			"LevelSequence",
 			"MovieScene",
@@ -125,6 +126,13 @@ public class UnrealBridge : ModuleRules
 		if (bWithUE58ToolsetRegistry)
 		{
 			PrivateDependencyModuleNames.Add("ToolsetRegistry");
+		}
+		bool bWithDataValidation = System.IO.File.Exists(System.IO.Path.Combine(EngineDirectory,
+			"Plugins/Editor/DataValidation/Source/DataValidation/Public/EditorValidatorSubsystem.h"));
+		PublicDefinitions.Add("UNREALBRIDGE_WITH_DATA_VALIDATION=" + (bWithDataValidation ? "1" : "0"));
+		if (bWithDataValidation)
+		{
+			PrivateDependencyModuleNames.Add("DataValidation");
 		}
 
 		// Optional 5.8 asset I/O isolation; no Engine source changes and no dependency on older engines.

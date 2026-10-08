@@ -16,12 +16,12 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-09-23T03:09:19+00:00'
+_GENERATED_AT = '2026-09-29T00:59:00+00:00'
 _UE_VERSION = '5.8.2-56702186+++UE5+Release-5.8'
 _PROTOCOL_VERSION = 2
-_PLUGIN_VERSION = '3.3.0'
-_REGISTRY_HASH = 'b0d1cf7617d9cc8547ecd13c51100556'
-_MANIFEST_HASH = 'ae863fe49ae2b448cc3582855d0546b28af5b53f5e539357b0636b1d31c0121c'
+_PLUGIN_VERSION = '3.3.1'
+_REGISTRY_HASH = '3e9c16c2503229411c0af54fa8de980f'
+_MANIFEST_HASH = '17781465b25e65bb216e4cf20980e8b93a4b27644535bf5c7b1e78ac3aa8a50c'
 
 def verify_runtime_compatibility():
     """Fail fast when the generated wrapper no longer matches the loaded plugin."""
@@ -2135,6 +2135,30 @@ class DataTable:
     def set_data_table_row_fields(*, data_table_path, row_name, field_values):
         """X.set_data_table_row_fields(data_table_path, row_name, field_values) -> bool"""
         return unreal.UnrealBridgeDataTableLibrary.set_data_table_row_fields(data_table_path, row_name, field_values)
+
+
+class DeterministicPIE:
+    """Wraps unreal.UnrealBridgeDeterministicPIELibrary (kwargs-only)."""
+
+    @staticmethod
+    def begin(*, run_id, pie_session_id, owner_id, fixed_delta_seconds):
+        """X.begin(run_id, pie_session_id, owner_id, fixed_delta_seconds) -> str"""
+        return unreal.UnrealBridgeDeterministicPIELibrary.begin(run_id, pie_session_id, owner_id, fixed_delta_seconds)
+
+    @staticmethod
+    def end(*, controller_id, owner_id):
+        """X.end(controller_id, owner_id) -> str"""
+        return unreal.UnrealBridgeDeterministicPIELibrary.end(controller_id, owner_id)
+
+    @staticmethod
+    def request_one_frame(*, controller_id, owner_id):
+        """X.request_one_frame(controller_id, owner_id) -> str"""
+        return unreal.UnrealBridgeDeterministicPIELibrary.request_one_frame(controller_id, owner_id)
+
+    @staticmethod
+    def status(*, controller_id, owner_id):
+        """X.status(controller_id, owner_id) -> str"""
+        return unreal.UnrealBridgeDeterministicPIELibrary.status(controller_id, owner_id)
 
 
 class Editor:
@@ -6029,6 +6053,15 @@ class Registry:
         return unreal.UnrealBridgeRegistryLibrary.get_tool_registry_json()
 
 
+class RuntimeWatch:
+    """Wraps unreal.UnrealBridgeRuntimeWatchLibrary (kwargs-only)."""
+
+    @staticmethod
+    def get_multi_world_watch_snapshot(*, request_json):
+        """X.get_multi_world_watch_snapshot(request_json) -> str"""
+        return unreal.UnrealBridgeRuntimeWatchLibrary.get_multi_world_watch_snapshot(request_json)
+
+
 class Sandbox:
     """Wraps unreal.UnrealBridgeSandboxLibrary (kwargs-only)."""
 
@@ -6572,6 +6605,20 @@ class Upgrade:
     def validate_upgrade_request(*, request_json):
         """X.validate_upgrade_request(request_json) -> str"""
         return unreal.UnrealBridgeUpgradeLibrary.validate_upgrade_request(request_json)
+
+
+class Validation:
+    """Wraps unreal.UnrealBridgeValidationLibrary (kwargs-only)."""
+
+    @staticmethod
+    def map_check_json():
+        """X.map_check_json() -> str"""
+        return unreal.UnrealBridgeValidationLibrary.map_check_json()
+
+    @staticmethod
+    def validate_assets_json(*, request_json):
+        """X.validate_assets_json(request_json) -> str"""
+        return unreal.UnrealBridgeValidationLibrary.validate_assets_json(request_json)
 
 
 class World:

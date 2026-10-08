@@ -1,12 +1,13 @@
 ---
 name: unreal-bridge
 description: Inspect or automate a running Unreal Editor through UnrealBridge using the current project's live schema.
-allowed-tools: Bash Read Write Edit Glob Grep Monitor
 ---
 
 # UnrealBridge
 
-Use this checkout's typed operations, durable Jobs and Python client for Unreal Editor work. The maintained workflow is Bridge 3.3 on UE 5.8; historical 3.0 evidence used 5.8.1 and scoped 3.1 evidence used 5.8.2. Verify the live project, plugin, manifest and operation schema; this is not certification of every engine patch or API. The MCP host requires `mcp>=1.6.0,<2`; installation does not reload an already running host.
+This is the maintained AI agent workflow, shared by MCP and CLI clients. No vendor-specific invocation is required. Router installation uses `tools/install_agent_skill.py --destination <client-skill-directory>`; `install_codex_skill.py` remains a compatibility entry. MCP clients use the same canonical server and operation contracts; client permission settings are configured separately.
+
+Use this checkout's typed operations, durable Jobs and Python client for Unreal Editor work. The maintained workflow is Bridge 3.3.1 on UE 5.8; historical 3.0 evidence used 5.8.1 and scoped 3.1 evidence used 5.8.2. Verify the live project, plugin, manifest and operation schema; this is not certification of every engine patch or API. The MCP host requires `mcp>=1.6.0,<2`; installation does not reload an already running host.
 
 ## Entry and scope
 
@@ -31,6 +32,7 @@ Follow the target project's AGENTS/authorized scope. Previously granted scope pe
 - Montage/Notify, BT, audio routing, pointer input, topology/rejoin and fixed-condition scenarios: [scoped upgrade API](references/bridge-scoped-upgrade-api.md).
 - Content recipes, registered VERIFY, FileSandbox, bounded crash recovery and video/audio contracts: [3.2 production](references/bridge-production32.md).
 - Native fragments, external import/reimport, audit, catalog trust, move contracts and known failure modes: [3.3 production](references/bridge-production33.md).
+- Minimal MCP, multi-world Watch, exact owned PIE frame step, validation and context budget: [3.3.1 production](references/bridge-production33.md#331-五项能力).
 - API-specific details and semantic traps: [reference index](references/bridge-reference-index.md). Read only the needed topic; player steering requires the gameplay reference because tick timing and input-axis conventions matter.
 
 Report actual validation, saved/unsaved targets, owned-session cleanup and remaining limitations. Persisted state, source availability and old test results do not prove the current DLL, host process, gameplay or human acceptance.

@@ -25,11 +25,14 @@ import json
 import os
 import re
 import time
+import uuid
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+_KNOWLEDGE_LOCK = threading.RLock()
 
 STATUS_VERIFIED = "verified_in_scope"
 STATUS_STALE = "stale"
@@ -53,6 +56,25 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _atomic_json(path: Path, value: Any) -> None:
+    data = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + '\n').encode('utf-8')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    with temporary.open('xb') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+    if path.read_bytes() != data:
+        raise KnowledgeError('Atomic write readback mismatch: ' + path.name)
+
+
+def _binding(entry: dict) -> dict:
+    return {key: entry.get(key) for key in (
+        'fragment_sha256', 'manifest_version', 'acceptance_hash', 'adapter_source_sha256',
+        'required_plugins_hash', 'dependency_hash', 'graph_type')}
+
+
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(value)).strip("-").lower()
     if not slug:
@@ -68,7 +90,7 @@ def _scrub(text: str) -> str:
     """
     scrubbed = re.sub(r"[A-Za-z]:[\\/](?:Users|home)[\\/][^\\/\s\"']+", "<user-home>", text)
     scrubbed = re.sub(r"/(?:home|Users)/[^/\s\"']+", "<user-home>", scrubbed)
-    return scrubbed
+    return re.sub(r'(?i)(token|password|secret|authorization)(\s*[:=]\s*)([^\s,;]+)', r'\1\2<redacted>', scrubbed)
 
 
 @dataclass
@@ -105,9 +127,10 @@ class Environment:
 class FragmentCatalog:
     """Verified K2 fragments stored as individual files under `root`."""
 
-    def __init__(self, root: os.PathLike[str] | str):
+    def __init__(self, root: os.PathLike[str] | str, *, verification_reader=None):
         self.root = Path(root)
         self.entries_dir = self.root / "fragments"
+        self.verification_reader = verification_reader
 
     # ── storage ────────────────────────────────────────────────
 
@@ -123,16 +146,35 @@ class FragmentCatalog:
         evidence: Optional[Dict[str, Any]] = None,
         external_dependencies: Sequence[str] = (),
         adapts_to: Sequence[str] = (),
+        fragment_id: Optional[str] = None,
+        revision: str = "1",
+        manifest: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        if status not in STATUSES:
-            raise KnowledgeError(f"Unknown status: {status}")
+        if status not in (STATUS_UNVERIFIED, 'imported_unverified'):
+            raise KnowledgeError('add cannot assign verification; use promote with a trusted verification run')
         if not fragment_text.strip():
             raise KnowledgeError("fragment_text is empty")
-        slug = _slug(name)
+        if not name.strip():
+            raise KnowledgeError('name is required')
+        identity = str(uuid.UUID(fragment_id)) if fragment_id else str(uuid.uuid4())
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,40}', revision):
+            raise KnowledgeError('Invalid revision')
+        slug = identity + '-' + revision
+        manifest = manifest or {}
         entry = {
             "schema_version": SCHEMA_VERSION,
             "name": name,
             "slug": slug,
+            "fragment_id": identity,
+            "revision": revision,
+            "manifest_version": str(manifest.get('manifest_version', '1')),
+            "acceptance_hash": str(manifest.get('acceptance_hash', '')),
+            "adapter_source_sha256": str(manifest.get('adapter_source_sha256', '')),
+            "required_plugins_hash": str(manifest.get('required_plugins_hash', '')),
+            "dependency_hash": str(manifest.get('dependency_hash', '')),
+            "graph_type": str(manifest.get('graph_type', 'K2')),
+            "use_case": str(manifest.get('use_case', '')),
+            "limitations": list(manifest.get('limitations', [])),
             "fragment_sha256": _sha256(fragment_text),
             "fragment_text": fragment_text,
             "source_blueprint": source_blueprint,
@@ -146,11 +188,16 @@ class FragmentCatalog:
         }
         self.entries_dir.mkdir(parents=True, exist_ok=True)
         path = self.entries_dir / f"{slug}.json"
-        path.write_text(
-            json.dumps(entry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        return {"ok": True, "slug": slug, "path": str(path), "status": status}
+        with _KNOWLEDGE_LOCK:
+            if path.exists():
+                existing = json.loads(path.read_text(encoding='utf-8'))
+                comparable = {k: v for k, v in entry.items() if k not in ('recorded_at', 'status', 'evidence')}
+                previous = {k: existing.get(k) for k in comparable}
+                if comparable != previous:
+                    raise KnowledgeError('Immutable fragment ID/revision conflict; create a new revision')
+                return {'ok': True, 'slug': slug, 'fragment_id': identity, 'revision': revision, 'idempotent_noop': True}
+            _atomic_json(path, entry)
+        return {"ok": True, "slug": slug, "fragment_id": identity, "revision": revision, "path": str(path), "status": status}
 
     def load_all(self) -> List[Dict[str, Any]]:
         if not self.entries_dir.is_dir():
@@ -158,7 +205,10 @@ class FragmentCatalog:
         entries: List[Dict[str, Any]] = []
         for path in sorted(self.entries_dir.glob("*.json")):
             try:
-                entries.append(json.loads(path.read_text(encoding="utf-8")))
+                entry = json.loads(path.read_text(encoding="utf-8"))
+                if _sha256(entry.get('fragment_text', '')) != entry.get('fragment_sha256'):
+                    entry['integrity_error'] = 'payload_tampered'
+                entries.append(entry)
             except (OSError, json.JSONDecodeError) as exc:
                 # A damaged entry is reported, never silently skipped: a catalog
                 # that quietly drops content is worse than one that says so.
@@ -190,10 +240,7 @@ class FragmentCatalog:
             ],
         }
         self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / "index.json").write_text(
-            json.dumps(index, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        _atomic_json(self.root / 'index.json', index)
         return index
 
     # ── retrieval ──────────────────────────────────────────────
@@ -204,6 +251,8 @@ class FragmentCatalog:
         *,
         text: str = "",
         require_verified: bool = False,
+        current_binding: Optional[Dict[str, Any]] = None,
+        limit: int = 20,
     ) -> Dict[str, Any]:
         """Search the catalog, re-deciding each entry's status for *this* editor.
 
@@ -224,10 +273,16 @@ class FragmentCatalog:
                     continue
             stored = entry.get("status", STATUS_UNVERIFIED)
             effective = stored
+            if entry.get('integrity_error'):
+                effective = entry['integrity_error']
             if stored == STATUS_VERIFIED:
                 recorded = Environment.from_dict(entry.get("verified_environment"))
-                if not recorded.matches(current_environment):
+                if not recorded.matches(current_environment) or not current_binding or _binding(entry) != current_binding:
                     effective = STATUS_STALE
+                elif not self._trusted_proof(entry):
+                    effective = STATUS_STALE
+                if entry.get('integrity_error'):
+                    effective = entry['integrity_error']
             if require_verified and effective != STATUS_VERIFIED:
                 continue
             results.append({
@@ -239,17 +294,59 @@ class FragmentCatalog:
                 "source_blueprint": entry.get("source_blueprint"),
                 "external_dependencies": entry.get("external_dependencies", []),
                 "verified_environment": entry.get("verified_environment", {}),
+                "graph_type": entry.get('graph_type'),
+                "adapts_to": entry.get('adapts_to', []),
+                "limitations": entry.get('limitations', []),
+                "use_case": entry.get('use_case', ''),
+                "verification": entry.get('verification', {}),
             })
         return {
             "ok": True,
             "query": text,
             "current_environment": current_environment.to_dict(),
             "result_count": len(results),
-            "results": results,
+            "results": results[:max(1, min(100, limit))],
+            "truncated": len(results) > max(1, min(100, limit)),
             "note": "effective_status is recomputed for the current environment; "
                     "a stored 'verified_in_scope' does not survive an engine, plugin "
                     "or manifest change.",
         }
+
+    def _trusted_proof(self, entry):
+        if not self.verification_reader or not entry.get('verification_reference'):
+            return None
+        try:
+            proof = self.verification_reader(entry['verification_reference'])
+            if (not isinstance(proof, dict) or proof.get('evidence_trust') != 'registered_native_job'
+                    or not proof.get('native_job_id') or proof.get('binding') != _binding(entry)
+                    or proof.get('environment') != entry.get('verified_environment')):
+                return None
+            required = ('roundtrip', 'compile', 'behavior', 'persisted', 'cold_loaded')
+            if any(proof.get('verification', {}).get(key) != 'pass' for key in required):
+                return None
+            return proof
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def promote(self, fragment_id: str, revision: str, reference: dict, environment: Environment):
+        identity = str(uuid.UUID(fragment_id))
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,40}', revision):
+            raise KnowledgeError('Invalid revision')
+        path = self.entries_dir / (identity + '-' + revision + '.json')
+        with _KNOWLEDGE_LOCK:
+            entry = json.loads(path.read_text(encoding='utf-8'))
+            if _sha256(entry['fragment_text']) != entry['fragment_sha256']:
+                raise KnowledgeError('payload_tampered')
+            entry.update(verification_reference=reference, verified_environment=environment.to_dict())
+            if not all(_binding(entry).values()) or not environment.matches(environment):
+                raise KnowledgeError('Complete environment and manifest/acceptance/adapter/plugin/dependency binding required')
+            proof = self._trusted_proof(entry)
+            if not proof:
+                raise KnowledgeError('Trusted passing verification run does not match this fragment revision')
+            entry['status'] = STATUS_VERIFIED
+            entry['verification'] = {**proof['verification'], 'human': 'pending'}
+            _atomic_json(path, entry)
+            return {'ok': True, 'status': STATUS_VERIFIED, 'slug': entry['slug'], 'verification': entry['verification']}
 
 
 class FrictionLog:
@@ -264,10 +361,12 @@ class FrictionLog:
             return []
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
+        except (OSError, json.JSONDecodeError) as exc:
+            raise KnowledgeError('Corrupt friction log preserved; explicit repair required: ' + str(exc)) from exc
         records = data.get("records") if isinstance(data, dict) else data
-        return list(records or [])
+        if not isinstance(records, list) or any(not isinstance(item, dict) or not item.get('signature') for item in records):
+            raise KnowledgeError('Invalid friction schema preserved; explicit repair required')
+        return records
 
     def record(
         self,
@@ -335,10 +434,7 @@ class FrictionLog:
             "record_count": len(records),
             "records": records,
         }
-        self.path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        _atomic_json(self.path, payload)
 
     def report(self, *, min_occurrences: int = 1) -> Dict[str, Any]:
         """Rank recorded friction by frequency, for turning gaps into fixes."""

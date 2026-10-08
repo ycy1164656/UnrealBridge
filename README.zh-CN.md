@@ -9,7 +9,7 @@
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/-Python-3776AB?logo=python&logoColor=white" alt="Python"></a>
     <img src="https://img.shields.io/badge/-C%2B%2B-00599C?logo=cplusplus&logoColor=white" alt="C++">
     <img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows" alt="Windows">
-    <img src="https://img.shields.io/badge/Codex-skill-blue" alt="Codex skill">
+    <img src="https://img.shields.io/badge/AI_agents-MCP%20%2B%20CLI-blue" alt="AI agent tools">
     <a href="README.md"><img src="https://img.shields.io/badge/lang-English-blue" alt="English"></a>
   </p>
 </p>
@@ -22,7 +22,7 @@
 
 UnrealBridge 是一个面向 AI Agent 的 Unreal Engine 编辑器桥接层，围绕动画资产内省、Reactive 事件订阅、资产搜索与引用分析、蓝图图谱自动布局等核心场景，提供一套类型化的操作接口。Agent 在本地正在运行的编辑器实例中发起查询与修改，所有变更实时生效，并受事务系统约束、可被撤销。
 
-> **当前开发版本：3.3.0，Protocol v2。** 本轮按 ShooterRoyal 开发需要收尾既定 P0/P1：原生 K2 片段、受控 PNG/FBX/PBR 导入与重导入、审计、移动、可信目录及实际问题记录。能力按 UE 5.8.2 专项证据报告。见 [P0/P1 交付与限制](docs/unrealbridge-3.3.0-p0p1-notes.md)和[日常工作流](skills/unreal-bridge/references/bridge-production33.md)。唯一维护入口为 `skills/unreal-bridge`，`.claude` 保留为停止维护的历史副本。
+> **当前开发版本：3.3.1，Protocol v2。** 冻结候选增加 Minimal MCP Surface、跨 World Runtime Watch、任务拥有的 PIE 逐帧控制、UE Validation 与上下文预算门槛。实测状态和限制见 [3.3.1 记录](docs/unrealbridge-3.3.1-release-notes.md)。唯一维护入口为 `skills/unreal-bridge`，`.claude` 保留为停止维护的历史副本。
 
 ## 亮点
 
@@ -94,18 +94,18 @@ git clone https://github.com/<your-fork>/UnrealBridge.git
 cd UnrealBridge
 ```
 
-### 2. 安装 Codex 路由
+### 2. 安装 AI agent 路由（可选）
 
 先预览，再安装指向当前 checkout 的路由；不会另建脚本副本。
 
 Skill 真源在 `skills/unreal-bridge/`。其它使用 `.agents/skills/` 的客户端可用 `link_agents_skills.bat` 创建链接；不要覆盖已有自定义路径。
 
 ```bat
-python tools/install_codex_skill.py
-python tools/install_codex_skill.py --apply
+python tools/install_agent_skill.py --destination C:/path/to/client/skills/unreal-bridge
+python tools/install_agent_skill.py --destination C:/path/to/client/skills/unreal-bridge --apply
 ```
 
-安装后使用当前 checkout 的脚本和 manifest。
+默认目标为 `~/.agents/skills/unreal-bridge`；按客户端实际支持的技能目录设置 destination。安装器只写指向当前 checkout 的路由，先预览并保护自定义内容。现有 `install_codex_skill.py` 保留为同一安装器的兼容入口，默认 Codex 目录保持不变。MCP 或 CLI 接入不要求安装特定厂商的 skill。
 
 ### 3. 安装插件
 
@@ -141,7 +141,7 @@ setx UE_ROOT            "C:\Program Files\Epic Games\UE_5.8"
 
 ### 快速使用
 
-skill 装好之后，可在 Codex 中提出以下任务：
+skill 装好之后，可向 AI agent 提出以下任务：
 
 - *「列出当前关卡里所有的 PointLight。」*
 - *「把 PlayerStart 向上移动 200 单位。」*
@@ -151,17 +151,11 @@ skill 装好之后，可在 Codex 中提出以下任务：
 
 Agent 会读 `SKILL.md`，挑出对应的 `UnrealBridge*Library` 函数，通过 `bridge.py` 发起调用，再把结果告诉你。
 
-### Codex 集成（可选）
+### MCP 客户端接入
 
-本仓库提供了 Codex 版本的 skill：
+所有 AI agent 客户端使用同一个维护入口、能力 ID、Schema、Job 和授权合同。[通用 stdio 配置](examples/mcp-ai-agents.json)使用六工具 minimal 模式；full 模式继续可用。
 
-```bat
-install_codex_skill.bat
-```
-
-它会把 `.codex/skills/unreal-bridge/` 拷贝到 `%USERPROFILE%\.codex\skills\unreal-bridge\`。之后 Codex 可按 skill 里的 PowerShell 示例调用 `bridge.py`。
-
-如果希望 Codex 通过 MCP 工具而不是 shell 命令调用 UnrealBridge，可安装可选依赖并启动 grouped MCP adapter：
+希望 AI agent 通过 MCP 工具调用 UnrealBridge 时，可安装可选依赖并启动 grouped MCP adapter：
 
 ```bat
 pip install -r requirements-mcp.txt
@@ -178,6 +172,8 @@ command = "uv"
 args = ["--directory", 'C:\dev\UnrealBridge', "run", "--with", "mcp>=1.6.0,<2", "python", 'skills\unreal-bridge\scripts\unreal_bridge_mcp_server.py']
 startup_timeout_sec = 120
 ```
+
+上面的 TOML 键属于 Codex 客户端配置，保留原名。Gemini CLI 可在 settings 的 `mcpServers` 中使用通用 JSON 的 command/args/env；Claude Code 可使用 `claude mcp add --transport stdio unreal_bridge -- uv --directory C:/dev/UnrealBridge run --with "mcp>=1.6.0,<2" python skills/unreal-bridge/scripts/unreal_bridge_mcp_server.py`，并在该客户端设置 `UNREALBRIDGE_MCP_SURFACE=minimal`。依据：[Gemini 官方 MCP 文档](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md)、[Claude 官方 MCP 文档](https://code.claude.com/docs/en/mcp)。这些是接入示例，不能代替真实客户端实测。
 
 ## 使用方式
 

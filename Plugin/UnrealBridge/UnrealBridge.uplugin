@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 6,
-	"VersionName": "3.3.0",
+	"Version": 7,
+	"VersionName": "3.3.1",
 	"FriendlyName": "UnrealBridge",
 	"Description": "Typed Unreal Editor automation with durable jobs, scoped content contracts and verified readback.",
 	"Category": "Editor",

@@ -301,6 +301,22 @@ class ArtifactStore:
         with path.open("rb") as stream:
             stream.seek(offset)
             chunk = stream.read(max_bytes)
+            # Byte cursors stay exact, but UTF-8 pages must end at a codepoint
+            # boundary. At most three extra bytes complete the trailing scalar.
+            if path.suffix in {".json", ".txt"}:
+                for _ in range(4):
+                    try:
+                        chunk.decode("utf-8")
+                        break
+                    except UnicodeDecodeError as exc:
+                        if exc.reason != 'unexpected end of data':
+                            raise ValueError('Artifact cursor is not a UTF-8 boundary') from exc
+                        extra = stream.read(1)
+                        if not extra:
+                            raise ValueError('Artifact contains incomplete UTF-8') from exc
+                        chunk += extra
+                else:
+                    raise ValueError('Invalid UTF-8 artifact page')
         next_offset = offset + len(chunk)
         return {
             "artifact_id": artifact_id,

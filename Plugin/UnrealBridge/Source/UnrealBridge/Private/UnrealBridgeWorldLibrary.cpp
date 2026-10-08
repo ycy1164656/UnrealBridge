@@ -263,6 +263,11 @@ void BridgeWorldContext::Startup()
 	});
 }
 
+UWorld* BridgeWorldContext::ResolveWorldHandle(const FString& WorldHandle)
+{
+	return BridgeWorldImpl::FindWorld(WorldHandle);
+}
+
 void BridgeWorldContext::Shutdown()
 {
 	using namespace BridgeWorldImpl;

@@ -43,7 +43,7 @@
       "TIMER"
     ]
   },
-  "generated_at": "2026-09-23T03:09:19+00:00",
+  "generated_at": "2026-09-29T00:59:00+00:00",
   "libraries": {
     "UnrealBridgeAILibrary": {
       "functions": {
@@ -28988,6 +28988,264 @@
           ],
           "provider": "UnrealBridge",
           "returns": "bool",
+          "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        }
+      }
+    },
+    "UnrealBridgeDeterministicPIELibrary": {
+      "functions": {
+        "begin": {
+          "description": "Begin",
+          "doc": "X.begin(run_id, pie_session_id, owner_id, fixed_delta_seconds) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "fixed_delta_seconds": {
+                "type": "number"
+              },
+              "owner_id": {
+                "type": "string"
+              },
+              "pie_session_id": {
+                "type": "string"
+              },
+              "run_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "pie_session_id",
+              "owner_id",
+              "fixed_delta_seconds"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "run_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "pie_session_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "double",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "number"
+              },
+              "kind": "number",
+              "name": "fixed_delta_seconds",
+              "type": "float"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "end": {
+          "description": "End",
+          "doc": "X.end(controller_id, owner_id) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "controller_id": {
+                "type": "string"
+              },
+              "owner_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "controller_id",
+              "owner_id"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "controller_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_id",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "request_one_frame": {
+          "description": "Request One Frame",
+          "doc": "X.request_one_frame(controller_id, owner_id) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "controller_id": {
+                "type": "string"
+              },
+              "owner_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "controller_id",
+              "owner_id"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "controller_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_id",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "status": {
+          "description": "Status",
+          "doc": "X.status(controller_id, owner_id) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "controller_id": {
+                "type": "string"
+              },
+              "owner_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "controller_id",
+              "owner_id"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "controller_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_id",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
           "risk": "Mutating",
           "save_behavior": "Never",
           "supports_dry_run": false,
@@ -72171,6 +72429,51 @@
         }
       }
     },
+    "UnrealBridgeRuntimeWatchLibrary": {
+      "functions": {
+        "get_multi_world_watch_snapshot": {
+          "description": "Request uses exact world handles, actor_name/class_path and up to 32 bounded fields.",
+          "doc": "X.get_multi_world_watch_snapshot(request_json) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "request_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "request_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        }
+      }
+    },
     "UnrealBridgeSandboxLibrary": {
       "functions": {
         "get_sandbox_status": {
@@ -79809,6 +80112,74 @@
         }
       }
     },
+    "UnrealBridgeValidationLibrary": {
+      "functions": {
+        "map_check_json": {
+          "description": "Runs MAP CHECK DONTDISPLAYDIALOG on the current Editor World. Never saves.",
+          "doc": "X.map_check_json() -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "validate_assets_json": {
+          "description": "Request: asset_paths (exact object paths), max_assets (1..256). No folder sweep.",
+          "doc": "X.validate_assets_json(request_json) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "request_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "request_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        }
+      }
+    },
     "UnrealBridgeWorldLibrary": {
       "functions": {
         "begin_world_scope": {
@@ -80148,11 +80519,11 @@
       }
     }
   },
-  "manifest_hash": "ae863fe49ae2b448cc3582855d0546b28af5b53f5e539357b0636b1d31c0121c",
-  "plugin_version": "3.3.0",
+  "manifest_hash": "17781465b25e65bb216e4cf20980e8b93a4b27644535bf5c7b1e78ac3aa8a50c",
+  "plugin_version": "3.3.1",
   "project_path": "C:/dev/ShooterRoyal_5_8_DirectUpgrade/ShooterRoyal.uproject",
   "protocol_version": 2,
-  "registry_hash": "b0d1cf7617d9cc8547ecd13c51100556",
+  "registry_hash": "3e9c16c2503229411c0af54fa8de980f",
   "registry_version": 1,
   "structs": {
     "BridgeAbilityCooldownInfo": [

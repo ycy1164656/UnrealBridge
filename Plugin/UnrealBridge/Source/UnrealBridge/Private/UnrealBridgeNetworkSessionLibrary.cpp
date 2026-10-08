@@ -137,7 +137,8 @@ FString UUnrealBridgeNetworkSessionLibrary::StartNetworkSession(const FString& R
 	if (!String(Request,TEXT("schema"),Schema) || Schema!=TEXT("unrealbridge.network_session.v2")
 		|| !String(Request,TEXT("run_id"),Run) || !Identifier(Run) || !String(Request,TEXT("editor_session_id"),Editor)
 		|| !String(Request,TEXT("topology"),Topology) || (Topology!=TEXT("listen") && Topology!=TEXT("dedicated"))
-		|| !Integer(Request,TEXT("remote_client_count"),1,4,Count) || !Integer(Request,TEXT("out_lag_ms"),0,500,Lag)
+		|| !Integer(Request,TEXT("remote_client_count"),0,4,Count) || (Topology==TEXT("dedicated") && Count==0)
+		|| !Integer(Request,TEXT("out_lag_ms"),0,500,Lag)
 		|| !Integer(Request,TEXT("out_loss_percent"),0,10,Loss)) return NetworkError(TEXT("ValidationFailed"),TEXT("Invalid typed topology/count/network profile"));
 	if (Request->Values.Num()!=7) return NetworkError(TEXT("ValidationFailed"),TEXT("Unknown fields are not accepted"));
 	if (auto* Existing=Sessions.Find(Run)) return Existing->Input==RequestJson?State(*Existing):NetworkError(TEXT("ValidationFailed"),TEXT("Run input conflict"));
