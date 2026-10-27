@@ -7,7 +7,7 @@ description: Inspect or automate a running Unreal Editor through UnrealBridge us
 
 This is the maintained AI agent workflow, shared by MCP and CLI clients. No vendor-specific invocation is required. Router installation uses `tools/install_agent_skill.py --destination <client-skill-directory>`; `install_codex_skill.py` remains a compatibility entry. MCP clients use the same canonical server and operation contracts; client permission settings are configured separately.
 
-Use this checkout's typed operations, durable Jobs and Python client for Unreal Editor work. The maintained workflow is Bridge 3.3.1 on UE 5.8; historical 3.0 evidence used 5.8.1 and scoped 3.1 evidence used 5.8.2. Verify the live project, plugin, manifest and operation schema; this is not certification of every engine patch or API. The MCP host requires `mcp>=1.6.0,<2`; installation does not reload an already running host.
+Use this checkout's typed operations, durable Jobs and Python client for Unreal Editor work. The maintained workflow is Bridge 3.3.2 on UE 5.8; historical 3.0 evidence used 5.8.1 and scoped 3.1 evidence used 5.8.2. Verify the live project, plugin, manifest and operation schema; this is not certification of every engine patch or API. The MCP host requires `mcp>=1.6.0,<2`; installation does not reload an already running host.
 
 ## Entry and scope
 
@@ -30,6 +30,8 @@ Follow the target project's AGENTS/authorized scope. Previously granted scope pe
 - CLI setup/discovery, wrappers/preflight, durable Jobs, encoding and host-adapter details: [client guide](references/bridge-client-guide.md).
 - World/Actor identity, project context/impact, compact graphs, owned PIE and background Trace: [reliability workflows](references/bridge-reliability-workflows.md). Synchronous Trace summary APIs are retired.
 - Montage/Notify, BT, audio routing, pointer input, topology/rejoin and fixed-condition scenarios: [scoped upgrade API](references/bridge-scoped-upgrade-api.md).
+- Actual UE output WAV capture and bounded MetaSound pin/edge/default inspection: [audio quality contracts](references/bridge-scoped-upgrade-api.md#audio-output-capture-and-metasound-inspection-2026-10-08). PCM capture, audibility and human listening acceptance are separate results.
+- Tuned emitter instance transplantation, bounded CPU/GPU SimCache reads and continuous 90-second evidence: [instance and capture contracts](references/bridge-scoped-upgrade-api.md#emitter-instances-gpu-readback-and-continuous-evidence-2026-10-27). Inspect the live schema and exact owner/handle; source preservation, runtime proof and human review are separate.
 - Content recipes, registered VERIFY, FileSandbox, bounded crash recovery and video/audio contracts: [3.2 production](references/bridge-production32.md).
 - Native fragments, external import/reimport, audit, catalog trust, move contracts and known failure modes: [3.3 production](references/bridge-production33.md).
 - Minimal MCP, multi-world Watch, exact owned PIE frame step, validation and context budget: [3.3.1 production](references/bridge-production33.md#331-五项能力).

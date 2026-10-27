@@ -257,4 +257,43 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
 		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "LongTaskPoll", ToolSaveBehavior = "Never"))
 	static FBridgeNiagaraCompileStatus PollNiagaraSystemCompilation(const FString& SystemPath);
+
+	/** Copy a tuned emitter instance across Systems; exact handle and display name are both required. Never saves. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
+		UnrealBridgeTool, ToolRisk = "AssetWrite", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FString TransplantNiagaraEmitterInstance(
+		const FString& SourceSystemPath, const FString& SourceEmitterHandleId, const FString& SourceEmitterName,
+		const FString& DestinationSystemPath, const FString& DestinationEmitterName,
+		bool bCopyUserParameters = true, bool bRequestCompile = true, const FString& DependencyMapJson = TEXT("{}"));
+
+	/** Exact instance fingerprint, including graph inputs, data interfaces and rapid iteration values. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FString InspectNiagaraEmitterInstance(const FString& SystemPath, const FString& EmitterHandleId,
+		const FString& EmitterName, bool bIncludeEvidence = false);
+
+	/** Observe existing simulation ticks. Does not activate, reset, pause or advance any component. */
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FString StartNiagaraSimCacheCapture(const FString& WorldHandle, const FString& ComponentPath,
+		const FString& OwnerToken, int32 NumFrames = 4, int32 MaxBytes = 16777216, float MaxSeconds = 5.0f);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "LongTaskPoll", ToolSaveBehavior = "Never"))
+	static FString PollNiagaraSimCacheCapture(const FString& CaptureId, const FString& OwnerToken);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FString ListNiagaraSimCacheAttributes(const FString& CaptureId, const FString& OwnerToken,
+		const FString& EmitterHandleId, const FString& EmitterName, int32 FrameIndex = 0);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FString ReadNiagaraSimCacheAttribute(const FString& CaptureId, const FString& OwnerToken,
+		const FString& EmitterHandleId, const FString& EmitterName, const FString& AttributeName,
+		int32 FrameIndex = 0, int32 MaxSamples = 16);
+
+	UFUNCTION(BlueprintCallable, Category = "UnrealBridge|Niagara", meta = (
+		UnrealBridgeTool, ToolRisk = "ReadOnly", ToolExecution = "GameThreadShort", ToolSaveBehavior = "Never"))
+	static FString ReleaseNiagaraSimCacheCapture(const FString& CaptureId, const FString& OwnerToken);
 };

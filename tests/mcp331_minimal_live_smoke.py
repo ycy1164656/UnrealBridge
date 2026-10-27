@@ -36,7 +36,7 @@ async def run(endpoint, project):
                 "bridge_execute", "bridge_task", "bridge_artifact"}, names
             common = {"endpoint": endpoint, "project": project}
             ping = payload(await session.call_tool("bridge_ping", common))
-            assert ping.get("ready") and ping.get("plugin_version") == "3.3.1", ping
+            assert ping.get("ready") and ping.get("plugin_version") == "3.3.2", ping
             found = payload(await session.call_tool("bridge_search", {
                 "query": "is_in_pie", "provider": "native", "max_items": 10, **common}))
             record = next(item for item in found["result"]

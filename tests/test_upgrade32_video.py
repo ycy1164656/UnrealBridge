@@ -9,6 +9,33 @@ from unreal_bridge_workflows import last_json_object
 
 
 class VideoTests(unittest.TestCase):
+    def test_packaging_budget_is_separate_and_bounded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);capture=root/'captures/budget';capture.mkdir(parents=True)
+            path=capture/'sample.jpg';Image.new('RGB',(16,16),(60,30,70)).save(path)
+            frames=[{'index':i,'path':str(path),'platform_seconds':10+i/15,'world_seconds':20+i/15} for i in range(3)]
+            value={'schema':'unrealbridge.capture.v1','ok':True,'status':'frames_complete','root':str(capture),
+                'identity':{'capture_id':'budget','world_handle':'world','max_bytes':65536},
+                'frames':frames,'requested_fps':15,'width':16,'height':16}
+            with self.assertRaises(ValueError):finalize_capture(value,artifact_root=root)
+            result=finalize_capture(value,artifact_root=root,packaging_max_bytes=2*1024*1024,output_tag='recovered')
+            self.assertEqual(result['identity']['max_bytes'],65536)
+            self.assertTrue((capture/'capture_manifest.json').exists())
+            self.assertTrue(result['decode']['fully_decoded'])
+            with self.assertRaises(ValueError):finalize_capture(value,artifact_root=root,packaging_max_bytes=257*1024*1024)
+
+    def test_long_capture_full_decode_above_previous_twenty_second_limit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);capture=root/'captures/long';capture.mkdir(parents=True)
+            path=capture/'sample.jpg';Image.new('RGB',(16,16),(60,30,70)).save(path)
+            frames=[{'index':i,'path':str(path),'platform_seconds':10+i/15,'world_seconds':20+i/15} for i in range(525)]
+            value={'schema':'unrealbridge.capture.v1','ok':True,'status':'frames_complete','root':str(capture),
+                'identity':{'capture_id':'long','world_handle':'world1','max_bytes':4*1024*1024},
+                'frames':frames,'requested_fps':15,'width':16,'height':16,'partial':False,'dropped_frames':0}
+            result=finalize_capture(value,artifact_root=root)
+            self.assertEqual(result['decode']['decoded_frames'],525)
+            self.assertAlmostEqual(result['decode']['duration_seconds'],35,places=3)
+
     def test_native_pretty_job_envelope_is_not_a_nested_record(self):
         value={'ok':True,'identity':{'capture_id':'owned'},'frames':[{'index':0}]}
         import json

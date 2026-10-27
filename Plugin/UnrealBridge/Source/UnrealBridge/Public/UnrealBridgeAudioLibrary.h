@@ -65,6 +65,8 @@ struct FBridgeMetaSoundGraphInfo
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Audio|MetaSound") FString ValidationResult;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Audio|MetaSound") TArray<FString> ValidationMessages;
 	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Audio|MetaSound") FString Error;
+	/** Bounded semantic graph: pins, edges and page-specific input defaults. Check complete before diffing. */
+	UPROPERTY(BlueprintReadOnly, Category = "UnrealBridge|Audio|MetaSound") FString DetailsJson;
 };
 
 /** One public Builder-API graph operation. Node refs accept a GUID or "$N" back-reference. */
@@ -138,6 +140,13 @@ class UNREALBRIDGE_API UUnrealBridgeAudioLibrary : public UBlueprintFunctionLibr
 	GENERATED_BODY()
 
 public:
+	/** Captures the selected World's device main submix, never desktop or microphone audio. */
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Audio|Capture",meta=(ToolRisk="RuntimeInteraction",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))
+	static FString BeginAudioOutputCapture(const FString& RequestJson);
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Audio|Capture",meta=(ToolRisk="ReadOnly",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))
+	static FString GetAudioOutputCapture(const FString& CaptureId,const FString& OwnerToken);
+	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Audio|Capture",meta=(ToolRisk="RuntimeInteraction",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))
+	static FString EndAudioOutputCapture(const FString& CaptureId,const FString& OwnerToken);
 	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Audio|Authoring",meta=(ToolRisk="ReadOnly",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))
 	static FString GetSoundCueEditModel(const FString& SoundCuePath);
 	UFUNCTION(BlueprintCallable,Category="UnrealBridge|Audio|Authoring",meta=(ToolRisk="ReadOnly",ToolSaveBehavior="Never",ToolExecution="GameThreadShort"))

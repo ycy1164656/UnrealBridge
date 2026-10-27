@@ -39,7 +39,7 @@ def _decode_jpeg(data, width, height):
 
 def mux_avi(output, jpeg_paths, *, fps, width, height, max_bytes):
     output=Path(output)
-    if output.exists() or not jpeg_paths or len(jpeg_paths)>601 or not 1<=fps<=30 or not 0<width<=1280 or not 0<height<=720:
+    if output.exists() or not jpeg_paths or len(jpeg_paths)>2701 or not 1<=fps<=30 or not 0<width<=1280 or not 0<height<=720:
         raise ValueError('Bounded new AVI output and declared dimensions required')
     if shutil.disk_usage(output.parent).free<max_bytes+16*1024*1024:
         raise ValueError('Insufficient disk budget; preserve existing evidence')
@@ -107,10 +107,14 @@ def decode_avi(path):
                 container='AVI',codec='MJPEG',audio_streams=0,sha256=hashlib.sha256(raw).hexdigest(),fully_decoded=True)
 
 
-def finalize_capture(capture, *, artifact_root, events=()):
+def finalize_capture(capture, *, artifact_root, events=(), packaging_max_bytes=None, output_tag='clip'):
     if not isinstance(capture,dict) or capture.get('schema')!='unrealbridge.capture.v1' or capture.get('status')!='frames_complete' or not capture.get('ok'):
         raise ValueError('Terminal native frame capture required')
     identity=capture['identity']
+    if packaging_max_bytes is not None and (type(packaging_max_bytes) is not int or not 65536<=packaging_max_bytes<=256*1024*1024):
+        raise ValueError('Packaging budget must be 64KiB..256MiB')
+    if not isinstance(output_tag,str) or not 1<=len(output_tag)<=48 or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in output_tag):
+        raise ValueError('Safe unique output tag required')
     if not isinstance(events,(list,tuple)) or len(events)>12:raise ValueError('At most twelve explicit event anchors')
     for event in events:
         if not isinstance(event,dict) or event.get('world_handle')!=identity['world_handle'] or type(event.get('world_seconds')) not in (int,float) or not math.isfinite(event['world_seconds']):
@@ -119,8 +123,8 @@ def finalize_capture(capture, *, artifact_root, events=()):
     if root.parent != artifact_root/'captures' or root.name!=identity['capture_id']:
         raise ValueError('Capture root must match exact artifact identity')
     frames=capture['frames'];fps=capture['requested_fps']
-    if not 2<=len(frames)<=600:
-        raise ValueError('At least two real frames and at most 600 required')
+    if not 2<=len(frames)<=2700:
+        raise ValueError('At least two real frames and at most 2700 required')
     previous=None
     for index,frame in enumerate(frames):
         path=safe_path(frame['path'])
@@ -128,7 +132,7 @@ def finalize_capture(capture, *, artifact_root, events=()):
             raise ValueError('Frame identity/order/clock mismatch')
         frame['sha256']=_digest(path);previous=frame['platform_seconds']
     start,end=frames[0]['platform_seconds'],frames[-1]['platform_seconds']
-    if not 0<end-start<=21:raise ValueError('Capture clock outside duration budget')
+    if not 0<end-start<=91:raise ValueError('Capture clock outside duration budget')
     mapping=[];selected=[];source=0
     for output_index in range(round((end-start)*fps)+1):
         sample=start+output_index/fps
@@ -138,15 +142,19 @@ def finalize_capture(capture, *, artifact_root, events=()):
                         'sampling_offset_seconds':sample-frames[source]['platform_seconds']})
     manifest=dict(capture,container='AVI',codec='MJPEG',video_encoded=False,measured_fps=(len(frames)-1)/(end-start),
                   duplicate_output_frames=len(selected)-len(set(selected)),pts_mapping=mapping,human_accepted=False)
-    output=root/'clip.avi'
+    output=root/(output_tag+'.avi')
+    manifest_path=root/('capture_manifest.json' if output_tag=='clip' else 'capture_manifest-'+output_tag+'.json')
+    budget=identity['max_bytes'] if packaging_max_bytes is None else packaging_max_bytes
+    manifest['packaging_budget']={'combined_frames_and_new_avi_bytes':budget,'native_capture_max_bytes':identity['max_bytes'],
+        'scope':'source frames, new AVI and 1 MiB manifest reserve; prior failed outputs remain separate diagnostic evidence'}
     try:
-        remaining=identity['max_bytes']-sum(Path(f['path']).stat().st_size for f in frames)-1024*1024
+        remaining=budget-sum(Path(f['path']).stat().st_size for f in frames)-1024*1024
         if remaining<=0:raise ValueError('Frame and manifest storage exhausted the combined evidence budget')
         decoded=mux_avi(output,selected,fps=fps,width=capture['width'],height=capture['height'],max_bytes=remaining)
         manifest.update(video_encoded=True,video_path=str(output),decode=decoded)
     except Exception as error:
         manifest.update(partial=True,encoding_error=str(error))
-        atomic_json(root/'capture_manifest.json',manifest)
+        atomic_json(manifest_path,manifest)
         raise
     # Events are data only. Same World game clock is required; never subtract clocks across processes.
     keyframes=[]
@@ -156,5 +164,5 @@ def finalize_capture(capture, *, artifact_root, events=()):
                           'sha256':nearest['sha256'],'alignment_error_seconds':abs(nearest['world_seconds']-event['world_seconds']),
                           'inside_capture':frames[0]['world_seconds']<=event['world_seconds']<=frames[-1]['world_seconds']})
     manifest['keyframes']=keyframes
-    atomic_json(root/'capture_manifest.json',manifest)
+    atomic_json(manifest_path,manifest)
     return manifest

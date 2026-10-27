@@ -1,4 +1,7 @@
 #include "UnrealBridgeAudioLibrary.h"
+#include "UnrealBridgeAuthoringCommon.h"
+#include "JsonObjectConverter.h"
+#include "Internationalization/Regex.h"
 
 #include "AudioParameter.h"
 #include "Components/AudioComponent.h"
@@ -21,6 +24,71 @@
 
 namespace BridgeAudioImpl
 {
+	FString GraphDetails(const FMetasoundFrontendDocument& Document,int32 MaxNodes)
+	{
+		auto Out=MakeShared<FJsonObject>();
+		TArray<TSharedPtr<FJsonValue>> Pins,Edges,Defaults,Variables;
+		bool Complete=true; int32 Budget=32768,Nodes=0,Characters=2*1024*1024;
+		MaxNodes=FMath::Min(MaxNodes,4096);
+		TMap<FGuid,const FMetasoundFrontendClass*> Classes;
+		for (const auto& Dependency:Document.Dependencies) Classes.Add(Dependency.ID,&Dependency);
+		auto Id=[](const FGuid& V){ return V.ToString(EGuidFormats::DigitsWithHyphensLower); };
+		auto Add=[&](TArray<TSharedPtr<FJsonValue>>& Rows,const TSharedRef<FJsonObject>& Row)
+		{ const int32 Size=BridgeAuthoring::Encode(Row).Len(); if (Budget-- > 0 && Size<=Characters) { Rows.Add(MakeShared<FJsonValueObject>(Row)); Characters-=Size; } else Complete=false; };
+		auto Literal=[&](const FMetasoundFrontendLiteral& Value)
+		{
+			FString Text;
+			FJsonObjectConverter::UStructToJsonObjectString(FMetasoundFrontendLiteral::StaticStruct(),&Value,Text,0,0,0,nullptr,false);
+			if (Text.Len()>4096) { Complete=false; Text=Text.Left(4096); }
+			return Text;
+		};
+		for (const auto& Input:Document.RootGraph.GetDefaultInterface().Inputs)
+			Input.IterateDefaults([&](const FGuid& Page,const FMetasoundFrontendLiteral& Value)
+			{ auto Row=MakeShared<FJsonObject>(); Row->SetStringField(TEXT("page_id"),Id(Page)); Row->SetStringField(TEXT("name"),Input.Name.ToString()); Row->SetStringField(TEXT("literal"),Literal(Value)); Add(Defaults,Row); });
+		for (const auto& Page:Document.RootGraph.GetConstGraphPages())
+		{
+			for (const auto& Node:Page.Nodes)
+			{
+				if (Nodes++>=MaxNodes) { Complete=false; continue; }
+				auto AddPins=[&](const TArray<FMetasoundFrontendVertex>& Vertices,const TCHAR* Direction)
+				{
+					for (const auto& Pin:Vertices)
+					{
+						auto Row=MakeShared<FJsonObject>(); Row->SetStringField(TEXT("page_id"),Id(Page.PageID)); Row->SetStringField(TEXT("node_id"),Id(Node.GetID()));
+						Row->SetStringField(TEXT("vertex_id"),Id(Pin.VertexID)); Row->SetStringField(TEXT("direction"),Direction); Row->SetStringField(TEXT("name"),Pin.Name.ToString()); Row->SetStringField(TEXT("data_type"),Pin.TypeName.ToString());
+						const FMetasoundFrontendLiteral* Value=nullptr;
+						if (FCString::Strcmp(Direction,TEXT("input"))==0)
+						{
+							if (const auto* Class=Classes.FindRef(Node.ClassID)) for (const auto& Input:Class->GetDefaultInterface().Inputs) if (Input.Name==Pin.Name)
+							{
+								Row->SetStringField(TEXT("access_type"),LexToString(Input.AccessType));
+								Value=Input.FindConstDefault(Page.PageID); if (!Value) Value=Input.FindConstDefault(Metasound::Frontend::DefaultPageID);
+								if (Value) Row->SetStringField(TEXT("default_source"),TEXT("class_default"));
+							}
+							for (const auto& Default:Node.InputLiterals) if (Default.VertexID==Pin.VertexID) { Value=&Default.Value; Row->SetStringField(TEXT("default_source"),TEXT("node_override")); }
+							if (Value) Row->SetStringField(TEXT("literal"),Literal(*Value));
+						}
+						Add(Pins,Row);
+					}
+				};
+				AddPins(Node.Interface.Inputs,TEXT("input")); AddPins(Node.Interface.Outputs,TEXT("output"));
+			}
+			for (const auto& Edge:Page.Edges)
+			{
+				auto Row=MakeShared<FJsonObject>(); Row->SetStringField(TEXT("page_id"),Id(Page.PageID));
+				Row->SetStringField(TEXT("from_node_id"),Id(Edge.FromNodeID)); Row->SetStringField(TEXT("from_vertex_id"),Id(Edge.FromVertexID));
+				Row->SetStringField(TEXT("to_node_id"),Id(Edge.ToNodeID)); Row->SetStringField(TEXT("to_vertex_id"),Id(Edge.ToVertexID)); Add(Edges,Row);
+			}
+			for (const auto& Variable:Page.Variables)
+			{
+				auto Row=MakeShared<FJsonObject>(); Row->SetStringField(TEXT("page_id"),Id(Page.PageID)); Row->SetStringField(TEXT("id"),Id(Variable.ID));
+				Row->SetStringField(TEXT("name"),Variable.Name.ToString()); Row->SetStringField(TEXT("data_type"),Variable.TypeName.ToString()); Row->SetStringField(TEXT("literal"),Literal(Variable.Literal)); Add(Variables,Row);
+			}
+		}
+		Out->SetStringField(TEXT("schema"),TEXT("unrealbridge.metasound_details.v1")); Out->SetBoolField(TEXT("complete"),Complete);
+		Out->SetArrayField(TEXT("pins"),Pins); Out->SetArrayField(TEXT("edges"),Edges); Out->SetArrayField(TEXT("page_defaults"),Defaults); Out->SetArrayField(TEXT("variables"),Variables);
+		return BridgeAuthoring::Encode(Out);
+	}
 	FString ValidationResultToString(EDataValidationResult Result)
 	{
 		switch (Result)
@@ -196,6 +264,7 @@ namespace BridgeAudioImpl
 			}
 		}
 		ValidateObject(Asset, Info.ValidationResult, Info.ValidationMessages);
+		Info.DetailsJson=GraphDetails(Document,MaxNodes);
 		return Info;
 	}
 
@@ -236,17 +305,24 @@ namespace BridgeAudioImpl
 		}
 		if (Normalized == TEXT("bool") || Normalized == TEXT("boolean"))
 		{
-			OutLiteral.Set(Value.ToBool());
+			if (Value!=TEXT("true") && Value!=TEXT("false")) { OutError=TEXT("Bool literal must be true or false"); return false; }
+			OutLiteral.Set(Value==TEXT("true"));
 			return true;
 		}
 		if (Normalized == TEXT("int") || Normalized == TEXT("integer") || Normalized == TEXT("int32"))
 		{
-			OutLiteral.Set(FCString::Atoi(*Value));
+			FRegexMatcher Match(FRegexPattern(TEXT("^[+-]?[0-9]+$")),Value);
+			int64 Parsed=0;
+			if (!Match.FindNext() || !LexTryParseString(Parsed,*Value) || Parsed<MIN_int32 || Parsed>MAX_int32) { OutError=TEXT("Int literal must be an exact int32"); return false; }
+			OutLiteral.Set(int32(Parsed));
 			return true;
 		}
 		if (Normalized == TEXT("float") || Normalized == TEXT("double"))
 		{
-			OutLiteral.Set(FCString::Atof(*Value));
+			FRegexMatcher Match(FRegexPattern(TEXT("^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$")),Value);
+			double Parsed=0;
+			if (!Match.FindNext() || !LexTryParseString(Parsed,*Value) || !FMath::IsFinite(Parsed) || FMath::Abs(Parsed)>MAX_flt) { OutError=TEXT("Float literal must be finite float32"); return false; }
+			OutLiteral.Set(float(Parsed));
 			return true;
 		}
 		if (Normalized == TEXT("string"))
@@ -318,6 +394,16 @@ FBridgeMetaSoundGraphOpResult UUnrealBridgeAudioLibrary::ApplyMetaSoundGraphOps(
 	bool bRegisterWithFrontend)
 {
 	FBridgeMetaSoundGraphOpResult Out;
+	// Validate the entire literal batch before any Builder or asset mutation.
+	for (int32 Index=0;Index<Ops.Num();++Index)
+	{
+		const auto& Op=Ops[Index]; const FString Kind=Op.Op.TrimStartAndEnd().ToLower();
+		if (Kind==TEXT("set_default") || Kind==TEXT("add_input") || Kind==TEXT("add_output"))
+		{
+			FMetasoundFrontendLiteral Literal;
+			if (!BridgeAudioImpl::MakeLiteral(Op.LiteralType,Op.Value,Literal,Out.Error)) { Out.FailedAtIndex=Index; return Out; }
+		}
+	}
 	Out.ProducedNodeIds.SetNum(Ops.Num());
 	UObject* Asset = LoadObject<UObject>(nullptr, *MetaSoundPath);
 	if (!Asset)

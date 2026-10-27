@@ -43,7 +43,7 @@
       "TIMER"
     ]
   },
-  "generated_at": "2026-09-29T00:59:00+00:00",
+  "generated_at": "2026-10-27T03:07:27+00:00",
   "libraries": {
     "UnrealBridgeAILibrary": {
       "functions": {
@@ -9127,6 +9127,47 @@
           "supports_dry_run": false,
           "supports_idempotency": false
         },
+        "begin_audio_output_capture": {
+          "description": "Captures the selected World's device main submix, never desktop or microphone audio.",
+          "doc": "X.begin_audio_output_capture(request_json) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "request_json": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_json"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "request_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "RuntimeInteraction",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
         "end_audio_mix_session": {
           "description": "End Audio Mix Session",
           "doc": "X.end_audio_mix_session(session_id, world_handle) -> str",
@@ -9173,6 +9214,62 @@
               },
               "kind": "string",
               "name": "world_handle",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "RuntimeInteraction",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "end_audio_output_capture": {
+          "description": "End Audio Output Capture",
+          "doc": "X.end_audio_output_capture(capture_id, owner_token) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_id": {
+                "type": "string"
+              },
+              "owner_token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id",
+              "owner_token"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_token",
               "type": "str"
             }
           ],
@@ -9270,6 +9367,62 @@
               },
               "kind": "string",
               "name": "world_handle",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "get_audio_output_capture": {
+          "description": "Get Audio Output Capture",
+          "doc": "X.get_audio_output_capture(capture_id, owner_token) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_id": {
+                "type": "string"
+              },
+              "owner_token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id",
+              "owner_token"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_token",
               "type": "str"
             }
           ],
@@ -62346,6 +62499,89 @@
           "supports_dry_run": false,
           "supports_idempotency": false
         },
+        "inspect_niagara_emitter_instance": {
+          "description": "Exact instance fingerprint, including graph inputs, data interfaces and rapid iteration values.",
+          "doc": "X.inspect_niagara_emitter_instance(system_path, emitter_handle_id, emitter_name, include_evidence=False) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "b_include_evidence": {
+                "type": "boolean"
+              },
+              "emitter_handle_id": {
+                "type": "string"
+              },
+              "emitter_name": {
+                "type": "string"
+              },
+              "system_path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "system_path",
+              "emitter_handle_id",
+              "emitter_name"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "system_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "emitter_handle_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "emitter_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "",
+              "default": "False",
+              "has_default": true,
+              "json_schema": {},
+              "kind": "unknown",
+              "name": "include_evidence",
+              "type": "Any"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
         "list_niagara_components": {
           "description": "List Niagara Components",
           "doc": "X.list_niagara_components(actor_label=\"\") -> Array[BridgeNiagaraComponentInfo]",
@@ -62384,6 +62620,106 @@
           ],
           "provider": "UnrealBridge",
           "returns": "list[BridgeNiagaraComponentInfo]",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "list_niagara_sim_cache_attributes": {
+          "description": "List Niagara Sim Cache Attributes",
+          "doc": "X.list_niagara_sim_cache_attributes(capture_id, owner_token, emitter_handle_id, emitter_name, frame_index=0) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_id": {
+                "type": "string"
+              },
+              "emitter_handle_id": {
+                "type": "string"
+              },
+              "emitter_name": {
+                "type": "string"
+              },
+              "frame_index": {
+                "type": "integer"
+              },
+              "owner_token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id",
+              "owner_token",
+              "emitter_handle_id",
+              "emitter_name"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_token",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "emitter_handle_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "emitter_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "int32",
+              "default": "0",
+              "has_default": true,
+              "json_schema": {
+                "type": "integer"
+              },
+              "kind": "integer",
+              "name": "frame_index",
+              "type": "int"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
           "risk": "ReadOnly",
           "save_behavior": "Never",
           "supports_dry_run": false,
@@ -62446,6 +62782,62 @@
           "supports_dry_run": false,
           "supports_idempotency": false
         },
+        "poll_niagara_sim_cache_capture": {
+          "description": "Poll Niagara Sim Cache Capture",
+          "doc": "X.poll_niagara_sim_cache_capture(capture_id, owner_token) -> str",
+          "engine_min": "5.3.0",
+          "execution": "LongTaskPoll",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_id": {
+                "type": "string"
+              },
+              "owner_token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id",
+              "owner_token"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_token",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
         "poll_niagara_system_compilation": {
           "description": "Poll Niagara System Compilation",
           "doc": "X.poll_niagara_system_compilation(system_path) -> BridgeNiagaraCompileStatus",
@@ -62483,6 +62875,191 @@
           ],
           "provider": "UnrealBridge",
           "returns": "BridgeNiagaraCompileStatus",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "read_niagara_sim_cache_attribute": {
+          "description": "Read Niagara Sim Cache Attribute",
+          "doc": "X.read_niagara_sim_cache_attribute(capture_id, owner_token, emitter_handle_id, emitter_name, attribute_name, frame_index=0, max_samples=16) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "attribute_name": {
+                "type": "string"
+              },
+              "capture_id": {
+                "type": "string"
+              },
+              "emitter_handle_id": {
+                "type": "string"
+              },
+              "emitter_name": {
+                "type": "string"
+              },
+              "frame_index": {
+                "type": "integer"
+              },
+              "max_samples": {
+                "type": "integer"
+              },
+              "owner_token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id",
+              "owner_token",
+              "emitter_handle_id",
+              "emitter_name",
+              "attribute_name"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_token",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "emitter_handle_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "emitter_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "attribute_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "int32",
+              "default": "0",
+              "has_default": true,
+              "json_schema": {
+                "type": "integer"
+              },
+              "kind": "integer",
+              "name": "frame_index",
+              "type": "int"
+            },
+            {
+              "cpp_type": "int32",
+              "default": "16",
+              "has_default": true,
+              "json_schema": {
+                "type": "integer"
+              },
+              "kind": "integer",
+              "name": "max_samples",
+              "type": "int"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "release_niagara_sim_cache_capture": {
+          "description": "Release Niagara Sim Cache Capture",
+          "doc": "X.release_niagara_sim_cache_capture(capture_id, owner_token) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_id": {
+                "type": "string"
+              },
+              "owner_token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture_id",
+              "owner_token"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "capture_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_token",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
           "risk": "ReadOnly",
           "save_behavior": "Never",
           "supports_dry_run": false,
@@ -63079,6 +63656,258 @@
           "provider": "UnrealBridge",
           "returns": "str",
           "risk": "Mutating",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "start_niagara_sim_cache_capture": {
+          "description": "Observe existing simulation ticks. Does not activate, reset, pause or advance any component.",
+          "doc": "X.start_niagara_sim_cache_capture(world_handle, component_path, owner_token, num_frames=4, max_bytes=16777216, max_seconds=5.000000) -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "component_path": {
+                "type": "string"
+              },
+              "max_bytes": {
+                "type": "integer"
+              },
+              "max_seconds": {
+                "type": "number"
+              },
+              "num_frames": {
+                "type": "integer"
+              },
+              "owner_token": {
+                "type": "string"
+              },
+              "world_handle": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "world_handle",
+              "component_path",
+              "owner_token"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "world_handle",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "component_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "owner_token",
+              "type": "str"
+            },
+            {
+              "cpp_type": "int32",
+              "default": "4",
+              "has_default": true,
+              "json_schema": {
+                "type": "integer"
+              },
+              "kind": "integer",
+              "name": "num_frames",
+              "type": "int"
+            },
+            {
+              "cpp_type": "int32",
+              "default": "16777216",
+              "has_default": true,
+              "json_schema": {
+                "type": "integer"
+              },
+              "kind": "integer",
+              "name": "max_bytes",
+              "type": "int"
+            },
+            {
+              "cpp_type": "float",
+              "default": "5.000000",
+              "has_default": true,
+              "json_schema": {
+                "type": "number"
+              },
+              "kind": "number",
+              "name": "max_seconds",
+              "type": "float"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "ReadOnly",
+          "save_behavior": "Never",
+          "supports_dry_run": false,
+          "supports_idempotency": false
+        },
+        "transplant_niagara_emitter_instance": {
+          "description": "Copy a tuned emitter instance across Systems; exact handle and display name are both required. Never saves.",
+          "doc": "X.transplant_niagara_emitter_instance(source_system_path, source_emitter_handle_id, source_emitter_name, destination_system_path, destination_emitter_name, copy_user_parameters=True, request_compile=True, dependency_map_json=\"{}\") -> str",
+          "engine_min": "5.3.0",
+          "execution": "GameThreadShort",
+          "input_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "b_copy_user_parameters": {
+                "type": "boolean"
+              },
+              "b_request_compile": {
+                "type": "boolean"
+              },
+              "dependency_map_json": {
+                "type": "string"
+              },
+              "destination_emitter_name": {
+                "type": "string"
+              },
+              "destination_system_path": {
+                "type": "string"
+              },
+              "source_emitter_handle_id": {
+                "type": "string"
+              },
+              "source_emitter_name": {
+                "type": "string"
+              },
+              "source_system_path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_system_path",
+              "source_emitter_handle_id",
+              "source_emitter_name",
+              "destination_system_path",
+              "destination_emitter_name"
+            ],
+            "type": "object"
+          },
+          "introduced_version": "2.0.0",
+          "output_schema": {
+            "type": "string"
+          },
+          "params": [
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "source_system_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "source_emitter_handle_id",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "source_emitter_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "destination_system_path",
+              "type": "str"
+            },
+            {
+              "cpp_type": "FString",
+              "default": null,
+              "has_default": false,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "destination_emitter_name",
+              "type": "str"
+            },
+            {
+              "cpp_type": "",
+              "default": "True",
+              "has_default": true,
+              "json_schema": {},
+              "kind": "unknown",
+              "name": "copy_user_parameters",
+              "type": "Any"
+            },
+            {
+              "cpp_type": "",
+              "default": "True",
+              "has_default": true,
+              "json_schema": {},
+              "kind": "unknown",
+              "name": "request_compile",
+              "type": "Any"
+            },
+            {
+              "cpp_type": "FString",
+              "default": "\"{}\"",
+              "has_default": true,
+              "json_schema": {
+                "type": "string"
+              },
+              "kind": "string",
+              "name": "dependency_map_json",
+              "type": "str"
+            }
+          ],
+          "provider": "UnrealBridge",
+          "returns": "str",
+          "risk": "AssetWrite",
           "save_behavior": "Never",
           "supports_dry_run": false,
           "supports_idempotency": false
@@ -80519,11 +81348,11 @@
       }
     }
   },
-  "manifest_hash": "17781465b25e65bb216e4cf20980e8b93a4b27644535bf5c7b1e78ac3aa8a50c",
-  "plugin_version": "3.3.1",
-  "project_path": "C:/dev/ShooterRoyal_5_8_DirectUpgrade/ShooterRoyal.uproject",
+  "manifest_hash": "1edf0e1ffd637c42b3acca313584a0dffae5aee8b6822fbf50ca5e44661f8986",
+  "plugin_version": "3.3.2",
+  "project_path": "C:/dev/UnrealBridge/.tmp/artifacts/bridge-full-upgrade/UnrealBridge-Win64-Development/latest/HostProject/HostProject.uproject",
   "protocol_version": 2,
-  "registry_hash": "3e9c16c2503229411c0af54fa8de980f",
+  "registry_hash": "fda2dc4cb0b321b287c254085da358c7",
   "registry_version": 1,
   "structs": {
     "BridgeAbilityCooldownInfo": [
@@ -82091,6 +82920,7 @@
     "BridgeMetaSoundGraphInfo": [
       "asset_class",
       "dependency_count",
+      "details_json",
       "document_version",
       "error",
       "found",
@@ -83602,5 +84432,5 @@
       "velocity"
     ]
   },
-  "ue_version": "5.8.2-56702186+++UE5+Release-5.8"
+  "ue_version": "5.8.3-58210709+++UE5+Release-5.8"
 }

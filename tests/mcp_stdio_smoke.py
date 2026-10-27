@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -54,12 +55,16 @@ async def _run(project: str | None) -> dict[str, Any]:
         command=sys.executable,
         args=[str(SERVER_PATH)],
         cwd=REPO_ROOT,
+        env=(
+            {"UNREALBRIDGE_ARTIFACT_ROOT": os.environ["UNREALBRIDGE_ARTIFACT_ROOT"]}
+            if os.environ.get("UNREALBRIDGE_ARTIFACT_ROOT") else None
+        ),
     )
     async with stdio_client(params) as (read_stream, write_stream):
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             assert initialized.serverInfo.name == "unreal-bridge"
-            assert initialized.serverInfo.version == "3.3.1"
+            assert initialized.serverInfo.version == "3.3.2"
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
@@ -162,14 +167,14 @@ async def _run(project: str | None) -> dict[str, Any]:
                 )
             )
             artifact = spilled.get("artifact")
-            assert artifact and artifact["artifact_id"] and artifact["sha256"]
+            assert artifact and artifact["artifact_id"] and artifact["sha256"], spilled
             chunk = _payload(
                 await session.call_tool(
                     "bridge_read_artifact",
                     {"artifact_id": artifact["artifact_id"], "max_bytes": 128},
                 )
             )
-            assert chunk["success"] is True
+            assert chunk["success"] is True, chunk
             assert chunk["artifact_id"] == artifact["artifact_id"]
             assert chunk["size_bytes"] == artifact["size_bytes"]
 

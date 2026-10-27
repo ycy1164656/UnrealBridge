@@ -129,7 +129,7 @@ FString UUnrealBridgeEvidenceLibrary::BeginViewportCapture(const FString& Reques
 	bool bAllowed=false;double Fps=0,Duration=0,MaxBytes=0;
 	if(Get(Request,TEXT("schema"))!=TEXT("unrealbridge.capture.v1") || !Request->TryGetBoolField(TEXT("allow_capture"),bAllowed) || !bAllowed
 		|| !Request->TryGetNumberField(TEXT("fps"),Fps) || !Request->TryGetNumberField(TEXT("duration_seconds"),Duration) || !Request->TryGetNumberField(TEXT("max_bytes"),MaxBytes)
-		|| !FMath::IsFinite(Fps) || !FMath::IsFinite(Duration) || !FMath::IsFinite(MaxBytes) || Fps<1 || Fps>30 || Fps!=FMath::FloorToDouble(Fps) || Duration<1 || Duration>20 || MaxBytes<1024*1024 || MaxBytes>256*1024*1024)
+		|| !FMath::IsFinite(Fps) || !FMath::IsFinite(Duration) || !FMath::IsFinite(MaxBytes) || Fps<1 || Fps>30 || Fps!=FMath::FloorToDouble(Fps) || Duration<1 || Duration>90 || MaxBytes<1024*1024 || MaxBytes>256*1024*1024)
 		return Failure(TEXT("Explicit bounded capture permission required"));
 	const FString Id=Get(Request,TEXT("capture_id")),Owner=Get(Request,TEXT("owner_id"));
 	if(!Identifier(Id) || !Identifier(Owner))return Failure(TEXT("Invalid capture identity"));

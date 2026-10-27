@@ -48,6 +48,9 @@ namespace BridgePerfSampler
 	void Shutdown();
 }
 
+namespace BridgeAudioCapture { void Shutdown(); }
+namespace BridgeNiagaraCapture { void Shutdown(); }
+
 namespace BridgePerfAsyncImpl
 {
 	void Shutdown();
@@ -342,6 +345,8 @@ void FUnrealBridgeModule::StartupModule()
 
 void FUnrealBridgeModule::ShutdownModule()
 {
+	BridgeAudioCapture::Shutdown();
+	BridgeNiagaraCapture::Shutdown();
 	BridgeEvidenceCapture::Shutdown();
 	BridgeAudioSession::Shutdown();
 	BridgeSlateInput::Shutdown();

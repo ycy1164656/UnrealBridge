@@ -16,12 +16,12 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-09-29T00:59:00+00:00'
-_UE_VERSION = '5.8.2-56702186+++UE5+Release-5.8'
+_GENERATED_AT = '2026-10-27T03:07:27+00:00'
+_UE_VERSION = '5.8.3-58210709+++UE5+Release-5.8'
 _PROTOCOL_VERSION = 2
-_PLUGIN_VERSION = '3.3.1'
-_REGISTRY_HASH = '3e9c16c2503229411c0af54fa8de980f'
-_MANIFEST_HASH = '17781465b25e65bb216e4cf20980e8b93a4b27644535bf5c7b1e78ac3aa8a50c'
+_PLUGIN_VERSION = '3.3.2'
+_REGISTRY_HASH = 'fda2dc4cb0b321b287c254085da358c7'
+_MANIFEST_HASH = '1edf0e1ffd637c42b3acca313584a0dffae5aee8b6822fbf50ca5e44661f8986'
 
 def verify_runtime_compatibility():
     """Fail fast when the generated wrapper no longer matches the loaded plugin."""
@@ -749,9 +749,19 @@ class Audio:
         return unreal.UnrealBridgeAudioLibrary.begin_audio_mix_session(request_json)
 
     @staticmethod
+    def begin_audio_output_capture(*, request_json):
+        """X.begin_audio_output_capture(request_json) -> str"""
+        return unreal.UnrealBridgeAudioLibrary.begin_audio_output_capture(request_json)
+
+    @staticmethod
     def end_audio_mix_session(*, session_id, world_handle):
         """X.end_audio_mix_session(session_id, world_handle) -> str"""
         return unreal.UnrealBridgeAudioLibrary.end_audio_mix_session(session_id, world_handle)
+
+    @staticmethod
+    def end_audio_output_capture(*, capture_id, owner_token):
+        """X.end_audio_output_capture(capture_id, owner_token) -> str"""
+        return unreal.UnrealBridgeAudioLibrary.end_audio_output_capture(capture_id, owner_token)
 
     @staticmethod
     def get_audio_mix_context(*, world_handle):
@@ -762,6 +772,11 @@ class Audio:
     def get_audio_mix_session(*, session_id, world_handle):
         """X.get_audio_mix_session(session_id, world_handle) -> str"""
         return unreal.UnrealBridgeAudioLibrary.get_audio_mix_session(session_id, world_handle)
+
+    @staticmethod
+    def get_audio_output_capture(*, capture_id, owner_token):
+        """X.get_audio_output_capture(capture_id, owner_token) -> str"""
+        return unreal.UnrealBridgeAudioLibrary.get_audio_output_capture(capture_id, owner_token)
 
     @staticmethod
     def get_audio_routing_model(*, asset_paths_json):
@@ -5285,9 +5300,19 @@ class Niagara:
         return unreal.UnrealBridgeNiagaraLibrary.get_niagara_user_parameters(system_path)
 
     @staticmethod
+    def inspect_niagara_emitter_instance(*, system_path, emitter_handle_id, emitter_name, include_evidence=False):
+        """X.inspect_niagara_emitter_instance(system_path, emitter_handle_id, emitter_name, include_evidence=False) -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.inspect_niagara_emitter_instance(system_path, emitter_handle_id, emitter_name, include_evidence)
+
+    @staticmethod
     def list_niagara_components(*, actor_label=""):
         """X.list_niagara_components(actor_label="") -> Array[BridgeNiagaraComponentInfo]"""
         return unreal.UnrealBridgeNiagaraLibrary.list_niagara_components(actor_label)
+
+    @staticmethod
+    def list_niagara_sim_cache_attributes(*, capture_id, owner_token, emitter_handle_id, emitter_name, frame_index=0):
+        """X.list_niagara_sim_cache_attributes(capture_id, owner_token, emitter_handle_id, emitter_name, frame_index=0) -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.list_niagara_sim_cache_attributes(capture_id, owner_token, emitter_handle_id, emitter_name, frame_index)
 
     @staticmethod
     def list_niagara_systems(*, package_path="/Game", max_results=500):
@@ -5295,9 +5320,24 @@ class Niagara:
         return unreal.UnrealBridgeNiagaraLibrary.list_niagara_systems(package_path, max_results)
 
     @staticmethod
+    def poll_niagara_sim_cache_capture(*, capture_id, owner_token):
+        """X.poll_niagara_sim_cache_capture(capture_id, owner_token) -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.poll_niagara_sim_cache_capture(capture_id, owner_token)
+
+    @staticmethod
     def poll_niagara_system_compilation(*, system_path):
         """X.poll_niagara_system_compilation(system_path) -> BridgeNiagaraCompileStatus"""
         return unreal.UnrealBridgeNiagaraLibrary.poll_niagara_system_compilation(system_path)
+
+    @staticmethod
+    def read_niagara_sim_cache_attribute(*, capture_id, owner_token, emitter_handle_id, emitter_name, attribute_name, frame_index=0, max_samples=16):
+        """X.read_niagara_sim_cache_attribute(capture_id, owner_token, emitter_handle_id, emitter_name, attribute_name, frame_index=0, max_samples=16) -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.read_niagara_sim_cache_attribute(capture_id, owner_token, emitter_handle_id, emitter_name, attribute_name, frame_index, max_samples)
+
+    @staticmethod
+    def release_niagara_sim_cache_capture(*, capture_id, owner_token):
+        """X.release_niagara_sim_cache_capture(capture_id, owner_token) -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.release_niagara_sim_cache_capture(capture_id, owner_token)
 
     @staticmethod
     def request_niagara_system_compile(*, system_path, force=True):
@@ -5338,6 +5378,16 @@ class Niagara:
     def spawn_niagara_system_at_location(*, system_path, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000]):
         """X.spawn_niagara_system_at_location(system_path, location, rotation=[0.000000, 0.000000, 0.000000], scale=[1.000000, 1.000000, 1.000000]) -> str"""
         return unreal.UnrealBridgeNiagaraLibrary.spawn_niagara_system_at_location(system_path, location, rotation, scale)
+
+    @staticmethod
+    def start_niagara_sim_cache_capture(*, world_handle, component_path, owner_token, num_frames=4, max_bytes=16777216, max_seconds=5.000000):
+        """X.start_niagara_sim_cache_capture(world_handle, component_path, owner_token, num_frames=4, max_bytes=16777216, max_seconds=5.000000) -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.start_niagara_sim_cache_capture(world_handle, component_path, owner_token, num_frames, max_bytes, max_seconds)
+
+    @staticmethod
+    def transplant_niagara_emitter_instance(*, source_system_path, source_emitter_handle_id, source_emitter_name, destination_system_path, destination_emitter_name, copy_user_parameters=True, request_compile=True, dependency_map_json="{}"):
+        """X.transplant_niagara_emitter_instance(source_system_path, source_emitter_handle_id, source_emitter_name, destination_system_path, destination_emitter_name, copy_user_parameters=True, request_compile=True, dependency_map_json="{}") -> str"""
+        return unreal.UnrealBridgeNiagaraLibrary.transplant_niagara_emitter_instance(source_system_path, source_emitter_handle_id, source_emitter_name, destination_system_path, destination_emitter_name, copy_user_parameters, request_compile, dependency_map_json)
 
     @staticmethod
     def validate_niagara_system_graph(*, system_path):

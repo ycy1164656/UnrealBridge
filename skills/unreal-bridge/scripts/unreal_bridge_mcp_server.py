@@ -639,7 +639,7 @@ mcp = FastMCP(
 # FastMCP 1.x does not expose a public server-version constructor argument.
 # The adapter is intentionally pinned below MCP 2, so set the low-level field
 # once to keep initialize/serverInfo aligned with the UnrealBridge release.
-mcp._mcp_server.version = "3.3.1"
+mcp._mcp_server.version = "3.3.2"
 
 
 @mcp.tool()
@@ -4345,7 +4345,7 @@ def _validate_metasound_graph_ops(
         missing = [
             field
             for field in sorted(required[op_name])
-            if field not in raw or raw[field] in (None, "")
+            if field not in raw or raw[field] is None or (raw[field] == "" and not (field == "value" and raw.get("literal_type") in {"Default", "String", "Object"}))
         ]
         if missing:
             raise ValueError(
@@ -4368,6 +4368,17 @@ def _validate_metasound_graph_ops(
         for field, value in item.items():
             if field not in {"op", "major_version", "x", "y"} and not isinstance(value, str):
                 raise ValueError(f"ops[{index}].{field} must be a string")
+        if op_name in {"set_default", "add_input", "add_output"}:
+            import math
+            import re
+            kind, value = item.get("literal_type", "Default"), item.get("value", "")
+            if kind == "Bool" and value not in {"true", "false"}:
+                raise ValueError(f"ops[{index}]: Bool must be true or false")
+            if kind == "Int" and (not re.fullmatch(r"[+-]?[0-9]+", value) or not -(2**31) <= int(value) < 2**31):
+                raise ValueError(f"ops[{index}]: Int must be an exact int32")
+            if kind == "Float" and (not re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", value)
+                                    or not math.isfinite(float(value)) or abs(float(value)) > 3.4028234663852886e38):
+                raise ValueError(f"ops[{index}]: Float must be finite float32")
         normalized.append(item)
     return normalized
 
@@ -4463,6 +4474,7 @@ def _metasound_graph_intent_code(payload: Dict[str, Any]) -> str:
                 "outputs": [_member(item) for item in (_attr(value, "outputs", []) or [])],
                 "pages": [_page(item) for item in (_attr(value, "pages", []) or [])],
                 "nodes": [_node(item) for item in (_attr(value, "nodes", []) or [])],
+                "details": json.loads(str(_attr(value, "details_json", "") or '{{}}')),
                 "validation_result": str(_attr(value, "validation_result", "")),
                 "validation_messages": list(_attr(value, "validation_messages", []) or []),
                 "error": str(_attr(value, "error", "")),
@@ -4481,7 +4493,18 @@ def _metasound_graph_intent_code(payload: Dict[str, Any]) -> str:
             after_inputs = set(_names(after.get("inputs", [])))
             before_outputs = set(_names(before.get("outputs", [])))
             after_outputs = set(_names(after.get("outputs", [])))
+            def canonical(rows):
+                return sorted(json.dumps(row, sort_keys=True, separators=(",", ":")) for row in rows)
+            bd, ad = before.get("details", {{}}), after.get("details", {{}})
+            complete = bd.get("complete") is True and ad.get("complete") is True
+            semantic = {{}}
+            for key in ("pins", "edges", "page_defaults", "variables"):
+                old, new = set(canonical(bd.get(key, []))), set(canonical(ad.get(key, [])))
+                semantic[key] = {{"removed": [json.loads(x) for x in sorted(old-new)], "added": [json.loads(x) for x in sorted(new-old)]}}
             return {{
+                "semantic_comparison_complete": complete,
+                "semantic_changed": (any(v["added"] or v["removed"] for v in semantic.values()) or canonical(before.get("inputs", [])) != canonical(after.get("inputs", [])) or canonical(before.get("nodes", [])) != canonical(after.get("nodes", []))) if complete else None,
+                "semantic_diff": semantic,
                 "node_delta": after.get("total_node_count", 0) - before.get("total_node_count", 0),
                 "edge_delta": after.get("total_edge_count", 0) - before.get("total_edge_count", 0),
                 "added_node_ids": sorted(after_nodes - before_nodes),

@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-09-29T00:59:00+00:00",
-  "manifest_hash": "17781465b25e65bb216e4cf20980e8b93a4b27644535bf5c7b1e78ac3aa8a50c",
-  "plugin_version": "3.3.1",
+  "generated_at": "2026-10-27T03:07:27+00:00",
+  "manifest_hash": "1edf0e1ffd637c42b3acca313584a0dffae5aee8b6822fbf50ca5e44661f8986",
+  "plugin_version": "3.3.2",
   "protocol_version": 2,
-  "registry_hash": "3e9c16c2503229411c0af54fa8de980f",
-  "wrapper_version": "17781465b25e65bb"
+  "registry_hash": "fda2dc4cb0b321b287c254085da358c7",
+  "wrapper_version": "1edf0e1ffd637c42"
 }
