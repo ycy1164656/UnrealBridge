@@ -13,19 +13,23 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def install(checkout, destination, *, apply=False, replace_customized=False):
+def install(checkout, destination, *, apply=False, replace_customized=False, skill='unreal-bridge'):
     checkout = Path(checkout).resolve(strict=True)
     destination = Path(destination).absolute()
     # Reject junctions at every existing ancestor before writing user files.
     for ancestor in (destination, *destination.parents):
         if ancestor.is_symlink() or getattr(ancestor, 'is_junction', lambda: False)():
             raise ValueError('Skill destination cannot traverse a link or junction')
-    canonical = checkout / 'skills/unreal-bridge'
-    for source in ('SKILL.md', 'scripts/bridge.py', 'scripts/bridge_manifest.json'):
+    sources = {'unreal-bridge': ('SKILL.md', 'scripts/bridge.py', 'scripts/bridge_manifest.json'),
+               'shooterroyal-vfx': ('SKILL.md', 'scripts/query_vfx.py', 'scripts/project_paths.py')}
+    if skill not in sources:
+        raise ValueError(f'Unsupported skill: {skill}')
+    canonical = checkout / 'skills' / skill
+    for source in sources[skill]:
         if not (canonical / source).is_file():
             raise ValueError(f'Missing canonical source: {source}')
-    template = checkout / 'tools/templates/unreal-bridge-router.md'
-    if not template.exists():  # Older checkouts keep their former template contract.
+    template = checkout / 'tools/templates' / f'{skill}-router.md'
+    if not template.exists() and skill == 'unreal-bridge':  # Older checkouts keep their former template contract.
         template = checkout / '.codex/skills/unreal-bridge/SKILL.md'
     router = template.read_text(encoding='utf-8')
     data = router.replace('{{CHECKOUT}}', checkout.as_posix()).replace('{{SKILL}}', canonical.as_posix()).encode('utf-8')
@@ -67,12 +71,15 @@ def install(checkout, destination, *, apply=False, replace_customized=False):
 
 def main(default_destination=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--destination', type=Path, default=default_destination or Path.home() / '.agents/skills/unreal-bridge')
+    parser.add_argument('--skill', choices=('unreal-bridge', 'shooterroyal-vfx'), default='unreal-bridge')
+    parser.add_argument('--destination', type=Path)
     parser.add_argument('--apply', action='store_true', help='Default is preview only')
     parser.add_argument('--replace-customized', action='store_true', help='Task-authorized replacement, with backup')
     args = parser.parse_args()
-    print(json.dumps(install(Path(__file__).resolve().parents[1], args.destination,
-                             apply=args.apply, replace_customized=args.replace_customized), indent=2))
+    base = Path(default_destination).parent if default_destination else Path.home() / '.agents/skills'
+    destination = args.destination or base / args.skill
+    print(json.dumps(install(Path(__file__).resolve().parents[1], destination,
+                             apply=args.apply, replace_customized=args.replace_customized, skill=args.skill), indent=2))
 
 
 if __name__ == '__main__':

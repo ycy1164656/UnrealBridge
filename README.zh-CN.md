@@ -107,6 +107,8 @@ python tools/install_agent_skill.py --destination C:/path/to/client/skills/unrea
 
 默认目标为 `~/.agents/skills/unreal-bridge`；按客户端实际支持的技能目录设置 destination。安装器只写指向当前 checkout 的路由，先预览并保护自定义内容。现有 `install_codex_skill.py` 保留为同一安装器的兼容入口，默认 Codex 目录保持不变。MCP 或 CLI 接入不要求安装特定厂商的 skill。
 
+ShooterRoyal 的 VFX 技能也在本仓库 `skills/shooterroyal-vfx/` 维护和版本管理，包含选材工作流、参考与查询/控制证据脚本；项目目录、素材、配方与验收记录仍在 ShooterRoyal。可用 `python tools/install_agent_skill.py --skill shooterroyal-vfx --destination C:/path/to/project/.agents/skills/shooterroyal-vfx` 预览同名路由，确认目标后加 `--apply`；替换已存在的项目技能须在授权范围内使用 `--replace-customized`，安装器先备份。独立调用脚本时传 `--project-root`，不依赖技能所在目录。
+
 ### 3. 安装插件
 
 修改 `sync_plugin.bat` 里的 `DST`，指向你 UE 项目的 `Plugins/` 目录：

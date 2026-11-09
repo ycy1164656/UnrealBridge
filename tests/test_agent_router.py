@@ -29,6 +29,29 @@ class AgentRouterTests(unittest.TestCase):
             self.assertFalse(INSTALLER.install(root, destination, apply=True)['changed'])
             self.assertFalse((destination / 'scripts').exists())
 
+    def test_vfx_router_uses_selected_skill_and_backs_up_existing_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'checkout'
+            canonical = root / 'skills/shooterroyal-vfx'
+            (canonical / 'scripts').mkdir(parents=True)
+            for name in ('SKILL.md', 'scripts/query_vfx.py', 'scripts/project_paths.py'):
+                (canonical / name).write_text('# canonical source')
+            template = root / 'tools/templates/shooterroyal-vfx-router.md'
+            template.parent.mkdir(parents=True)
+            template.write_text('VFX {{SKILL}}')
+            destination = Path(directory) / 'project/.agents/skills/shooterroyal-vfx'
+            destination.mkdir(parents=True)
+            (destination / 'SKILL.md').write_text('original project skill')
+            preview = INSTALLER.install(root, destination, skill='shooterroyal-vfx')
+            self.assertTrue(preview['customized'])
+            self.assertEqual((destination / 'SKILL.md').read_text(), 'original project skill')
+            applied = INSTALLER.install(root, destination, skill='shooterroyal-vfx',
+                                        apply=True, replace_customized=True)
+            self.assertEqual((Path(applied['backup']) / 'SKILL.md').read_text(), 'original project skill')
+            self.assertIn(canonical.as_posix(), (destination / 'SKILL.md').read_text())
+            self.assertFalse(INSTALLER.install(root, destination, skill='shooterroyal-vfx', apply=True)['changed'])
+            self.assertFalse((destination / 'scripts').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

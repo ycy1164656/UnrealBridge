@@ -27,6 +27,7 @@ Follow the target project's AGENTS/authorized scope. Previously granted scope pe
 
 ## Task-specific references
 
+- ShooterRoyal VFX selection and iteration use the separately maintained [shooterroyal-vfx skill](../shooterroyal-vfx/SKILL.md). Its workflow and scripts are versioned in this checkout; project catalogs, assets, recipes and acceptance records remain in the target project.
 - CLI setup/discovery, wrappers/preflight, durable Jobs, encoding and host-adapter details: [client guide](references/bridge-client-guide.md).
 - World/Actor identity, project context/impact, compact graphs, owned PIE and background Trace: [reliability workflows](references/bridge-reliability-workflows.md). Synchronous Trace summary APIs are retired.
 - Montage/Notify, BT, audio routing, pointer input, topology/rejoin and fixed-condition scenarios: [scoped upgrade API](references/bridge-scoped-upgrade-api.md).

@@ -43,7 +43,7 @@
       "TIMER"
     ]
   },
-  "generated_at": "2026-10-27T03:07:27+00:00",
+  "generated_at": "2026-10-29T16:19:37+00:00",
   "libraries": {
     "UnrealBridgeAILibrary": {
       "functions": {
@@ -81348,11 +81348,11 @@
       }
     }
   },
-  "manifest_hash": "1edf0e1ffd637c42b3acca313584a0dffae5aee8b6822fbf50ca5e44661f8986",
+  "manifest_hash": "81fc22c942313b983f2bd2bcd0e08235e23cab11ea55cdfcf1b6a1afade5b39e",
   "plugin_version": "3.3.2",
-  "project_path": "C:/dev/UnrealBridge/.tmp/artifacts/bridge-full-upgrade/UnrealBridge-Win64-Development/latest/HostProject/HostProject.uproject",
+  "project_path": "C:/dev/ShooterRoyal_5_8_DirectUpgrade/ShooterRoyal.uproject",
   "protocol_version": 2,
-  "registry_hash": "fda2dc4cb0b321b287c254085da358c7",
+  "registry_hash": "0e50eb642eef0be26419aac2d68d1301",
   "registry_version": 1,
   "structs": {
     "BridgeAbilityCooldownInfo": [
@@ -84432,5 +84432,5 @@
       "velocity"
     ]
   },
-  "ue_version": "5.8.3-58210709+++UE5+Release-5.8"
+  "ue_version": "5.8.2-56702186+++UE5+Release-5.8"
 }
