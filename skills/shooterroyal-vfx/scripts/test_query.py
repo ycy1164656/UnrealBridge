@@ -9,6 +9,10 @@ class QueryBehavior(unittest.TestCase):
         self.d=json.loads(q.CATALOG.read_text(encoding='utf8'))
     def test_current_unique_facts(self):
         q.validate(self.d)
+    def test_real_r6_historical_review_is_recalled(self):
+        result=q.query(self.d,{'id':'VFX-4AED47FB','reviewed':True})
+        self.assertEqual(len(result),1)
+        self.assertEqual(result[0]['visual_state'],'timestamped_frames_reviewed')
     def test_legacy_ids_when_original_scan_backup_is_available(self):
         baseline=q.ROOT/'.tmp/codex-backups/20261009-vfx-367'/q.CATALOG.name
         if not baseline.is_file():
@@ -65,6 +69,27 @@ class ValidityBehavior(unittest.TestCase):
             'dependency_coverage':{'state':'complete','scope':'isolated fixture preview'}}
     def result(self):
         return q.query({'particles':[self.a]}, {}, self.root)[0]
+    def test_recorded_unseen_stale_and_current_filters(self):
+        for state in ['recorded','unseen','not_individually_viewed','historical']:
+            self.a['visual_state']=state
+            self.assertFalse(q.query({'particles':[self.a]},{'reviewed':True},self.root))
+            self.assertFalse(q.observation_is_current(self.a,self.root))
+        self.a['visual_state']='timestamped_frames_reviewed'
+        self.assertTrue(q.query({'particles':[self.a]},{'reviewed':True},self.root))
+        self.assertTrue(q.observation_is_current(self.a,self.root))
+        (self.root/'material.fixture').write_bytes(b'changed')
+        self.assertTrue(q.query({'particles':[self.a]},{'reviewed':True},self.root))
+        self.assertFalse(q.observation_is_current(self.a,self.root))
+    def test_tags_require_viewing_and_time_addressed_provenance(self):
+        self.a['observed_tags']={'roles':['projectile_body'],'forms':['spindle'],'motions':['forward']}
+        self.assertFalse(self.result()['observed_tags']['forms'])
+        self.a['observed_tags']['reviewed_frames']=[{'media_id':'sample','pts_seconds':2.5}]
+        result=q.query({'particles':[self.a]},{'role':'projectile_body','form':['spindle']},self.root)[0]
+        self.assertEqual(result['observed_tags']['forms'],['spindle'])
+        self.assertTrue(result['observed_tag_provenance'])
+        self.assertIn('observed forms preference',result['reasons'])
+        self.a['visual_state']='not_individually_viewed'
+        self.assertFalse(self.result()['observed_tags']['forms'])
     def test_matching_disk_does_not_certify_editor_or_human(self):
         v=self.result()['observation_validity']
         self.assertEqual(v['disk_state'],'current')

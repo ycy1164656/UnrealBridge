@@ -210,6 +210,43 @@ def existing_binding_kind(value: Any) -> str:
     return "Literal" if paths else "Unknown"
 
 
+EMITTER_REVISION_FIELDS = ('graph_hash', 'renderer_hash', 'event_hash',
+                           'data_interface_hash', 'rapid_iteration_hash')
+
+
+def require_unique_module(topology, module_name):
+    modules=topology.get('returnValue',{}).get('modules',[])
+    matches=[m for m in modules if m.get('moduleName')==module_name]
+    if not module_name or len(matches)!=1:
+        raise ValueError('NIAGARA_MODULE_IDENTITY_CONFLICT: module missing or ambiguous in exact script stack')
+    return matches[0]
+
+
+def emitter_revision_guard_code(preconditions):
+    """Run immediately before the synchronous batch, on the same GameThread."""
+    normalized=[]
+    for condition in preconditions or []:
+        fields=condition.get('expected_revision',{})
+        if set(fields)!=set(EMITTER_REVISION_FIELDS) or not all(isinstance(v,str) and v for v in fields.values()):
+            raise ValueError('expected_revision requires all five emitter fingerprint fields')
+        if not condition.get('emitter_name') or not condition.get('emitter_handle_id'):
+            raise ValueError('expected revision requires exact emitter name and handle')
+        package_from_object_path(condition['system_path'])
+        normalized.append(condition)
+    payload=json.dumps(normalized,sort_keys=True)
+    return (
+        f"_niagara_conditions=json.loads({payload!r})\n"
+        "for _condition in _niagara_conditions:\n"
+        "    _structure=unreal.UnrealBridgeNiagaraLibrary.get_niagara_system_structure(_condition['system_path'])\n"
+        "    _matches=[e for e in _structure.emitters if str(e.name)==_condition['emitter_name']]\n"
+        "    if len(_matches)!=1 or str(_matches[0].handle_id).lower()!=_condition['emitter_handle_id'].lower():\n"
+        "        raise RuntimeError('NIAGARA_IDENTITY_CONFLICT: emitter missing, replaced or ambiguous')\n"
+        "    _actual=json.loads(unreal.UnrealBridgeNiagaraLibrary.inspect_niagara_emitter_instance(_condition['system_path'],_condition['emitter_handle_id'],_condition['emitter_name'],False))\n"
+        "    if not _actual.get('ok') or any(_actual.get(k)!=v for k,v in _condition['expected_revision'].items()):\n"
+        "        raise RuntimeError('NIAGARA_REVISION_CONFLICT: stale emitter edit plan; no transaction started')\n"
+    )
+
+
 def emitter_identity_guard_code(
     system_path: str,
     emitter_name: str,
@@ -246,6 +283,9 @@ __all__ = [
     "add_user_variables_call",
     "dynamic_input_data",
     "emitter_identity_guard_code",
+    "emitter_revision_guard_code",
+    "EMITTER_REVISION_FIELDS",
+    "require_unique_module",
     "existing_binding_kind",
     "linked_input_data",
     "literal_input_data",

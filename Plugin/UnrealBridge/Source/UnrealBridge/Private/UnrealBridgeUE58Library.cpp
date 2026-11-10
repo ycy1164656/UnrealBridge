@@ -1572,6 +1572,9 @@ FString UUnrealBridgeUE58Library::ExecuteOfficialTransactionalToolsetBatch(
 					TEXT("json_calls[%d] %s.%s returned asynchronously; transactional workflows require immediate completion"),
 					Index, *Call.ToolsetName, *Call.ToolName));
 			Result->SetNumberField(TEXT("failed_call_index"), Index);
+			Result->SetArrayField(TEXT("calls"), CallResults);
+			Result->SetNumberField(TEXT("completed_call_count"), CallResults.Num());
+			Result->SetStringField(TEXT("failure_phase"), TEXT("apply"));
 			Result->SetObjectField(TEXT("change_set"), UE58_ChangeSetJson(Rollback));
 			Result->SetStringField(
 				TEXT("side_effect_state"),
@@ -1596,6 +1599,9 @@ FString UUnrealBridgeUE58Library::ExecuteOfficialTransactionalToolsetBatch(
 					TEXT("json_calls[%d] %s.%s failed: %s"),
 					Index, *Call.ToolsetName, *Call.ToolName, *ToolError));
 			Result->SetNumberField(TEXT("failed_call_index"), Index);
+			Result->SetArrayField(TEXT("calls"), CallResults);
+			Result->SetNumberField(TEXT("completed_call_count"), CallResults.Num());
+			Result->SetStringField(TEXT("failure_phase"), TEXT("apply"));
 			Result->SetObjectField(TEXT("change_set"), UE58_ChangeSetJson(Rollback));
 			Result->SetStringField(
 				TEXT("side_effect_state"),

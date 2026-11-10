@@ -22,7 +22,7 @@
 
 UnrealBridge is an Unreal Engine editor bridging layer built for AI Agents. It provides a typed operation surface for core scenarios such as animation-asset introspection, reactive event subscription, asset search and reference analysis, and automatic layout of Blueprint graphs. The Agent issues queries and modifications against a locally running editor instance; every change takes effect in real time, is bounded by the transaction system, and is undoable.
 
-> **Current version: 3.3.2, protocol v2.** Adds tuned Niagara emitter transplantation, bounded GPU SimCache inspection and continuous game audio/video evidence. See the [3.3.2 release record](docs/unrealbridge-3.3.2-release-notes.md) for actual validation and limitations. The canonical skill is `skills/unreal-bridge`; `.claude` is an unmaintained historical copy.
+> **Current version: 3.4.0, protocol v2.** Adds exact Niagara emitter-revision and module-identity guards, apply-failure receipts, and evidence-backed historical VFX queries. Existing emitter transplantation, bounded GPU SimCache inspection and continuous game audio/video capture remain available. See the [3.4.0 release record](docs/unrealbridge-3.4.0-release-notes.md) for validation and limitations. The canonical skill is `skills/unreal-bridge`; `.claude` is an unmaintained historical copy.
 
 ## Highlights
 

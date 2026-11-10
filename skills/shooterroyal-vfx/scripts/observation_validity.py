@@ -4,6 +4,18 @@ import re
 from pathlib import Path
 
 
+REVIEWED_STATES = frozenset({
+    'reviewed', 'timestamped_frames_reviewed', 'reviewed_timestamped_frames',
+    'reviewed_timestamped_native_frames', 'reviewed_keyframes',
+    'observed_scoped_dynamic_frames', 'temporal_stills_inspected; human_pending',
+})
+
+
+def historically_reviewed(asset):
+    """Explicit viewing states; recordings and unspecified history are insufficient."""
+    return asset.get('visual_state', 'unseen') in REVIEWED_STATES
+
+
 def revision_matches(revisions, root):
     problems, checked = [], 0
     if not isinstance(revisions, list):
@@ -74,6 +86,7 @@ def observation_validity(asset, controls, root):
     if not complete:
         reasons.append({'state': 'unknown', 'reason': 'dependency_or_preview_coverage_incomplete'})
     return {'historical_observation': asset.get('visual_state', 'unseen'),
+            'historically_reviewed': historically_reviewed(asset),
             'disk_state': state, 'source_revision': source, 'dependency_revision': dependencies,
             'control_revisions': [{'record_id': c['record_id'], **c['revision_check']} for c in controls],
             'dependency_coverage': coverage_state, 'coverage_scope': coverage.get('scope'),

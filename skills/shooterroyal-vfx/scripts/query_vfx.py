@@ -1,7 +1,7 @@
 """Read-only catalog query. Unknown inferred tags remain exploratory candidates."""
 import argparse, json
 from pathlib import Path
-from observation_validity import revision_matches as check_revisions, observation_validity
+from observation_validity import revision_matches as check_revisions, observation_validity, historically_reviewed
 from project_paths import CATALOG_RELATIVE, project_root
 ROOT=project_root()
 CATALOG=ROOT/CATALOG_RELATIVE
@@ -26,10 +26,44 @@ def control_records(identity, field=None, root=ROOT, detail=False):
         result.append(record if detail else {k:record.get(k) for k in ['record_id','record_revision','asset_id','object_path','derived_asset_ids','derived_object_paths','tool_revision','controls','revision_check','record_file','evidence_root','evidence','human_state','limits']})
     return result
 def observation_is_current(asset, root=ROOT):
-    if asset.get('visual_state')!='reviewed':return False
+    if not historically_reviewed(asset):return False
     return observation_validity(asset,control_records(asset['id'],root=root),root)['disk_state']=='current'
+def observation_tag_index(root):
+    file=root/'docs/reference/data/vfx/observations.json'
+    index={}
+    if file.is_file():
+        for number,record in enumerate(json.loads(file.read_text(encoding='utf8'))):
+            if isinstance(record,dict) and isinstance(record.get('observed_tags'),dict):
+                index.setdefault(record.get('asset_id'),[]).append({
+                    **record['observed_tags'], 'reviewed_frames':record.get('reviewed_frames',[]),
+                    'source':f'docs/reference/data/vfx/observations.json#{number}'})
+    return index
+
+def observed_tags(asset, index):
+    result={key:[] for key in ('roles','forms','motions','elements')};provenance=[]
+    if not historically_reviewed(asset):return result,provenance
+    direct=asset.get('observed_tags')
+    records=index.get(asset['id'],[])+([{**direct,'source':'catalog.observed_tags'}] if isinstance(direct,dict) else [])
+    for tags in records:
+        frames=tags.get('reviewed_frames',[])
+        if not isinstance(frames,list):continue
+        evidence=[frame for frame in frames if isinstance(frame,dict)
+                  and (frame.get('path') or frame.get('media_id'))
+                  and any(isinstance(frame.get(key),(float,int)) and not isinstance(frame.get(key),bool)
+                          and frame[key]>=0 for key in ('seconds_after_action','pts_seconds','frame_number'))]
+        if not evidence:continue
+        accepted={}
+        for key in result:
+            values=tags.get(key,[])
+            if not isinstance(values,list):continue
+            accepted[key]=[canonical(value) for value in values if isinstance(value,str) and value]
+            result[key]=sorted(set(result[key]+accepted[key]))
+        provenance.append({'source':tags['source'],'tags':accepted,'reviewed_frames':evidence,
+                           'scope':'historical appearance; current revision checked separately'})
+    return result,provenance
+
 def query(catalog, q, root=ROOT):
-    results=[]
+    results=[];tag_index=observation_tag_index(root)
     for a in rows(catalog):
         path=a.get('object_path',a['path']); blob=(path+' '+a.get('name','')+' '+a.get('group','')).casefold()
         tags=a.get('inferred_tags',{}); role=q.get('role'); reasons=[]
@@ -38,32 +72,38 @@ def query(catalog, q, root=ROOT):
         if q.get('class_name') and q['class_name']!=a['class']:continue
         if q.get('source') and q['source']!=a.get('source_id'):continue
         if q.get('family') and q['family']!=a.get('family_id'):continue
-        if q.get('reviewed') and a.get('visual_state')!='reviewed':continue
+        if q.get('reviewed') and not historically_reviewed(a):continue
         if q.get('observed') and not observation_is_current(a,root):continue
         if q.get('sr_state') and a.get('sr_state','not_exercised')!=q['sr_state']:continue
         if q.get('text') and not all(canonical(t) in blob for t in q['text'].split()):continue
+        observed,provenance=observed_tags(a,tag_index)
+        effective={key:set(tags.get(key,[]))|set(observed[key]) for key in observed}
         if role:
-            roles=tags.get('roles',[])
+            roles=effective['roles']
             if roles and role not in roles:continue
-            reasons.append('inferred role match' if role in roles else 'unknown role: exploration')
-        form=any(canonical(t) in tags.get('forms',[]) for t in q.get('form',[]))
-        motion=any(canonical(t) in tags.get('motions',[]) for t in q.get('motion',[]))
-        element=bool(q.get('element') and canonical(q['element']) in tags.get('elements',[]))
-        if form:reasons.append('inferred form preference')
-        if motion:reasons.append('inferred motion preference')
-        if element:reasons.append('inferred element preference')
+            reasons.append('observed role match' if role in observed['roles'] else 'inferred role match' if role in roles else 'unknown role: exploration')
+        form=any(canonical(t) in effective['forms'] for t in q.get('form',[]))
+        motion=any(canonical(t) in effective['motions'] for t in q.get('motion',[]))
+        element=bool(q.get('element') and canonical(q['element']) in effective['elements'])
+        observed_match=bool(role and role in observed['roles'])
+        for key,terms,matched in [('forms',q.get('form',[]),form),('motions',q.get('motion',[]),motion),('elements',[q['element']] if q.get('element') else [],element)]:
+            if matched:
+                backed=any(canonical(term) in observed[key] for term in terms)
+                observed_match=observed_match or backed
+                reasons.append(('observed ' if backed else 'inferred ')+key+' preference')
         # Preferences rank evidence and recall; these are not aesthetic quality scores.
-        priority=(bool(role and role in tags.get('roles',[])),form,motion,element,a.get('visual_state')=='reviewed')
-        results.append((priority,a,reasons))
+        priority=(observed_match,bool(role and role in effective['roles']),form,motion,element,historically_reviewed(a))
+        results.append((priority,a,reasons,observed,provenance))
     results.sort(key=lambda x: (tuple(-int(v) for v in x[0]),x[1]['id']))
     selected=[];seen=set()
-    for _,a,reasons in results:
+    for _,a,reasons,observed,provenance in results:
         family=a.get('family_id',a['id'])
         if q.get('group_by_family',True) and not q.get('id') and not q.get('family') and family in seen:continue
         seen.add(family)
         validity=observation_validity(a,control_records(a['id'],root=root),root)
         selected.append({'asset_id':a['id'],'path':a.get('object_path',a['path']),'class':a['class'],'pack':a['group'],'family_id':family,
-                         'reasons':reasons,'inferred_tags':a.get('inferred_tags',{}),'availability':a.get('availability','unknown'),
+                         'reasons':reasons,'inferred_tags':a.get('inferred_tags',{}),'observed_tags':observed,
+                         'observed_tag_provenance':provenance,'availability':a.get('availability','unknown'),
                          'runtime_state':a.get('runtime_state','not_exercised'),'visual_state':a.get('visual_state','unseen'),
                          'sr_state':a.get('sr_state','not_exercised'),'human_state':a.get('human_state','pending'),
                          'entry_conditions':a.get('entry_conditions',{'state':'unknown'}),'media_ids':a.get('media_ids',[]),

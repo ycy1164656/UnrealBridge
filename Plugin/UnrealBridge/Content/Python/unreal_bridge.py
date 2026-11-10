@@ -16,12 +16,12 @@ structural rather than mnemonic.
 
 import unreal
 
-_GENERATED_AT = '2026-10-29T16:19:37+00:00'
-_UE_VERSION = '5.8.2-56702186+++UE5+Release-5.8'
+_GENERATED_AT = '2026-11-10T11:30:51+00:00'
+_UE_VERSION = '5.8.2-0+UE5'
 _PROTOCOL_VERSION = 2
-_PLUGIN_VERSION = '3.3.2'
-_REGISTRY_HASH = '0e50eb642eef0be26419aac2d68d1301'
-_MANIFEST_HASH = '81fc22c942313b983f2bd2bcd0e08235e23cab11ea55cdfcf1b6a1afade5b39e'
+_PLUGIN_VERSION = '3.4.0'
+_REGISTRY_HASH = '340b350126fa8afe2dd5aa4e50ba59b5'
+_MANIFEST_HASH = '818964193fcd8a1609d6c0e5e7839fa6c0d7cd39a9a362aa95b9df71e7efb709'
 
 def verify_runtime_compatibility():
     """Fail fast when the generated wrapper no longer matches the loaded plugin."""

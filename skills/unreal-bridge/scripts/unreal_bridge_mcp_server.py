@@ -75,6 +75,9 @@ from unreal_bridge_niagara import (  # noqa: E402
     package_from_object_path,
     rename_emitter_call,
     set_stack_input_call,
+    emitter_revision_guard_code,
+    EMITTER_REVISION_FIELDS,
+    require_unique_module,
     stack_item_reference,
     type_definition,
 )
@@ -639,7 +642,7 @@ mcp = FastMCP(
 # FastMCP 1.x does not expose a public server-version constructor argument.
 # The adapter is intentionally pinned below MCP 2, so set the low-level field
 # once to keep initialize/serverInfo aligned with the UnrealBridge release.
-mcp._mcp_server.version = "3.3.2"
+mcp._mcp_server.version = "3.4.0"
 
 
 @mcp.tool()
@@ -2277,6 +2280,7 @@ def bridge_call_official_transactional_batch(
     project: Optional[str] = None,
     token: Optional[str] = None,
     timeout: float = 120.0,
+    niagara_expected_emitters: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Execute 1-64 exact official calls atomically in one unsaved ChangeSet.
 
@@ -2433,6 +2437,13 @@ def bridge_call_official_transactional_batch(
         ).strip(),
         "niagara_user_parameter_renames": normalized_renames,
     }
+    try:
+        revision_guard = emitter_revision_guard_code(niagara_expected_emitters)
+        for condition in niagara_expected_emitters or []:
+            if package_from_object_path(condition['system_path']) not in targets:
+                raise ValueError('Niagara revision precondition is outside target_packages')
+    except (KeyError, TypeError, ValueError) as exc:
+        return {'success': False, 'phase': 'precondition', 'side_effect_state': 'none', 'error': str(exc)}
     encoded = base64.b64encode(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).decode("ascii")
@@ -2442,6 +2453,7 @@ def bridge_call_official_transactional_batch(
         import json
         import unreal
         _p = json.loads(base64.b64decode({encoded!r}).decode("utf-8"))
+        {revision_guard.rstrip().replace(chr(10), chr(10)+'        ')}
         _result = json.loads(
             unreal.UnrealBridgeUE58Library.execute_official_transactional_toolset_batch(
                 json.dumps(_p["calls"], ensure_ascii=False),
@@ -3057,12 +3069,20 @@ def _scenario_manager(
                 niagara_user_parameter_renames=list(
                     step.get("niagara_user_parameter_renames") or []
                 ),
+                niagara_expected_emitters=list(step.get("niagara_expected_emitters") or []),
                 endpoint=endpoint,
                 project=project,
                 token=token,
                 timeout=timeout,
             )
         elif step_type == "niagara_input_guard":
+            stack_ref=dict(step.get('stack_input_ref') or {})
+            stack_topology=bridge_call_domain_operation('niagara','GetScriptStackTopology',
+                {'scriptRef':{**stack_ref,'inputNameStack':[]}},run_timeout=timeout,
+                endpoint=endpoint,project=project,token=token,timeout=min(15.0,timeout))
+            stack_topology=_wait_scenario_job(stack_topology,deadline=deadline,
+                endpoint=endpoint,project=project,token=token)
+            require_unique_module((stack_topology.get('official_result') or {}).get('result') or {},stack_ref.get('moduleName'))
             submitted = bridge_call_domain_operation(
                 "niagara",
                 "GetStackInputData",
@@ -4784,6 +4804,7 @@ def _submit_niagara_mutation_scenario(
     readback_refs: Optional[List[Dict[str, Any]]] = None,
     extra_read_steps: Optional[List[Dict[str, Any]]] = None,
     user_parameter_renames: Optional[List[Dict[str, str]]] = None,
+    expected_emitters: Optional[List[Dict[str, Any]]] = None,
     endpoint: Optional[str],
     project: Optional[str],
     token: Optional[str],
@@ -4828,6 +4849,7 @@ def _submit_niagara_mutation_scenario(
             "niagara_user_parameter_renames": list(
                 user_parameter_renames or []
             ),
+            "niagara_expected_emitters": list(expected_emitters or []),
             "timeout": 300.0,
             "artifact": True,
         }
@@ -5093,7 +5115,17 @@ def _single_niagara_input_workflow(
     endpoint: Optional[str],
     project: Optional[str],
     token: Optional[str],
+    expected_emitter_revision: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
+    if expected_emitter_revision is None:
+        response = bridge_exec(
+            'import unreal\nprint(unreal.UnrealBridgeNiagaraLibrary.inspect_niagara_emitter_instance('
+            + ','.join(repr(v) for v in (system_path,emitter_handle_id,emitter_name,False)) + '))',
+            endpoint=endpoint,project=project,token=token,timeout=30.0)
+        snapshot = _last_json_output(response) or {}
+        if not snapshot.get('ok'):
+            return {'success':False,'phase':'precondition','side_effect_state':'none','error':snapshot.get('error','Cannot inspect exact emitter')}
+        expected_emitter_revision={field:snapshot[field] for field in EMITTER_REVISION_FIELDS}
     stack_ref = stack_item_reference(
         system_path,
         emitter_name=emitter_name,
@@ -5117,10 +5149,12 @@ def _single_niagara_input_workflow(
             "artifact": True,
         },
     ]
-    return _submit_niagara_mutation_scenario(
+    result = _submit_niagara_mutation_scenario(
         interface_name=interface_name,
         system_path=system_path,
         calls=[set_stack_input_call(stack_ref, input_data)],
+        expected_emitters=[{'system_path':system_path,'emitter_name':emitter_name,
+            'emitter_handle_id':emitter_handle_id,'expected_revision':expected_emitter_revision}],
         target_packages=target_packages,
         apply=apply,
         pre_steps=pre_steps,
@@ -5129,6 +5163,8 @@ def _single_niagara_input_workflow(
         project=project,
         token=token,
     )
+    result['expected_emitter_revision']=expected_emitter_revision
+    return result
 
 
 @mcp.tool()
@@ -5147,6 +5183,7 @@ def bind_niagara_module_input_to_user_parameter(
     endpoint: Optional[str] = None,
     project: Optional[str] = None,
     token: Optional[str] = None,
+    expected_emitter_revision: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Bind an exact module input to User.*, refusing replacement unless opted in."""
     try:
@@ -5159,6 +5196,7 @@ def bind_niagara_module_input_to_user_parameter(
             module_name=module_name,
             input_name_stack=input_name_stack,
             input_data=linked_input_data(user_parameter_name, type_ref_path),
+            expected_emitter_revision=expected_emitter_revision,
             replace_existing=replace_existing,
             target_packages=target_packages,
             apply=apply,
@@ -5185,6 +5223,7 @@ def attach_niagara_dynamic_input(
     endpoint: Optional[str] = None,
     project: Optional[str] = None,
     token: Optional[str] = None,
+    expected_emitter_revision: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Attach a typed Niagara dynamic-input asset to an exact stack input."""
     try:
@@ -5197,6 +5236,7 @@ def attach_niagara_dynamic_input(
             module_name=module_name,
             input_name_stack=input_name_stack,
             input_data=dynamic_input_data(dynamic_input_script_path),
+            expected_emitter_revision=expected_emitter_revision,
             replace_existing=replace_existing,
             target_packages=target_packages,
             apply=apply,
@@ -5224,6 +5264,7 @@ def set_niagara_dynamic_input_sub_input(
     endpoint: Optional[str] = None,
     project: Optional[str] = None,
     token: Optional[str] = None,
+    expected_emitter_revision: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Set one exact nested dynamic-input leaf using an explicit Unreal struct type."""
     try:
@@ -5236,6 +5277,7 @@ def set_niagara_dynamic_input_sub_input(
             module_name=module_name,
             input_name_stack=input_name_stack,
             input_data=literal_input_data(input_struct_ref_path, value),
+            expected_emitter_revision=expected_emitter_revision,
             replace_existing=replace_existing,
             target_packages=target_packages,
             apply=apply,
